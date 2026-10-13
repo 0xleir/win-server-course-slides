@@ -1,0 +1,614 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第1课 · Windows Server 2022 安装与初始配置</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 1 · 走进 Windows 服务器　|　第 1 次课 · 学时 1–2</p>
+  <h1>Windows Server 2022 安装与初始配置</h1>
+  <p class="muted">把一台"刚装好的系统"变成"可以上岗的服务器"</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 (WinSrv-Main)</span></div>
+</div>
+<aside class="notes">开场提问：你家里的电脑和公司机房里的服务器，有什么不一样？引出"服务器要长期稳定、地址固定、远程可管理"。本课是整门课的地基：今天配好的计算机名 DC-学号 和 IP 10.10.10.x。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>概念</b>版本区别<br>服务器的"身份"</div>
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>任务 1</b>认识 Windows Server</div>
+      <div class="seg" style="flex:24"><span class="t">24′</span><b>任务 2</b>系统初始配置<br>改名 · 静态 IP</div>
+      <div class="seg" style="flex:24"><span class="t">24′</span><b>任务 3</b>PowerShell 基础</div>
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>任务 4</b>验证与提交</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说出 Windows Server 2022 各版本的区别，以及为什么选 Standard（桌面体验）</li>
+        <li>把 VM1 配置为计算机名 <code>DC-学号</code>、静态 IP <code>10.10.10.x</code></li>
+        <li>用 PowerShell 查询服务、进程、网络，并会用 <code>Get-Help</code> 自学命令</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念部分可以和任务 1 穿插讲：边看服务器管理器边讲版本区别。任务 2 有一次重启（改计算机名），提醒学生先改名再改 IP，利用重启的时间讲静态 IP 的意义。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>VM1 · WinSrv-Main</b><div class="ip">10.10.10.x</div><div class="role">Windows Server 2022 Standard<br>桌面体验 · 4GB / 2 vCPU / 60GB<br>本课改名为 DC-学号</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>NIC1 = VMnet-Lab</b>（Host-Only，10.10.10.0/24）<br>实验网络，今天配静态 IP</div>
+      <div class="callout"><b>NIC2 = NAT</b>（DHCP）<br>仅用于联网激活、下载更新</div>
+    </div>
+    <div class="callout warn"><b>📌 全课程命名约定：</b>计算机名用 <code>DC-学号</code>、IP 用 <code>10.10.10.x</code>（你本课配置的那个，避开 .20/.50 等已占用地址）。后续各课的截图和命令仍以 <code>DC1</code> / <code>10.10.10.10</code> 作<b>示例</b>，照做时请对应到<b>你自己的机器</b>。</div>
+  </div>
+</div>
+<aside class="notes">第 1–5 次课只需要 VM1 一台机器，内存 4GB 即可。从 ISO 安装的同学，安装时要选"Standard (Desktop Experience)"，否则没有图形界面。务必跟学生强调这条命名约定：后面 35 次课的 DC1 和 10.10.10.10 都是示例占位，代表"你自己那台 DC"，看到时自动替换成本机的学号名和 IP，不要照抄死值。</aside>
+</section>
+
+<!-- 04 概念：版本 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>Windows Server 2022 选哪个版本？</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>版本</th><th>定位</th><th>虚拟化授权</th></tr>
+      <tr><td><b>Essentials</b></td><td>小企业，≤ 25 用户</td><td>无</td></tr>
+      <tr><td><b>Standard</b> <span class="orange">← 本课</span></td><td>物理机或少量虚拟化</td><td>2 个虚拟机</td></tr>
+      <tr><td><b>Datacenter</b></td><td>大规模虚拟化、云数据中心</td><td>不限数量</td></tr>
+    </table>
+    <div class="grid2">
+      <div class="card good"><h3>桌面体验 Desktop Experience</h3><p class="small">有图形界面和服务器管理器，适合学习和中小企业</p></div>
+      <div class="card"><h3>服务器核心 Server Core</h3><p class="small">只有命令行，体积小、补丁少、攻击面小，生产环境推荐</p></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">版本区别主要是授权和高级功能，核心角色（AD、DNS、IIS）各版本都有。我们用 180 天评估版，功能等同正式版。提问：为什么 Server Core 更安全？（组件少 = 漏洞少 = 补丁少）。安装后不能在 Core 和桌面体验之间来回切换，装错只能重装。</aside>
+</section>
+
+<!-- 05 概念：服务器的身份 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>服务器为什么要"固定身份"？</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>默认状态（像个人电脑）</h3>
+        <ul class="points">
+          <li>计算机名随机：<code>WIN-XXXXXXX</code></li>
+          <li>IP 由 DHCP 分配，重启可能变化</li>
+          <li>别人记不住、也找不到它</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>服务器状态（今天的目标）</h3>
+        <ul class="points">
+          <li>有意义的名字：<code>DC1</code></li>
+          <li>静态 IP：<code>10.10.10.10/24</code></li>
+          <li>DNS 指向自己：<code>127.0.0.1</code></li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>一句话：</b>服务器是"被别人访问"的机器，名字和地址必须稳定，客户端才能一直找到它。</div>
+  </div>
+</div>
+<aside class="notes">DNS 设为 127.0.0.1 是为第 17 课做准备：DC-学号 以后自己就是 DNS 服务器。网关留空是因为 VMnet-Lab 是隔离的实验网，上网走 NIC2 的 NAT。提问：如果 DHCP 服务器本身的 IP 也是 DHCP 分配的，会发生什么？</aside>
+</section>
+
+<!-- 06 概念：PowerShell 管道 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>PowerShell：管道里传的是"对象"</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>Get-Service</b>取出所有服务对象</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>Where-Object</b>按 Status 属性筛选</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>Measure-Object</b>计数</div>
+    </div>
+    <table class="tbl">
+      <tr><th>写法</th><th>含义</th></tr>
+      <tr><td><code>动词-名词</code></td><td>命令命名规则：Get / Set / New / Remove…</td></tr>
+      <tr><td><code>|</code></td><td>管道：把左边的输出交给右边</td></tr>
+      <tr><td><code>$_</code></td><td>管道中"当前这一个对象"</td></tr>
+      <tr><td><code>-eq</code></td><td>等于（不是 <code>=</code> 或 <code>==</code>）</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">与 CMD 对比：CMD 的 findstr 处理的是文本行，PowerShell 处理的是带属性的对象，所以可以直接按 Status、CPU 排序和筛选。学生最常见错误是把 -eq 写成 ==，或者 $_ 后面忘了点号。</aside>
+</section>
+
+<!-- 07 任务1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 12′ · WinSrv-Main</span></span><h2>认识 Windows Server</h2><button class="more" data-pop="pop-l01-07-steps">📋 详细步骤</button><button class="more" data-pop="pop-l01-07-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p>以 <code>Administrator</code> 登录，观察自动弹出的<b>服务器管理器</b>仪表板，然后打开 PowerShell：</p>
+<pre><code class="language-powershell" data-trim>
+systeminfo | findstr /B /C:"OS Name" /C:"OS Version"
+Get-WindowsFeature | Where-Object {$_.Installed -eq $true}
+hostname
+ipconfig /all
+</code></pre>
+    <div class="callout"><b>📝 记录：</b>版本号、已安装功能、计算机名、IP 地址 —— 任务 2 结束后对比变化。</div>
+  </div>
+</div>
+<aside class="notes">中文系统里 systeminfo 输出的是"OS 名称"，findstr 匹配英文可能没有结果，可让学生直接运行 systeminfo 自己找。ipconfig /all 里应能看到两块网卡：一块是 VMnet-Lab，一块是 NAT。提问：现在的计算机名是什么？是不是随机的？</aside>
+<template id="pop-l01-07-steps">
+  <h3>📋 详细步骤：认识 Windows Server</h3>
+  <h4>第一步：登录并观察服务器管理器</h4>
+  <ol>
+    <li>在 VMware 里启动 VM1（WinSrv-Main），按 <code>Ctrl + Alt + Insert</code>（VMware 里代替 Ctrl+Alt+Del）进入登录界面</li>
+    <li>以 <code>Administrator</code> 登录，「服务器管理器」会自动弹出</li>
+    <li>点左侧「本地服务器」，看一眼右边的属性：<b>计算机名</b>（现在是随机的 <code>WIN-XXXXXXX</code>）、<b>以太网</b>（两块网卡的状态）、<b>IE 增强的安全配置</b>（现在是“启用”）。这几项任务 2 都要改</li>
+  </ol>
+  <div class="tip">服务器管理器被关掉了也没关系：点「开始」菜单里的「服务器管理器」就能重新打开。</div>
+  <h4>第二步：以管理员身份打开 PowerShell</h4>
+  <ol>
+    <li>右键「开始」→ <b>Windows PowerShell (管理员)</b></li>
+    <li>窗口标题栏以“管理员:”开头才是对的；本课后面的改配置命令都要求管理员权限</li>
+  </ol>
+  <h4>第三步：逐条运行四条命令</h4>
+<pre>systeminfo | findstr /B /C:"OS Name" /C:"OS Version"</pre>
+  <p>英文系统会显示两行：系统名称（Windows Server 2022 Standard…）和版本号（10.0.20348 开头）。</p>
+  <div class="tip">中文系统里这一行通常<b>没有输出</b>，因为字段名是“OS 名称”“OS 版本”，匹配不到英文。直接运行 <code>systeminfo</code>，在结果最上面几行自己找即可，不算做错。</div>
+<pre>Get-WindowsFeature | Where-Object {$_.Installed -eq $true}</pre>
+  <p>列出已安装的角色和功能，前面带 <code>[X]</code>。刚装好的系统只有少量默认功能（如 .NET Framework、Windows PowerShell 等），<b>没有</b> AD、DNS、DHCP 这类角色。</p>
+<pre>hostname
+ipconfig /all</pre>
+  <p><code>hostname</code> 显示当前计算机名；<code>ipconfig /all</code> 应能看到<b>两块</b>网卡：一块拿到 NAT 网段地址并带默认网关（NIC2），另一块没有有效地址（NIC1，VMnet-Lab）。</p>
+  <h4>第四步：做记录，并验证你做对了</h4>
+  <ol>
+    <li>把四样东西抄下来：<b>版本号、已安装功能、计算机名、两块网卡各自的 IP</b></li>
+    <li>自查：能说出现在的计算机名是不是随机的、哪块网卡是 NIC1 —— 两点都答得出来，任务 1 就完成了</li>
+  </ol>
+</template>
+<template id="pop-l01-07-why">
+  <h3>💡 每条命令为什么要跑</h3>
+  <table>
+    <tr><th style="width:26%">命令 / 选项</th><th>意义</th></tr>
+    <tr><td><b>以 Administrator 登录</b></td><td>这是本机内置的最高权限账户。本课要改计算机名、IP、防火墙、执行策略，普通用户做不了。第 4 课升级成域控后，它会变成域管理员。</td></tr>
+    <tr><td><code>systeminfo</code></td><td>一次性列出系统名称、版本、内存、补丁、网卡等信息。先确认装的是 <b>Standard 桌面体验</b>，版本不对后面角色可能装不上或界面对不上。</td></tr>
+    <tr><td><code>| findstr /B /C:"…"</code></td><td>把 systeminfo 的<b>文本输出</b>交给 findstr 过滤：<code>/B</code> = 只匹配行首，<code>/C:</code> = 按整串字面匹配（字符串里有空格时必须用）。这是 CMD 式的“按文字筛选”，可以和下一条 PowerShell 的“按属性筛选”对比。</td></tr>
+    <tr><td><code>Get-WindowsFeature</code></td><td>列出服务器上所有可装的角色和功能。现在先看“装了什么”，第 2 课就用它（和 Install-WindowsFeature）来装角色。</td></tr>
+    <tr><td><code>Where-Object {$_.Installed -eq $true}</code></td><td>管道里传的是对象，<code>$_</code> 是当前这一个功能，<code>.Installed</code> 是它的属性，<code>-eq $true</code> 只留下已安装的。不加这一段会刷出几百行。</td></tr>
+    <tr><td><code>hostname</code></td><td>显示计算机名。现在是随机的 <code>WIN-XXXXXXX</code>，任务 2 改成 <code>DC-学号</code> 后再跑一次对比。</td></tr>
+    <tr><td><code>ipconfig /all</code></td><td>不加 <code>/all</code> 只显示 IP；加了还能看到网卡描述、MAC、DHCP 是否启用、DNS 服务器。任务 2 要靠它<b>分清 NIC1 和 NIC2</b>——全课一半以上的问题都出在网卡选错。</td></tr>
+    <tr><td><b>记录结果</b></td><td>先留一份“改之前”的样子，任务 2 结束后对比，才能看清改名和静态 IP 到底改变了什么；出问题时也知道原来的值。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>systeminfo 那行什么都没输出：中文系统字段名是中文，直接运行 <code>systeminfo</code> 自己找</li>
+    <li><code>ipconfig /all</code> 只看到一块网卡：虚拟机设置里少加了一块网络适配器，请检查 VMware 里是否有 VMnet-Lab 和 NAT 两块</li>
+    <li>NIC1 显示 <code>169.254.x.x</code>：正常，Host-Only 网里没人分配地址，任务 2 会给它配静态 IP</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务2 改名+IP -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 24′ · WinSrv-Main → DC1</span></span><h2>改计算机名、配静态 IP</h2><button class="more" data-pop="pop-l01-steps">📋 详细步骤</button><button class="more" data-pop="pop-l01-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">① 修改计算机名（完成后重启）</div>
+    <div class="crumb"><span>设置</span><i>›</i><span>系统</span><i>›</i><span>关于</span><i>›</i><span>重命名这台电脑</span><i>›</i><span>输入 DC1</span><i>›</i><span>重启</span></div>
+    <div class="code-cap" style="margin-top:14px">② 配置静态 IP：运行 <code>ncpa.cpl</code></div>
+    <div class="crumb"><span>右键 NIC1 (VMnet-Lab)</span><i>›</i><span>属性</span><i>›</i><span>Internet 协议版本 4 (TCP/IPv4)</span></div>
+    <div class="grid2">
+      <table class="tbl">
+        <tr><th>项目</th><th>取值</th></tr>
+        <tr><td>IP 地址</td><td><code>10.10.10.x</code></td></tr>
+        <tr><td>子网掩码</td><td><code>255.255.255.0</code></td></tr>
+        <tr><td>默认网关</td><td>（空）</td></tr>
+        <tr><td>首选 DNS</td><td><code>127.0.0.1</code></td></tr>
+      </table>
+      <div class="callout warn"><b>只改 NIC1！</b>NIC2 (NAT) 保持 DHCP，否则无法联网激活。<br><br>验证：<code>ping 10.10.10.x</code></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">先确认哪块是 NIC1：在 ncpa.cpl 里网卡名通常是 Ethernet0/Ethernet1，可用 ipconfig /all 看哪块拿到的是 NAT 网段地址来区分。改名必须重启才生效，可以先改 IP 再统一重启。常见错误：把 IP 配到了 NAT 网卡上。</aside>
+<template id="pop-l01-steps">
+  <h3>📋 详细步骤：改计算机名 + 配静态 IP</h3>
+  <h4>第一步：先认清哪块是 NIC1</h4>
+  <ol>
+    <li>右键「开始」→ <b>Windows PowerShell (管理员)</b>，输入 <code>ipconfig /all</code></li>
+    <li>会看到两块网卡（通常叫 <code>Ethernet0</code> 和 <code>Ethernet1</code>）。拿到 <b>192.168.x.x 等 NAT 网段地址</b>、有默认网关的是 <b>NIC2（NAT）</b>；另一块（多半是 <code>169.254.x.x</code> 或没有地址）就是 <b>NIC1（VMnet-Lab）</b></li>
+    <li>记下 NIC1 的网卡名，后面只改它</li>
+  </ol>
+  <div class="tip">拿不准？在 VMware 里临时断开 NAT 网卡（虚拟机设置 → 网络适配器 → 取消“已连接”），哪块在 Windows 里显示“网络电缆被拔出”，哪块就是 NAT。</div>
+  <h4>第二步：配置静态 IP</h4>
+  <ol>
+    <li>按 <code>Win + R</code>，输入 <code>ncpa.cpl</code> 回车，打开「网络连接」</li>
+    <li>右键 <b>NIC1</b> → 属性 → 双击「Internet 协议版本 4 (TCP/IPv4)」</li>
+    <li>选「使用下面的 IP 地址」，依次填写：
+      <table><tr><th>项目</th><th>填写</th></tr>
+      <tr><td>IP 地址</td><td><code>10.10.10.x</code>（x 按老师分配，别用 .20 / .50 / .100–200）</td></tr>
+      <tr><td>子网掩码</td><td><code>255.255.255.0</code>（点到输入框会自动填）</td></tr>
+      <tr><td>默认网关</td><td><b>留空</b></td></tr>
+      <tr><td>首选 DNS 服务器</td><td><code>127.0.0.1</code></td></tr></table>
+    </li>
+    <li>点「确定」→ 再点「关闭」。<b>两个窗口都要点</b>，否则不保存</li>
+    <li>Windows 弹出“警告：未配置默认网关”之类的提示时，点「是」继续即可</li>
+  </ol>
+  <h4>第三步：改计算机名</h4>
+  <ol>
+    <li>「设置」→「系统」→「关于」→「重命名这台电脑」</li>
+    <li>输入 <code>DC-学号</code>（例：<code>DC-2024031</code>）。只能用字母、数字、连字符，<b>不超过 15 个字符</b></li>
+    <li>点「下一步」→「立即重启」</li>
+  </ol>
+  <h4>第四步：重启后验证</h4>
+<pre>hostname                                  # 应显示 DC-学号
+Get-NetIPAddress -AddressFamily IPv4 | Format-Table InterfaceAlias,IPAddress,PrefixLength
+ping 10.10.10.x                           # 自己的 IP，应收到 4 个回复</pre>
+  <p>或者用一条命令完成改名（等价于上面的图形操作）：</p>
+<pre>Rename-Computer -NewName "DC-学号" -Restart</pre>
+</template>
+<template id="pop-l01-why">
+  <h3>💡 每一项配置为什么这么填</h3>
+  <table>
+    <tr><th style="width:24%">配置项</th><th>意义</th></tr>
+    <tr><td><b>计算机名</b><br><code>DC-学号</code></td><td>计算机名是服务器在网络里的“身份证”。后面加入域、DNS 记录、远程管理都靠它。默认的 <code>WIN-XXXXXXX</code> 是随机名，不好记也看不出用途。<b>改名必须重启</b>才生效；而且要在第 4 课装域控<b>之前</b>改好——装了 AD 之后再改名非常麻烦。</td></tr>
+    <tr><td><b>静态 IP</b><br><code>10.10.10.x</code></td><td>服务器是“被别人找”的机器。如果用 DHCP，地址可能每次开机都变，客户端就找不到它了。DHCP 服务器、DNS 服务器、域控这三类角色<b>必须</b>用固定地址（第 2 课 DC 自己就要当 DHCP 服务器，总不能自己给自己分地址）。</td></tr>
+    <tr><td><b>子网掩码</b><br><code>255.255.255.0</code></td><td>即 <code>/24</code>：前三段 <code>10.10.10</code> 是“网络号”，最后一段是“主机号”。意思是 <code>10.10.10.1</code>–<code>10.10.10.254</code> 都在同一个局域网里，彼此可以直接通信，不需要路由器。</td></tr>
+    <tr><td><b>默认网关</b><br>留空</td><td>网关是“去别的网络的出口”。VMnet-Lab 是一个<b>封闭的实验网</b>，不需要出去；上网走 NIC2（NAT）。如果两块网卡都配网关，Windows 可能把上网流量发到没有出口的 NIC1 上，导致上不了网。</td></tr>
+    <tr><td><b>首选 DNS</b><br><code>127.0.0.1</code></td><td><code>127.0.0.1</code> 是“本机自己”。现在本机还不是 DNS 服务器，填它暂时没作用；但从第 2 课起 DC 会装上 DNS 角色、第 4 课升级为域控，域控<b>必须</b>能用 DNS 找到自己。提前填好，后面就不用回来改。</td></tr>
+    <tr><td><b>只改 NIC1</b></td><td>NIC2（NAT）要保持“自动获得 IP”，它是虚拟机唯一能连互联网的通道，激活系统、下载更新都靠它。一旦把静态 IP 填在 NIC2 上，就会断网，而 NIC1 依然没有正确地址——这是第 1 课<b>最常见的错误</b>。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li><code>169.254.x.x</code>：Windows 没拿到地址时自己编的“自动专用地址”，说明静态 IP 没保存成功，或者填到了另一块网卡上</li>
+    <li><code>ping</code> 自己通、ping 别人不通：先别急，Windows 防火墙默认拦截 ping，下一页的第 ④ 步会放行</li>
+    <li>改了名还显示旧名：还没重启</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 IE ESC + 防火墙 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 24′ · DC1</span></span><h2>关闭 IE 增强安全、放行 ping</h2><button class="more" data-pop="pop-l01-09-steps">📋 详细步骤</button><button class="more" data-pop="pop-l01-09-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">③ 关闭 IE 增强安全配置（IE ESC）</div>
+    <div class="crumb"><span>服务器管理器</span><i>›</i><span>本地服务器</span><i>›</i><span>IE 增强的安全配置</span><i>›</i><span>管理员：关闭</span></div>
+    <div class="code-cap" style="margin-top:14px">④ 新建防火墙规则，允许 ICMP 回显请求（ping）</div>
+<pre><code class="language-powershell" data-trim>
+New-NetFirewallRule -DisplayName "Allow ICMPv4" `
+    -Protocol ICMPv4 -IcmpType 8 -Action Allow
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>IcmpType 8</b> = Echo Request，即别人 ping 你时发来的包</div>
+      <div class="callout warn"><b>反引号 `</b> 是续行符，后面不能有空格</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">IE ESC 会拦截几乎所有网页，实验环境关掉方便下载工具；生产服务器上不应该用浏览器上网，所以默认开启是合理的。Windows Server 默认防火墙阻止入站 ping，第 6 课客户端加入后需要 ping 通 DC1，所以现在先放行。提问：放行 ping 有什么安全代价？</aside>
+<template id="pop-l01-09-steps">
+  <h3>📋 详细步骤：关闭 IE ESC + 放行 ping</h3>
+  <div class="tip">幻灯片里的 DC1 是示例，指的是你自己的 DC（计算机名 DC-学号）。</div>
+  <h4>第一步：关闭 IE 增强的安全配置（IE ESC）</h4>
+  <ol>
+    <li>打开「服务器管理器」→ 左侧点「本地服务器」</li>
+    <li>在右侧属性区找到「IE 增强的安全配置」，点它后面蓝色的“启用”字样</li>
+    <li>弹出的对话框里有「管理员」「用户」两组：把 <b>管理员</b> 选为「关闭」，「用户」保持不动</li>
+    <li>点「确定」</li>
+  </ol>
+  <div class="tip">点完后属性区可能还显示“启用”，按 <code>F5</code> 刷新服务器管理器就会变成“关闭”。</div>
+  <h4>第二步：新建允许 ping 的防火墙规则</h4>
+  <ol>
+    <li>打开 <b>Windows PowerShell (管理员)</b></li>
+    <li>输入（两行，第一行末尾是反引号续行）：</li>
+  </ol>
+<pre>New-NetFirewallRule -DisplayName "Allow ICMPv4" `
+    -Protocol ICMPv4 -IcmpType 8 -Action Allow</pre>
+  <p>成功会输出一段规则属性，其中能看到 <code>DisplayName : Allow ICMPv4</code>、<code>Enabled : True</code>、<code>Action : Allow</code>。</p>
+  <div class="tip">反引号 <code>`</code> 在键盘左上角 Esc 下面（不是单引号），后面<b>不能有空格</b>。拿不准就把两行写成一行，去掉反引号。</div>
+  <div class="tip">这条命令每运行一次就新建一条同名规则。重复运行了也不会坏事，但想清理可以先 <code>Remove-NetFirewallRule -DisplayName "Allow ICMPv4"</code> 再重新建一次。</div>
+  <h4>第三步：怎么验证做对了</h4>
+<pre>Get-NetFirewallRule -DisplayName "Allow ICMPv4" | Format-List DisplayName,Enabled,Direction,Action</pre>
+  <ol>
+    <li>应看到 <code>Enabled : True</code>、<code>Direction : Inbound</code>、<code>Action : Allow</code></li>
+    <li>IE ESC：服务器管理器「本地服务器」里显示“关闭”；打开 IE 也不会再满屏弹“是否将此网站添加到信任区域”</li>
+  </ol>
+  <div class="tip">在本机 ping 自己的 IP 不经过入站规则，所以这条规则现在还没法“真正”测出效果，要等后续课 CLIENT1 加入后从客户端 ping 你的 DC 才算验证。今天只要规则存在、已启用即可。</div>
+</template>
+<template id="pop-l01-09-why">
+  <h3>💡 每一项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">配置项</th><th>意义</th></tr>
+    <tr><td><b>IE ESC</b><br>（IE 增强的安全配置）</td><td>服务器上默认开启，几乎会拦截所有网页。理由是：生产服务器本来就<b>不应该</b>拿来上网浏览，默认开启是合理的。实验环境里我们需要下载工具，所以关掉。</td></tr>
+    <tr><td><b>只关“管理员”</b></td><td>我们只用 Administrator 做实验，关管理员这一项就够了。“用户”保持开启，普通用户登录服务器时仍受保护，少开一个口子。</td></tr>
+    <tr><td><code>New-NetFirewallRule</code></td><td>Windows Server 默认<b>拦截入站 ping</b>。后续 CLIENT1 加入后（第 6 课）要先 ping 通你的 DC 才能排查网络，所以现在提前放行。</td></tr>
+    <tr><td><code>-DisplayName "Allow ICMPv4"</code></td><td>规则的显示名称。后面验证（<code>Get-NetFirewallRule -DisplayName …</code>）和自查清单都是按这个名字找，<b>要一字不差</b>，否则会显示找不到规则。</td></tr>
+    <tr><td><code>-Protocol ICMPv4</code></td><td>ping 用的是 ICMP 协议，不是 TCP/UDP，所以没有端口号。只放行 IPv4，因为我们实验网是 10.10.10.0/24 的 IPv4。</td></tr>
+    <tr><td><code>-IcmpType 8</code></td><td>8 = Echo Request（回显请求），也就是别人 ping 你时发来的那个包。只放行这一种，其他 ICMP 类型照旧拦截，把开口限制到最小。</td></tr>
+    <tr><td><code>-Action Allow</code></td><td>匹配到就放行。没写 <code>-Direction</code> 时默认就是 <b>入站</b>（Inbound），正好是“别人 ping 进来”的方向。</td></tr>
+    <tr><td><b>安全代价</b></td><td>放行 ping 后，同一网段的人可以探测到这台服务器“在线”。实验网是封闭的 Host-Only 网，代价很小；生产环境要按需决定是否放行。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>命令报“拒绝访问”：PowerShell 没以管理员身份运行</li>
+    <li>报参数错误、或第二行被当成新命令：反引号后面有空格，或者把反引号打成了单引号</li>
+    <li>ping 自己的 IP 不通：不是防火墙的问题（本机 ping 自己不走入站规则），多半是静态 IP 没配上或配到了 NIC2，回上一页检查</li>
+    <li>服务器管理器里 IE ESC 还显示“启用”：按 F5 刷新再看</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 预期结果 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 2 验证</span><h2>配置生效了吗？</h2></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+hostname
+Get-NetIPAddress -InterfaceAlias "Ethernet*" `
+    -AddressFamily IPv4
+Get-DnsClientServerAddress -AddressFamily IPv4
+Get-NetFirewallRule -DisplayName "Allow ICMPv4"
+</code></pre>
+    <table class="tbl">
+      <tr><th>检查</th><th>看到这个说明成功</th></tr>
+      <tr><td><code>hostname</code></td><td>DC1</td></tr>
+      <tr><td><code>Get-NetIPAddress</code></td><td>IPAddress 10.10.10.x，PrefixLength 24</td></tr>
+      <tr><td><code>Get-DnsClientServerAddress</code></td><td>NIC1 的 ServerAddresses = 127.0.0.1</td></tr>
+      <tr><td><code>Get-NetFirewallRule</code></td><td>Enabled = True，Action = Allow</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">和任务 1 记录的结果对比：计算机名从 WIN-XXX 变成 DC-学号，IP 从 DHCP 变成固定地址。如果 Get-NetIPAddress 返回 169.254.x.x，说明静态 IP 没保存成功或配到了别的网卡。这几条命令也正是验证页清单逐项核对时要用到的检查方式。</aside>
+</section>
+
+<!-- 11 任务3 常用命令 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 24′ · DC1</span></span><h2>PowerShell 常用命令</h2><button class="more" data-pop="pop-l01-11-steps">📋 详细步骤</button><button class="more" data-pop="pop-l01-11-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div>
+        <div class="code-cap">3.1 查询系统状态</div>
+<pre><code class="language-powershell" data-trim>
+Get-Service | Where-Object {$_.Status -eq "Running"} |
+    Measure-Object
+Get-Process | Sort-Object CPU -Descending |
+    Select-Object -First 10
+Get-EventLog -LogName System -Newest 5
+Get-NetIPAddress -InterfaceAlias "Ethernet*"
+</code></pre>
+      </div>
+      <div>
+        <div class="code-cap">3.2 帮助系统</div>
+<pre><code class="language-powershell" data-trim>
+Update-Help -Force -ErrorAction SilentlyContinue
+Get-Help Get-Service -Examples
+Get-Command *firewall*
+</code></pre>
+        <div class="callout" style="margin-top:12px"><b>不会就问 Get-Help：</b>先 <code>Get-Command</code> 找命令，再 <code>Get-Help -Examples</code> 看用法。</div>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">管道符 | 放在行尾时可以直接换行，不需要反引号；学生也可以写成一行。Update-Help 需要联网（走 NAT 网卡），离线时会失败，加了 SilentlyContinue 不会报红字，但 -Examples 可能只显示简略帮助。让学生回答：当前有多少个服务在运行？CPU 占用最高的进程是什么？</aside>
+<template id="pop-l01-11-steps">
+  <h3>📋 详细步骤：PowerShell 常用命令</h3>
+  <h4>第一步：打开管理员 PowerShell</h4>
+  <ol>
+    <li>右键「开始」→ <b>Windows PowerShell (管理员)</b></li>
+    <li>下面的命令可以逐条复制粘贴（在 PowerShell 窗口里<b>点右键</b>就是粘贴）</li>
+  </ol>
+  <h4>第二步：3.1 查询系统状态</h4>
+<pre>Get-Service | Where-Object {$_.Status -eq "Running"} |
+    Measure-Object</pre>
+  <p>看输出里的 <code>Count</code>，就是正在运行的服务数量。</p>
+  <div class="tip">管道符 <code>|</code> 放在行尾时直接回车换行即可，不需要反引号；写成一行也一样。<code>-eq</code> 不能写成 <code>==</code>，<code>$_</code> 后面别忘了点号。</div>
+<pre>Get-Process | Sort-Object CPU -Descending |
+    Select-Object -First 10</pre>
+  <p>列出 CPU 占用最高的 10 个进程，第一行就是“最忙”的进程。</p>
+<pre>Get-EventLog -LogName System -Newest 5</pre>
+  <p>显示系统日志里最新的 5 条事件，有时间、类型（信息 / 警告 / 错误）、来源和消息。</p>
+<pre>Get-NetIPAddress -InterfaceAlias "Ethernet*"</pre>
+  <p>列出名字以 Ethernet 开头的网卡地址。每块网卡会各出 IPv4 和 IPv6 两条，找 <code>IPAddress</code> 为 10.10.10.x 的那条，就是任务 2 配的 NIC1。</p>
+  <h4>第三步：3.2 帮助系统</h4>
+<pre>Update-Help -Force -ErrorAction SilentlyContinue</pre>
+  <p>从网上下载最新帮助文件，会出现一会儿进度条，可能要等几分钟；结束后没有任何输出是正常的。</p>
+  <div class="tip">它需要联网（走 NIC2 的 NAT）。离线时会静默失败，不报红字，但下一条的 <code>-Examples</code> 可能只显示简略帮助——不影响继续做实验。</div>
+<pre>Get-Help Get-Service -Examples
+Get-Command *firewall*</pre>
+  <p>第一条显示 Get-Service 的用法示例；第二条列出名字里带 firewall 的所有命令，其中就有刚才用过的 <code>New-NetFirewallRule</code>。</p>
+  <h4>第四步：怎么验证做对了</h4>
+  <ol>
+    <li>能回答：当前有<b>多少个</b>服务在运行？CPU 占用最高的进程是什么？</li>
+    <li>能从 <code>Get-Command *firewall*</code> 的结果里找到“查看防火墙规则”的那条命令（Get-NetFirewallRule）</li>
+  </ol>
+</template>
+<template id="pop-l01-11-why">
+  <h3>💡 每条命令、每个选项为什么这么写</h3>
+  <table>
+    <tr><th style="width:28%">命令 / 选项</th><th>意义</th></tr>
+    <tr><td><code>Get-Service</code></td><td>取出所有服务对象。后面装 AD、DNS、DHCP、IIS 后，排障第一步常常就是看对应服务是不是 Running。</td></tr>
+    <tr><td><code>Where-Object {$_.Status -eq "Running"}</code></td><td>按对象的 <code>Status</code> 属性筛选，只留运行中的。这就是“管道传对象”：直接按属性比较，不用像 CMD 那样按文字找。</td></tr>
+    <tr><td><code>Measure-Object</code></td><td>计数。和上面连起来，一句话回答“有多少个服务在跑”。</td></tr>
+    <tr><td><code>Sort-Object CPU -Descending</code></td><td>按 CPU 属性从大到小排（<code>-Descending</code> = 降序），服务器变卡时用它找“谁在占资源”。</td></tr>
+    <tr><td><code>Select-Object -First 10</code></td><td>只取前 10 条，避免几百个进程刷屏。</td></tr>
+    <tr><td><code>Get-EventLog -LogName System -Newest 5</code></td><td>事件日志是服务器的“黑匣子”。<code>System</code> 记录系统和服务事件，<code>-Newest 5</code> 只看最新 5 条。以后服务启动失败、登录异常，都要来日志里找原因。</td></tr>
+    <tr><td><code>Get-NetIPAddress -InterfaceAlias "Ethernet*"</code></td><td><code>*</code> 是通配符，一次查出所有 Ethernet 网卡。它是 ipconfig 的 PowerShell 版，输出是对象，可以继续筛选；验证页也用它确认 IP。</td></tr>
+    <tr><td><code>Update-Help -Force</code></td><td>Windows 默认不带完整帮助，要先下载。<code>-Force</code> = 不管上次什么时候更新过，都重新拉取。</td></tr>
+    <tr><td><code>-ErrorAction SilentlyContinue</code></td><td>出错时不显示红字、继续往下走。部分模块的帮助本来就下载不到，加它避免满屏红字吓到人。</td></tr>
+    <tr><td><code>Get-Help … -Examples</code></td><td>只看示例，最快学会一条命令怎么用。</td></tr>
+    <tr><td><code>Get-Command *firewall*</code></td><td>不知道命令叫什么时，用关键词 + 通配符去找。先 Get-Command 找命令，再 Get-Help 看用法，是整门课“自学命令”的固定套路。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>报“无法将…识别为 cmdlet”：命令拼错，或者 <code>$_</code> 后面少了点号</li>
+    <li>报“意外的标记 ==”之类：比较运算写成了 <code>==</code> 或 <code>=</code>，要用 <code>-eq</code></li>
+    <li><code>Get-Help</code> 只显示几行简略帮助：Update-Help 没联网成功，检查 NIC2 (NAT) 是否还是自动获取 IP</li>
+    <li><code>Get-NetIPAddress</code> 看不到 10.10.10.x：回任务 2 检查静态 IP 是否配在 NIC1 上</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 任务3 执行策略+目录 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 24′ · DC1</span></span><h2>脚本执行策略与实验目录</h2><button class="more" data-pop="pop-l01-12-steps">📋 详细步骤</button><button class="more" data-pop="pop-l01-12-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">3.3 允许运行本地脚本（PowerShell 自动化基础）</div>
+<pre><code class="language-powershell" data-trim>
+Get-ExecutionPolicy
+Set-ExecutionPolicy RemoteSigned -Force
+</code></pre>
+    <table class="tbl">
+      <tr><th>策略</th><th>本地脚本</th><th>网上下载的脚本</th></tr>
+      <tr><td><code>Restricted</code></td><td>✗ 禁止</td><td>✗ 禁止</td></tr>
+      <tr><td><code>RemoteSigned</code> <span class="orange">← 本课</span></td><td>✓ 允许</td><td>需要数字签名</td></tr>
+      <tr><td><code>Unrestricted</code></td><td>✓ 允许</td><td>✓ 允许（有提示）</td></tr>
+    </table>
+    <div class="code-cap" style="margin-top:12px">3.4 创建实验工作目录</div>
+<pre><code class="language-powershell" data-trim>
+New-Item -Path C:\LabFiles -ItemType Directory -Force
+New-Item -Path C:\LabFiles\Lesson01 -ItemType Directory
+</code></pre>
+  </div>
+</div>
+<aside class="notes">Windows Server 2022 默认策略是 RemoteSigned，Windows 10 客户端默认是 Restricted，所以先 Get 再 Set，让学生观察。执行策略不是安全边界，只是防止误触运行未知来源的代码。C:\LabFiles 模板里可能已存在，第一条加了 -Force 不会报错；第二条重复执行会报"已存在"。</aside>
+<template id="pop-l01-12-steps">
+  <h3>📋 详细步骤：设置执行策略 + 建实验目录</h3>
+  <h4>第一步：查看当前执行策略</h4>
+  <ol>
+    <li>打开 <b>Windows PowerShell (管理员)</b></li>
+    <li>运行下面的命令，记下输出</li>
+  </ol>
+<pre>Get-ExecutionPolicy</pre>
+  <p>Windows Server 2022 默认会显示 <code>RemoteSigned</code>（Windows 10 客户端默认是 <code>Restricted</code>）。</p>
+  <h4>第二步：设为 RemoteSigned</h4>
+<pre>Set-ExecutionPolicy RemoteSigned -Force
+Get-ExecutionPolicy</pre>
+  <p>第一条没有任何输出是正常的；第二条应显示 <code>RemoteSigned</code>。</p>
+  <div class="tip">即使第一步已经是 RemoteSigned，也照样执行一次 Set，养成“先查再设、设完再查”的习惯。报“拒绝访问”说明窗口不是管理员身份。</div>
+  <h4>第三步：创建实验工作目录</h4>
+<pre>New-Item -Path C:\LabFiles -ItemType Directory -Force
+New-Item -Path C:\LabFiles\Lesson01 -ItemType Directory</pre>
+  <p>每条成功后会显示一行目录信息，<code>Mode</code> 一栏以 <code>d</code> 开头（d = directory，目录）。</p>
+  <div class="tip">C:\LabFiles 在模板里可能已经存在，第一条带了 <code>-Force</code>，不会报错。第二条没带 -Force，如果你<b>重复执行</b>会报“已存在”，这说明目录已经建好了，忽略即可。</div>
+  <h4>第四步：怎么验证做对了</h4>
+<pre>Get-ExecutionPolicy                  # 应显示 RemoteSigned
+Test-Path C:\LabFiles\Lesson01       # 应显示 True</pre>
+  <p>也可以打开文件资源管理器，进 C 盘确认能看到 LabFiles 文件夹，里面有 Lesson01。</p>
+</template>
+<template id="pop-l01-12-why">
+  <h3>💡 每一项为什么这么设</h3>
+  <table>
+    <tr><th style="width:28%">配置项</th><th>意义</th></tr>
+    <tr><td><code>Get-ExecutionPolicy</code></td><td>先看现状再改。服务器和客户端默认值不同，后面在 CLIENT1 上跑脚本时，遇到“已被禁用”就是这个原因。</td></tr>
+    <tr><td><code>RemoteSigned</code></td><td>本机写的 .ps1 脚本可以直接运行；从网上下载的脚本必须有数字签名才能运行。是“能用”和“防误触”之间的平衡，后续课程写的自动化脚本都依赖它。</td></tr>
+    <tr><td>为什么不用 <code>Restricted</code></td><td>Restricted 禁止运行任何脚本，只能一条条敲命令，PowerShell 自动化就无从谈起。</td></tr>
+    <tr><td>为什么不用 <code>Unrestricted</code></td><td>网上下载的脚本也能运行（只多一个提示），容易一不小心执行了来路不明的代码。</td></tr>
+    <tr><td><code>-Force</code>（Set-ExecutionPolicy）</td><td>跳过“是否要更改执行策略？[Y/N]”的确认提问，直接生效。</td></tr>
+    <tr><td><b>执行策略不是安全边界</b></td><td>它只防止“误点运行”未知来源的脚本，挡不住有意绕过的人。真正的安全靠权限、防火墙、审核等，后面的安全课会讲。</td></tr>
+    <tr><td><code>C:\LabFiles</code></td><td>全课程统一的实验工作目录。后续各课的实验文件、脚本、导出的报告都放这里，固定位置好找、好检查，也方便拍快照前确认。</td></tr>
+    <tr><td><code>Lesson01</code> 子目录</td><td>每课一个子目录，文件不混在一起，出问题时也知道是哪节课的产物。</td></tr>
+    <tr><td><code>-ItemType Directory</code></td><td>New-Item 既能建文件也能建目录，必须写明要建目录，否则会建成一个空文件。</td></tr>
+    <tr><td><code>-Force</code>（New-Item）</td><td>目录已存在时不报错。模板里 C:\LabFiles 可能已有，所以第一条加；第二条故意不加，让你看到“已存在”的报错长什么样。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>运行 .ps1 报“无法加载文件，因为在此系统上禁止运行脚本”：执行策略是 Restricted，重新执行 Set-ExecutionPolicy</li>
+    <li>Set-ExecutionPolicy 报“拒绝访问”：没以管理员身份打开 PowerShell</li>
+    <li>New-Item 报“已存在”：目录早就建好了，用 <code>Test-Path</code> 确认是 True 即可</li>
+    <li>建出来的 Lesson01 是个文件而不是文件夹：漏写了 <code>-ItemType Directory</code>，删掉后重建</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>常见故障速查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:30%">原因</th><th>处理</th></tr>
+      <tr><td>ping 10.10.10.x 不通</td><td>IP 配到了 NIC2 (NAT)</td><td>用 <code>ipconfig /all</code> 确认网卡，改回 NIC1</td></tr>
+      <tr><td>IP 显示 169.254.x.x</td><td>静态 IP 未保存</td><td>重新进 IPv4 属性，点"确定"保存</td></tr>
+      <tr><td>hostname 还是 WIN-XXX</td><td>改名后没重启</td><td>重启后再检查</td></tr>
+      <tr><td>执行 .ps1 报"无法加载，已被禁用"</td><td>执行策略为 Restricted</td><td><code>Set-ExecutionPolicy RemoteSigned -Force</code></td></tr>
+      <tr><td>命令报"拒绝访问"</td><td>PowerShell 没以管理员运行</td><td>右键"以管理员身份运行"</td></tr>
+    </table>
+    <div class="callout warn">一半以上的问题都是<b>网卡选错</b>：动手前先分清 NIC1 和 NIC2。</div>
+  </div>
+</div>
+<aside class="notes">先让学生自己说出可能原因再翻出这页。本机 ping 自己的 IP 不经过防火墙入站规则，所以 ping 10.10.10.10 失败通常不是防火墙问题，而是 IP 没配上。防火墙规则要到第 6 课 CLIENT1 加入后才能真正验证。</aside>
+</section>
+
+<!-- 14 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>任务 4 · 12′ · 对照清单自查</h2></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>计算机名 = DC-XXXX；IP1 = 10.10.10.0/24</li>
+        <li>DNS = 127.0.0.1；IE ESC 已关闭</li>
+        <li>ICMP 防火墙规则存在</li>
+        <li>ExecutionPolicy = RemoteSigned</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>VM1 快照<br><code>Lesson01-Done</code></p>
+        <p class="small muted" style="margin-top:8px">4 项全部达成再拍；下节课从这个快照开始</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">左侧清单共 4 项，逐项人工核对是否达成，有未达成的就回到排障页对照修复后重新检查。清单逐项达成后，运行 check01.ps1 生成 PDF 报告提交（下载链接见最后一页「作业提交」）。第 2 次课的课前准备要求 VM1 处于 Lesson01-Done 快照状态，所以必须拍。</aside>
+</section>
+
+<!-- 15 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">服务器要被别人找到：名字和地址必须固定</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">改名 DC-学号 → 静态 IP → 关 IE ESC → 放行 ICMP → 设执行策略</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">分清 NIC1/NIC2；PowerShell 管道传对象，不会就 <code>Get-Help</code></p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 2 课：</b>服务器管理器与角色/功能。理解"角色"和"功能"的区别，用 GUI 和 PowerShell 安装角色。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check01.ps1" download>check01.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check01.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 为什么 DC1 的 DNS 设为 127.0.0.1？2. IcmpType 8 代表什么？3. RemoteSigned 和 Restricted 的区别？提醒：下次课前确认快照 Lesson01-Done 已创建。</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

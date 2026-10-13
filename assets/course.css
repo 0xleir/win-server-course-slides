@@ -1,0 +1,127 @@
+/* ===== 课程主题：仅系统字体，无外网依赖 ===== */
+:root{
+  --bg:#0f1724; --surface:#172234; --surface2:#1e2c44; --line:#2c3d5a;
+  --text:#e6edf6; --muted:#93a4bd; --accent:#4c9aff; --green:#36b37e; --orange:#ffab00; --red:#ff5630; --purple:#a78bfa;
+  --sans:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC","Segoe UI",sans-serif;
+  --mono:"Cascadia Mono",Consolas,Menlo,"Courier New",monospace;
+  /* 字号体系：只有这 5 级 */
+  --fs-hero:60px; --fs-h2:40px; --fs-body:26px; --fs-small:20px; --fs-code:22px;
+}
+html,body,.reveal-viewport{background:var(--bg)}
+.reveal{font-family:var(--sans);color:var(--text);font-size:var(--fs-body);line-height:1.5}
+.reveal .slides{text-align:left}
+.reveal .slides>section{height:720px;box-sizing:border-box;padding:44px 64px 40px}
+.frame{height:100%;display:flex;flex-direction:column;gap:22px}
+.frame>.body{flex:1;display:flex;flex-direction:column;justify-content:center;gap:22px;min-height:0}
+.reveal h1,.reveal h2,.reveal h3{font-family:var(--sans);text-transform:none;letter-spacing:0;margin:0;color:var(--text);text-shadow:none}
+.reveal h1{font-size:var(--fs-hero);font-weight:700;line-height:1.2}
+.reveal h2{font-size:var(--fs-h2);font-weight:700;line-height:1.25}
+.reveal h3{font-size:var(--fs-body);font-weight:700}
+.reveal p{margin:0}
+.reveal ul,.reveal ol{margin:0;padding:0;list-style:none}
+.muted{color:var(--muted)} .small{font-size:var(--fs-small)}
+.accent{color:var(--accent)} .green{color:var(--green)} .orange{color:var(--orange)} .red{color:var(--red)}
+.reveal code{font-family:var(--mono)}
+.reveal :not(pre)>code{background:var(--surface2);padding:1px 8px;border-radius:6px;font-size:.9em;color:#ffd580}
+
+/* 页头：任务标签 + 标题 */
+.head{display:flex;align-items:center;gap:16px}
+.chip{display:inline-flex;align-items:center;gap:8px;padding:4px 14px;border-radius:999px;font-size:var(--fs-small);font-weight:700;background:var(--surface2);color:var(--accent);white-space:nowrap}
+.chip.concept{color:var(--purple)} .chip.lab{color:var(--green)} .chip.check{color:var(--orange)}
+.chip .t{color:var(--muted);font-weight:400}
+
+/* 要点列表 */
+.points li{position:relative;padding-left:30px;margin:10px 0}
+.points li::before{content:"";position:absolute;left:4px;top:.6em;width:10px;height:10px;border-radius:3px;background:var(--accent)}
+.points.check li::before{content:"✓";background:none;color:var(--green);top:0;font-weight:700;left:0}
+
+/* 栅格与卡片 */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+.split{display:grid;grid-template-columns:5fr 7fr;gap:32px;align-items:center}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px 26px}
+.card h3{margin-bottom:10px}
+.card.bad{border-top:4px solid var(--red)} .card.good{border-top:4px solid var(--green)}
+.card.blue{border-top:4px solid var(--accent)}
+
+/* 提示框 */
+.callout{border-left:5px solid var(--accent);background:var(--surface);border-radius:0 12px 12px 0;padding:14px 22px;font-size:var(--fs-small)}
+.callout.warn{border-color:var(--orange)} .callout.danger{border-color:var(--red)}
+.callout b{color:var(--text)}
+.callout a{color:var(--accent);font-weight:700;text-decoration:underline}
+
+/* 代码 */
+.reveal pre{width:100%;margin:0;box-shadow:none;font-size:var(--fs-code);border-radius:12px;border:1px solid var(--line);background:#111a29}
+.reveal pre code{font-size:var(--fs-code);line-height:1.5;padding:18px 22px;max-height:none;background:#111a29;white-space:pre}
+.reveal .hljs-ln-numbers{display:none}
+.code-cap{font-size:var(--fs-small);color:var(--muted);margin-bottom:-12px}
+
+/* 流程图（横向） */
+.flow{display:flex;align-items:stretch;gap:0}
+.flow .node{flex:1;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 14px;text-align:center;font-size:var(--fs-small)}
+.flow .node b{display:block;font-size:var(--fs-body);color:var(--text);margin-bottom:4px}
+.flow .arrow{width:38px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:28px}
+.flow .node.hl{border-color:var(--accent);background:#16304f}
+
+/* 嵌套层级图（林/域/OU） */
+.nest{border:2px solid var(--purple);border-radius:16px;padding:12px 18px 18px}
+.nest>.lbl{font-size:var(--fs-small);font-weight:700;color:var(--purple);margin-bottom:10px}
+.nest .nest{border-color:var(--accent)} .nest .nest>.lbl{color:var(--accent)}
+.nest .nest .nest{border-color:var(--green);border-style:dashed} .nest .nest .nest>.lbl{color:var(--green)}
+.obj{display:inline-block;background:var(--surface2);border-radius:8px;padding:4px 12px;margin:4px;font-size:var(--fs-small)}
+
+/* 拓扑节点 */
+.topo{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;position:relative}
+.topo::before{content:"";position:absolute;left:8%;right:8%;top:50%;border-top:3px dashed var(--line);z-index:0}
+.host{position:relative;z-index:1;flex:1;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px 18px;text-align:center}
+.host .ic{font-size:40px;line-height:1.2}
+.host b{display:block;font-size:var(--fs-body)}
+.host .ip{font-family:var(--mono);color:var(--accent);font-size:var(--fs-small)}
+.host .role{font-size:var(--fs-small);color:var(--muted)}
+.host.dc{border-color:var(--accent)}
+
+/* 路线图 */
+.timeline{display:flex;gap:10px}
+.timeline .seg{background:var(--surface);border-radius:12px;padding:16px 18px;border-top:5px solid var(--accent);font-size:var(--fs-small)}
+.timeline .seg b{display:block;font-size:var(--fs-body);color:var(--text)}
+.timeline .seg .t{color:var(--accent);font-weight:700}
+
+/* GUI 路径 */
+.crumb{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
+.crumb span{background:var(--surface2);border:1px solid var(--line);border-radius:8px;padding:6px 14px;font-size:var(--fs-small)}
+.crumb i{color:var(--muted);font-style:normal}
+
+/* 表格 */
+.reveal table.tbl{border-collapse:collapse;width:100%;font-size:var(--fs-small);margin:0}
+.reveal table.tbl th{background:var(--surface2);color:var(--accent);text-align:left;padding:10px 16px;border:none}
+.reveal table.tbl td{padding:10px 16px;border:none;border-bottom:1px solid var(--line);vertical-align:top}
+
+/* 封面 */
+.cover .frame{justify-content:center;gap:26px}
+.cover .meta{display:flex;gap:12px;flex-wrap:wrap}
+.cover .bar{width:120px;height:6px;border-radius:3px;background:var(--accent)}
+
+/* 页脚 */
+.foot{position:absolute;left:64px;right:64px;bottom:14px;display:flex;justify-content:space-between;font-size:14px;color:#4d5f7d}
+.reveal .slide-number{background:none;color:#4d5f7d;font-family:var(--sans);font-size:14px;right:24px;bottom:12px}
+.reveal .progress{color:var(--accent);height:4px}
+
+/* ===== 点击弹窗（详细步骤/配置说明）：按钮在页内，内容放 <template>，弹层挂在 body 上 ===== */
+.more{margin-left:auto;flex:none;cursor:pointer;font-family:var(--sans);font-size:var(--fs-small);font-weight:700;color:var(--bg);background:var(--orange);border:none;border-radius:999px;padding:6px 18px}
+.more:hover{filter:brightness(1.1)}
+.more+.more{margin-left:0}
+.pop-mask{position:fixed;inset:0;z-index:1000;background:rgba(5,10,18,.72);display:flex;align-items:center;justify-content:center}
+.pop{width:min(960px,92vw);max-height:86vh;overflow:auto;box-sizing:border-box;background:var(--surface);border:1px solid var(--line);border-top:5px solid var(--orange);border-radius:16px;padding:28px 36px 32px;font-family:var(--sans);font-size:20px;line-height:1.65;color:var(--text);text-align:left;position:relative}
+.pop .x{position:sticky;top:0;float:right;margin:-8px -14px 0 0;cursor:pointer;background:var(--surface2);color:var(--text);border:none;border-radius:8px;font-size:18px;padding:4px 12px}
+.pop h3{font-size:26px;margin:0 0 12px;color:var(--text)}
+.pop h4{font-size:21px;margin:22px 0 8px;color:var(--orange)}
+.pop p{margin:6px 0}
+.pop ol{margin:4px 0;padding-left:1.6em;list-style:decimal}
+.pop ul{margin:4px 0;padding-left:1.4em;list-style:disc}
+.pop li{margin:5px 0}
+.pop code{font-family:var(--mono);background:var(--surface2);padding:1px 7px;border-radius:6px;font-size:.92em;color:#ffd580}
+.pop pre{margin:8px 0;background:#111a29;border:1px solid var(--line);border-radius:10px;padding:12px 16px;font-family:var(--mono);font-size:17px;line-height:1.5;white-space:pre-wrap;color:var(--text)}
+.pop table{border-collapse:collapse;width:100%;margin:6px 0}
+.pop th{background:var(--surface2);color:var(--accent);text-align:left;padding:8px 12px}
+.pop td{padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+.pop .tip{border-left:4px solid var(--orange);background:var(--surface2);padding:8px 14px;border-radius:0 8px 8px 0;margin:10px 0}

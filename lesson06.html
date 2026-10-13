@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第6课 · NTFS 权限管理</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 3 · 共享管理　|　第 6 次课 · 学时 11–12</p>
+  <h1>NTFS 权限管理</h1>
+  <p class="muted">决定"谁能读、谁能改、谁根本看不到"</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 · DC1</span></div>
+</div>
+<aside class="notes">开场提问：财务部的工资表放在服务器上，怎么保证 IT 部门的人打不开？今天就用 NTFS 权限解决。本课用到第 3 课建好的 alice、bob、charlie 和 IT-Admins、IT-Users、Finance 三个组，开课前先确认它们都在。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>概念</b>权限级别<br>继承 · 有效权限</div>
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>任务 1</b>创建部门<br>文件夹结构</div>
+      <div class="seg" style="flex:24"><span class="t">24′</span><b>任务 2</b>图形界面<br>配置 NTFS 权限</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 3</b>icacls 命令<br>查看 · 设置 · 备份</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 4</b>验证 bob 的<br>有效权限</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说出"读取 / 读取和执行 / 修改 / 完全控制"的区别</li>
+        <li>禁用继承并按部门设计一套文件夹权限</li>
+        <li>用 <code>icacls</code> 查看、授予、备份和恢复权限，并验证有效权限</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念部分控制在 10 分钟，重点放在"继承"和"有效权限"两页，这是任务 2 和任务 4 的基础。任务 2 是图形界面操作，步骤多，最容易出错，留足 24 分钟。</aside>
+</section>
+
+<!-- 02b 概念：教材补充 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>文件共享：两套权限各管一段</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card">
+        <h3>共享文件夹的四件事</h3>
+        <ul class="points">
+          <li>建立共享文件夹，供网络访问</li>
+          <li>设置<b>文件夹共享权限</b>（网络这道门）</li>
+          <li>设置<b>文件夹 NTFS 权限</b>（磁盘这道门）</li>
+          <li>添加共享用户账号，按部门分配</li>
+        </ul>
+      </div>
+      <div class="card blue">
+        <h3>本课聚焦 NTFS 权限</h3>
+        <ul class="points">
+          <li>NTFS 权限随文件走，本地与网络访问都生效</li>
+          <li>按"所有权/只读/拒绝"给各部门分别授权</li>
+          <li>共享权限留到第 7 课，与 NTFS 叠加取最严</li>
+        </ul>
+      </div>
+    </div>
+    <table class="tbl">
+      <tr><th>权限体系</th><th>作用范围</th><th>由谁决定</th></tr>
+      <tr><td><b>NTFS 权限</b></td><td>本地登录 + 网络访问都生效</td><td>文件系统（本课）</td></tr>
+      <tr><td><b>共享权限</b></td><td>仅网络访问经过共享点时</td><td>共享设置（第 7 课）</td></tr>
+    </table>
+    <div class="callout"><b>原则：</b>公司内部共享按部门建文件夹，本部门有读写删除复制等所有权，对其他部门只读或拒绝。</div>
+  </div>
+</div>
+<aside class="notes">这一页承接教材"Windows服务器共享的搭建"任务分析。教材把文件共享拆成四个动作：建立共享文件夹、设置文件夹共享权限、设置文件夹 NTFS 权限、添加共享用户账号。要让学生明白：一个文件被网络用户访问时，要穿过"共享权限"和"NTFS 权限"两道门，两者取交集中最严格的那个才是最终能做的事。NTFS 权限随文件保存在磁盘上，不管本地登录还是网络访问都生效，所以是基础，本课先把它配透；共享权限只在从网络经过共享点时才叠加进来，留到第 7 课讲。教材给的业务场景是：公司按部门建文件夹，本部门人员对自己部门文件夹有读写删除复制等完整权限（可按用户细分），对其他部门文件夹按需只读或拒绝——这正是本课任务 2 要实现的部门隔离。</aside>
+</section>
+
+<!-- 03 环境 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · 工作组模式<br>NTFS 卷 C:</div></div>
+    </div>
+    <table class="tbl">
+      <tr><th>本地组（第 3 课已建）</th><th>成员</th></tr>
+      <tr><td><b>IT-Admins</b></td><td>alice</td></tr>
+      <tr><td><b>IT-Users</b></td><td>bob、charlie</td></tr>
+      <tr><td><b>Finance</b></td><td>charlie</td></tr>
+    </table>
+    <div class="callout"><b>注意：</b>charlie 同时属于 IT-Users 和 Finance，后面算有效权限时要用到。</div>
+  </div>
+</div>
+<aside class="notes">全部操作都在 DC1 上完成，此时还没有域，用的是本地用户和组。课前让学生运行 net localgroup IT-Users 确认组成员，如果第 3 课没做完，先补建账号。</aside>
+</section>
+
+<!-- 04 概念1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>NTFS 标准权限：一级包含一级</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>读取 R</b>看内容、看属性</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>读取和执行 RX</b>+ 运行程序<br>+ 遍历文件夹</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>修改 M</b>+ 写入<br>+ 删除</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>完全控制 F</b>+ 改权限<br>+ 取得所有权</div>
+    </div>
+    <div class="grid2">
+      <div class="card bad">
+        <h3>常见误区</h3>
+        <ul class="points">
+          <li>给普通员工"完全控制"图省事</li>
+          <li>员工就能自己改权限、把别人踢出去</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>正确做法</h3>
+        <ul class="points">
+          <li>最小权限：日常办公给"修改"就够</li>
+          <li>"完全控制"只给管理员组</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">修改和完全控制只差两项：更改权限、取得所有权，但正是这两项决定了谁是"管理者"。另有一个独立的"写入 W"权限，只能新建和写入、不能删除。提问：修改权限包含读取吗？（包含，任务 4 会验证。）</aside>
+</section>
+
+<!-- 05 概念2 继承 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>权限继承：父文件夹往下传</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">C:\CompanyData（显式设置）</div>
+        <div class="nest">
+          <div class="lbl">IT（禁用继承，重新设置）</div>
+          <span class="obj">📄 readme.txt</span>
+          <div class="nest"><div class="lbl">Confidential（再次禁用）</div><span class="obj">🔒 secret.txt</span></div>
+        </div>
+      </div>
+      <table class="tbl">
+        <tr><th>禁用继承时的选择</th><th>结果</th></tr>
+        <tr><td><b>转换为显式权限</b></td><td>把继承来的条目复制一份，之后可以逐条删改</td></tr>
+        <tr><td><b>删除所有继承的权限</b></td><td>清空，只剩手动添加的条目（容易把自己锁在外面）</td></tr>
+      </table>
+    </div>
+    <div class="callout">本课统一选<b>"转换为显式权限"</b>，再删除不需要的组。</div>
+  </div>
+</div>
+<aside class="notes">默认情况下新文件夹会继承 C:\ 的权限，其中有 Users 组的读取，所以任何本地用户都能看到。灰色的复选框就是继承来的条目，不能直接删，必须先禁用继承。常见错误：选了"删除所有继承的权限"，结果连 Administrators 都没了。</aside>
+</section>
+
+<!-- 06 概念3 有效权限 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>有效权限怎么算</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card"><h3>① 累加</h3><p class="small">用户 + 所属各组的"允许"取并集</p></div>
+      <div class="card"><h3>② 拒绝优先</h3><p class="small">显式"拒绝"压过"允许"</p></div>
+      <div class="card"><h3>③ 没写 = 没有</h3><p class="small">ACL 里不出现，就访问不了</p></div>
+    </div>
+    <table class="tbl">
+      <tr><th>用户</th><th>IT 文件夹</th><th>Finance 文件夹</th><th>Confidential</th></tr>
+      <tr><td><b>alice</b>（IT-Admins）</td><td class="green">完全控制</td><td class="green">完全控制</td><td class="green">完全控制</td></tr>
+      <tr><td><b>bob</b>（IT-Users）</td><td class="green">修改</td><td class="red">无</td><td class="red">无</td></tr>
+      <tr><td><b>charlie</b>（IT-Users + Finance）</td><td class="green">修改</td><td class="green">修改</td><td class="red">无</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">这张表就是任务 2 配完后应该得到的结果，可以先让学生自己推算再揭晓。charlie 是累加规则的典型：两个组的权限合在一起。Confidential 只有 Administrators 和 alice，所以 bob、charlie 都进不去——这属于"没写就没有"，不是"拒绝"。</aside>
+</section>
+
+<!-- 07 任务1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 12′ · DC1</span></span><h2>创建部门文件夹结构</h2><button class="more" data-pop="pop-l06-07-steps">📋 详细步骤</button><button class="more" data-pop="pop-l06-07-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div>
+        <div class="code-cap">1.1 创建文件夹</div>
+<pre><code class="language-powershell" data-trim>
+mkdir C:\CompanyData
+mkdir C:\CompanyData\IT
+mkdir C:\CompanyData\Finance
+mkdir C:\CompanyData\Public
+mkdir C:\CompanyData\IT\Confidential
+</code></pre>
+      </div>
+      <div>
+        <div class="code-cap">1.2 创建测试文件</div>
+<pre><code class="language-powershell" data-trim>
+"IT部门文件" |
+  Out-File C:\CompanyData\IT\readme.txt
+"财务部门文件" |
+  Out-File C:\CompanyData\Finance\readme.txt
+"公共文件" |
+  Out-File C:\CompanyData\Public\readme.txt
+</code></pre>
+      </div>
+    </div>
+<pre><code class="language-powershell" data-trim>
+"机密文件" | Out-File C:\CompanyData\IT\Confidential\secret.txt
+</code></pre>
+  </div>
+</div>
+<aside class="notes">在 PowerShell 中执行（Out-File 是 PowerShell 命令）。为了排版把管道拆成两行，学生输入时写成一行也可以。完成后用 tree C:\CompanyData /F 检查结构，四个文件都要在。</aside>
+
+<template id="pop-l06-07-steps">
+  <h3>📋 详细步骤：创建部门文件夹结构</h3>
+  <div class="tip">本课全程在 DC1 单机、工作组模式下进行，用的是第 3 课建的本地组。先确认 IT-Admins / IT-Users / Finance 三个组都在：<code>net localgroup</code>。</div>
+  <h4>第一步：以管理员打开 PowerShell，建文件夹</h4>
+<pre>mkdir C:\CompanyData
+mkdir C:\CompanyData\IT
+mkdir C:\CompanyData\Finance
+mkdir C:\CompanyData\Public
+mkdir C:\CompanyData\IT\Confidential</pre>
+  <h4>第二步：建 4 个测试文件</h4>
+<pre>"IT部门文件"   | Out-File C:\CompanyData\IT\readme.txt
+"财务部门文件" | Out-File C:\CompanyData\Finance\readme.txt
+"公共文件"     | Out-File C:\CompanyData\Public\readme.txt
+"机密文件"     | Out-File C:\CompanyData\IT\Confidential\secret.txt</pre>
+  <h4>第三步：检查结构</h4>
+<pre>tree C:\CompanyData /F     # 4 个文件夹 + 4 个文件都要在</pre>
+  <div class="tip"><code>Out-File</code> 是 PowerShell 命令；管道拆行只为排版，写成一行也行。这些测试文件是后面"以 bob 身份读文件"验证有效权限用的。</div>
+</template>
+<template id="pop-l06-07-why">
+  <h3>💡 每项为什么：文件夹结构</h3>
+  <ul>
+    <li><b>为什么按部门分文件夹？</b>权限最好以"文件夹"为单位、按部门划分，再把权限授予对应的<b>组</b>而不是个人——这样人员变动只调组成员即可。</li>
+    <li><b>Confidential 放在 IT 下面：</b>演示"子文件夹可以比父文件夹更严"——即使能进 IT，也不一定能进 Confidential，靠的是后面"禁用继承 + 单独授权"。</li>
+    <li><b>先放测试文件：</b>光看权限表不直观，后面用 bob 实际去 <code>type</code>/<code>echo</code> 这些文件，能亲眼看到"读得到/写不了/进不去"，把抽象权限变成可观察的结果。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务2 操作路径 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 24′ · DC1</span></span><h2>图形界面：先禁用继承</h2><button class="more" data-pop="pop-l06-08-steps">📋 详细步骤</button><button class="more" data-pop="pop-l06-08-why">💡 为什么要禁用继承</button></div>
+  <div class="body">
+    <div class="crumb"><span>右键文件夹</span><i>›</i><span>属性</span><i>›</i><span>安全</span><i>›</i><span>高级</span><i>›</i><span>禁用继承</span><i>›</i><span>转换为显式权限</span></div>
+    <div class="crumb"><span>安全</span><i>›</i><span>编辑</span><i>›</i><span>添加 / 删除组</span><i>›</i><span>勾选权限</span><i>›</i><span>确定</span></div>
+    <div class="callout"><b>2.1 根目录 C:\CompanyData</b>：取消继承 → 转换为显式 → 删除 <code>Users</code>，再添加三个部门组。</div>
+    <div class="callout warn"><b>顺序很重要：</b>从上往下配。先配根目录，再配 IT、Finance，最后配 Confidential。</div>
+  </div>
+</div>
+<aside class="notes">演示一遍完整的根目录操作，学生跟做，剩下三个文件夹让学生自己完成。常见错误：在"安全"页直接点删除 Users，弹出"无法删除，因为继承"——这时要回到"高级"先禁用继承。添加组时位置选本机 DC1，输入组名后点"检查名称"。</aside>
+
+<template id="pop-l06-08-steps">
+  <h3>📋 详细步骤：禁用继承（图形界面）</h3>
+  <div class="tip">默认子文件夹会<b>继承</b>父目录（乃至 C 盘根）的权限。要让每个部门文件夹各管各的，必须先切断继承、把继承来的权限"固化"成本文件夹自己的显式条目，才能删改。</div>
+  <h4>以根目录 C:\CompanyData 为例</h4>
+  <ol>
+    <li>右键 <code>C:\CompanyData</code> →「属性」→「安全」选项卡 →「高级」</li>
+    <li>点左下「<b>禁用继承</b>」→ 弹窗选「<b>将已继承的权限转换为此对象的显式权限</b>」（不要选"删除所有")</li>
+    <li>回到「安全」页，现在条目前面不再有"(继承自 C:\\)"字样，可以删改了</li>
+    <li>删除 <code>Users</code>（点「编辑」→ 选中 Users → 删除）</li>
+    <li>添加三个部门组：「编辑」→「添加」→ 输入组名 → 点「检查名称」确认 → 勾对应权限</li>
+  </ol>
+  <h4>顺序：从上往下</h4>
+  <ol>
+    <li>先配根目录 C:\CompanyData，再配 \IT、\Finance，<b>最后</b>配 \IT\Confidential</li>
+    <li>每个子文件夹都要<b>先禁用继承→转换为显式</b>，再删改（见下一页权限表）</li>
+  </ol>
+  <div class="tip">常见错误：在「安全」页直接点删除 Users，弹"无法删除，因为继承"——说明还没在「高级」里禁用继承。添加组时位置选本机（DC1），不是域。</div>
+</template>
+<template id="pop-l06-08-why">
+  <h3>💡 为什么要禁用继承</h3>
+  <ul>
+    <li><b>继承是什么？</b>NTFS 权限默认从父文件夹往下传。C:\CompanyData 不动的话，里面每个文件夹都带着从 C 盘继承来的 Users 等条目，无法实现"部门隔离"。</li>
+    <li><b>为什么选"转换为显式"而不是"删除所有"？</b>转换会把当前继承到的条目变成本文件夹自己的，权限不中断、可继续增删；"删除所有"会清空，容易把自己（Administrators）也锁掉。</li>
+    <li><b>禁用继承后怎么看出来？</b>icacls 输出里带 <code>(I)</code> 的是继承来的条目；禁用并转换后，这些 (I) 消失，变成本文件夹的显式条目。</li>
+    <li><b>为什么从上往下配？</b>先把父目录定好，子目录转换为显式时带下来的是"已经整理过"的父权限，少走回头路。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 权限表 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 2 参数</span><h2>四个文件夹的权限设计</h2><button class="more" data-pop="pop-l06-09-steps">📋 四个文件夹逐个配</button><button class="more" data-pop="pop-l06-09-why">💡 为什么这样设计</button></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:24%">文件夹</th><th>保留 / 添加</th><th style="width:24%">删除</th></tr>
+      <tr><td><b>2.1</b> C:\CompanyData</td><td>Administrators 完全控制<br>IT-Admins 修改 · IT-Users 读取和执行 · Finance 读取和执行</td><td>Users</td></tr>
+      <tr><td><b>2.2</b> \IT</td><td>IT-Admins 完全控制 · IT-Users 修改</td><td>Finance</td></tr>
+      <tr><td><b>2.3</b> \Finance</td><td>Finance 修改 · IT-Admins 完全控制</td><td>IT-Users</td></tr>
+      <tr><td><b>2.4</b> \IT\Confidential</td><td>仅 Administrators 完全控制 · alice 完全控制</td><td>其他全部</td></tr>
+    </table>
+    <div class="callout">2.2–2.4 每个文件夹都要先<b>禁用继承 → 转换为显式</b>，再改。</div>
+  </div>
+</div>
+<aside class="notes">转换为显式后，子文件夹会带着父目录的全部条目，比如 IT 里会有 IT-Admins 修改，需要改成完全控制。Confidential 要删得最干净，连 SYSTEM、CREATOR OWNER 也按原文只保留两条。提问：为什么根目录给 IT-Users 和 Finance 读取和执行？（让他们能进入根目录看到部门文件夹。）</aside>
+
+<template id="pop-l06-09-steps">
+  <h3>📋 四个文件夹逐个配（图形界面权限表）</h3>
+  <div class="tip">每个文件夹都先「高级→禁用继承→转换为显式」，再按下面删/改。转换后 IT 里会带着父目录来的"IT-Admins 修改"，记得改成"完全控制"。</div>
+  <h4>2.1 根目录 C:\CompanyData</h4>
+  <ul>
+    <li>保留 <b>Administrators 完全控制</b></li>
+    <li>添加 <b>IT-Admins 修改</b>、<b>IT-Users 读取和执行</b>、<b>Finance 读取和执行</b></li>
+    <li>删除 <b>Users</b></li>
+  </ul>
+  <h4>2.2 \IT</h4>
+  <ul><li>保留/改成 <b>IT-Admins 完全控制</b>、<b>IT-Users 修改</b>；删除 <b>Finance</b></li></ul>
+  <h4>2.3 \Finance</h4>
+  <ul><li><b>Finance 修改</b>、<b>IT-Admins 完全控制</b>；删除 <b>IT-Users</b></li></ul>
+  <h4>2.4 \IT\Confidential（删得最干净）</h4>
+  <ul><li>只留 <b>Administrators 完全控制</b> + <b>alice 完全控制</b>；其他部门组全删</li></ul>
+  <div class="tip"><b>真机实证：</b>转换为显式后，Confidential 会带着 <code>SYSTEM</code>、<code>CREATOR OWNER</code>、<code>Users</code> 等条目，它们<b>都可以删</b>，最终只剩 Administrators + alice 两条。<br><b>坑：</b>icacls <code>/remove:g</code> 一次写多个名字时，只要有一个名字不存在（拼错或那个组根本不在列表里），<b>整条命令什么都不删</b>，只显示"已成功处理 0 个文件"。删完一定要再用 <code>icacls</code> 看一眼。</div>
+</template>
+<template id="pop-l06-09-why">
+  <h3>💡 为什么这样设计</h3>
+  <ul>
+    <li><b>根目录给 IT-Users / Finance "读取和执行"：</b>只为让他们能"进入"根目录、看到自己部门的子文件夹；不给写，他们动不了根目录本身。</li>
+    <li><b>各部门文件夹给"修改"而不是"完全控制"：</b>最小权限——日常办公"修改"（读写改删）就够了。"完全控制"还能改权限、夺取所有权，等于让员工能自己改规则、把别人踢出去，不该给。</li>
+    <li><b>Finance 删掉 IT-Users：</b>财务数据只给财务。因为禁用了继承，IT-Users 不会再从根目录"漏"进来。</li>
+    <li><b>Confidential 只留管理员 + alice：</b>演示"没写就没有"——bob、charlie 不在名单上，直接进不去，这不是"拒绝"，是"根本没授予"。</li>
+    <li><b>charlie 的有效权限：</b>他同属 IT-Users 和 Finance，在不同文件夹拿不同权限，正好用来讲"有效权限 = 各组权限的并集，减去拒绝"。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务3 查看与缩写 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>icacls：查看权限、读懂缩写</h2></div>
+  <div class="body">
+    <div class="split">
+      <div>
+        <div class="code-cap">3.1 查看权限</div>
+<pre><code class="language-powershell" data-trim>
+icacls C:\CompanyData
+icacls C:\CompanyData\IT
+icacls C:\CompanyData\Finance
+icacls C:\CompanyData\IT\Confidential
+</code></pre>
+      </div>
+      <table class="tbl">
+        <tr><th>缩写</th><th>含义</th></tr>
+        <tr><td><code>F</code> / <code>M</code></td><td>完全控制 / 修改</td></tr>
+        <tr><td><code>RX</code></td><td>读取和执行</td></tr>
+        <tr><td><code>R</code> / <code>W</code></td><td>读取 / 写入</td></tr>
+        <tr><td><code>(OI)</code></td><td>对象继承：传给文件</td></tr>
+        <tr><td><code>(CI)</code></td><td>容器继承：传给子文件夹</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+<aside class="notes">对照任务 2 的设计表核对 icacls 输出，这是检查图形界面操作是否正确的最快方法。输出中带 (I) 的条目表示继承来的；禁用继承后应该看不到 (I)。提问：一个条目只有 (CI) 没有 (OI)，文件会得到这个权限吗？</aside>
+</section>
+
+<!-- 11 任务3 授予与备份 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>icacls：授予、备份、恢复</h2><button class="more" data-pop="pop-l06-11-steps">📋 详细步骤</button><button class="more" data-pop="pop-l06-11-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">3.2 设置 Public 文件夹权限</div>
+<pre><code class="language-powershell" data-trim>
+icacls C:\CompanyData\Public /grant Everyone:(OI)(CI)M
+icacls C:\CompanyData\Public /grant "IT-Admins":(OI)(CI)F
+</code></pre>
+    <div class="code-cap">3.4 备份和恢复权限</div>
+<pre><code class="language-powershell" data-trim>
+icacls C:\CompanyData /save C:\LabFiles\acl_backup.txt /T
+icacls C:\ /restore C:\LabFiles\acl_backup.txt
+</code></pre>
+    <div class="callout warn"><b>/T</b> 递归处理所有子目录和文件；备份前确认 <code>C:\LabFiles</code> 已存在。<b>恢复要在父目录 <code>C:\</code> 上执行</b>：备份里记的是相对路径 <code>CompanyData\...</code>。</div>
+  </div>
+</div>
+<aside class="notes">(OI)(CI)M 的意思是"修改权限，同时传给子文件和子文件夹"。在 PowerShell 里括号可能被解析，若报错可以给整个参数加引号，如 "Everyone:(OI)(CI)M"。注意：/save 记录的是相对于父目录的路径（CompanyData\...），所以 /restore 必须在 C:\ 上执行；在 C:\CompanyData 上执行会报"找不到文件"（真机实测：处理 1 个文件时失败）。</aside>
+
+<template id="pop-l06-11-steps">
+  <h3>📋 详细步骤：icacls 授予 / 备份 / 恢复</h3>
+  <div class="tip">图形界面配完后，用 icacls 命令行快速补配 Public、并给整个结构做权限备份。</div>
+  <h4>3.2 给 Public 配权限</h4>
+<pre>icacls C:\CompanyData\Public /grant "Everyone:(OI)(CI)M"
+icacls C:\CompanyData\Public /grant "IT-Admins:(OI)(CI)F"</pre>
+  <ul>
+    <li><code>(OI)</code>=传给文件，<code>(CI)</code>=传给子文件夹，<code>M</code>=修改，<code>F</code>=完全控制</li>
+    <li>PowerShell 里括号可能被解析，<b>给整个参数加引号</b>（如上），否则可能报错</li>
+  </ul>
+  <h4>3.4 备份权限（务必先建目录）</h4>
+<pre>mkdir C:\LabFiles                                   # 若不存在先建
+icacls C:\CompanyData /save C:\LabFiles\acl_backup.txt /T</pre>
+  <h4>恢复权限</h4>
+<pre>icacls C:\ /restore C:\LabFiles\acl_backup.txt</pre>
+  <div class="tip"><b>真机实证的坑：</b>/save 记录的是<b>相对父目录</b>的路径（CompanyData\\...）。在 <code>C:\CompanyData</code> 上 /restore 会报"找不到文件"，必须在 <b>C:\</b> 根上执行（如上）。</div>
+</template>
+<template id="pop-l06-11-why">
+  <h3>💡 每项为什么：icacls</h3>
+  <ul>
+    <li><b>为什么还要学命令行？</b>icacls 能批量、可脚本化、能备份恢复，图形界面做不到。核查权限时 <code>icacls 文件夹</code> 一行就看全，比点开"高级"快得多。</li>
+    <li><b>(OI)(CI) 的意义：</b>决定权限往下传给谁。只有 (CI) 没有 (OI) 时，子<b>文件夹</b>继承、而该文件夹里的<b>文件</b>不继承——这正是"有效权限"题目的考点。</li>
+    <li><b>Public 给 Everyone 修改：</b>公共区就是让所有人读写交换文件，所以给 Everyone。但只给"修改"不给"完全控制"，防止有人改权限把别人锁掉。</li>
+    <li><b>为什么备份 ACL？</b>权限配错或被人改乱时，一条 /restore 就能回到已知good状态，比重配一遍快且不出错。相当于权限的"快照"。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 任务4 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 4 <span class="t">· 16′ · DC1</span></span><h2>以 bob 身份验证有效权限</h2><button class="more" data-pop="pop-l06-12-steps">📋 详细步骤</button><button class="more" data-pop="pop-l06-12-why">💡 结果为什么是这样</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+runas /user:bob cmd
+</code></pre>
+    <div class="code-cap">在 bob 的 CMD 窗口中</div>
+<pre><code class="language-powershell" data-trim>
+type C:\CompanyData\IT\readme.txt
+echo "test" >> C:\CompanyData\IT\readme.txt
+type C:\CompanyData\Finance\readme.txt
+type C:\CompanyData\IT\Confidential\secret.txt
+</code></pre>
+    <p class="small muted">bob 的密码：<code>Lab@2026b</code>（第 3 课设置）</p>
+  </div>
+</div>
+<aside class="notes">runas 会打开一个新窗口，标题栏显示"以 DC1\bob 身份运行"，提醒学生在新窗口里输命令，不要在自己的管理员窗口里测。如果输入密码后报"登录失败：未授予用户在此计算机上的请求登录类型"，回顾第 5 课的"允许本地登录"设置。</aside>
+
+<template id="pop-l06-12-steps">
+  <h3>📋 详细步骤：以 bob 身份验证有效权限</h3>
+  <div class="tip">bob 属于 IT-Users（不属于 Finance、不在 Confidential 名单）。用 runas 以 bob 身份开一个窗口，实际去读写各文件夹，观察权限是否符合设计。</div>
+  <h4>第一步：以 bob 身份开窗口</h4>
+<pre>runas /user:bob cmd</pre>
+  <ul><li>输入 bob 的密码 <code>Lab@2026b</code>（第 3 课设的，不回显）</li>
+  <li>新窗口标题栏显示"以 DC1\bob 身份运行"——<b>在新窗口里</b>敲下面的命令，别在管理员窗口里测</li></ul>
+  <h4>第二步：逐个测试</h4>
+<pre>type C:\CompanyData\IT\readme.txt            # 能读（IT-Users 对 IT 有修改）
+echo "test" >> C:\CompanyData\IT\readme.txt  # 能写
+type C:\CompanyData\Finance\readme.txt       # 读不到（Finance 已删 IT-Users）
+type C:\CompanyData\IT\Confidential\secret.txt   # 进不去（名单里没有 bob）</pre>
+  <div class="tip">若 runas 报"未授予用户在此计算机上的请求登录类型"，回第 5 课检查"允许本地登录"是否包含了 bob 所在的组。</div>
+</template>
+<template id="pop-l06-12-why">
+  <h3>💡 结果为什么是这样</h3>
+  <ul>
+    <li><b>IT 能读能写：</b>bob 属于 IT-Users，IT 文件夹给了 IT-Users"修改"权限，所以读写都行。</li>
+    <li><b>Finance 读不到：</b>Finance 文件夹禁用了继承、并删掉了 IT-Users。bob 不在任何对 Finance 有权限的组里，访问被拒。</li>
+    <li><b>Confidential 进不去：</b>名单只有 Administrators 和 alice。bob 不在上面——这是"<b>没写就没有</b>"，不是显式"拒绝"，但结果一样是打不开。</li>
+    <li><b>这就是有效权限：</b>一个用户对某文件夹的实际权限 = 他所在<b>各组</b>在该文件夹权限的<b>并集</b>，再减去任何"拒绝"。bob 只在 IT-Users 一个相关组里，所以只有 IT 可读写。</li>
+    <li><b>想验证 charlie？</b>charlie 同属 IT-Users+Finance，对 IT 和 Finance 都有权限，可用"高级→有效访问"选项卡这个图形化计算器再查一遍。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 任务4 预期 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 4 验证</span><h2>预期结果</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>命令</th><th>预期</th><th>原因</th></tr>
+      <tr><td><code>type IT\readme.txt</code></td><td class="green">成功</td><td>IT-Users 修改，修改含读取</td></tr>
+      <tr><td><code>echo ... >> IT\readme.txt</code></td><td class="green">成功</td><td>修改含写入</td></tr>
+      <tr><td><code>type Finance\readme.txt</code></td><td class="red">拒绝访问</td><td>Finance 文件夹已删除 IT-Users</td></tr>
+      <tr><td><code>type Confidential\secret.txt</code></td><td class="red">拒绝访问</td><td>只有 Administrators 和 alice</td></tr>
+    </table>
+    <div class="crumb"><span>属性</span><i>›</i><span>安全</span><i>›</i><span>高级</span><i>›</i><span>有效访问</span><i>›</i><span>选择用户 bob</span><i>›</i><span>查看有效访问</span></div>
+  </div>
+</div>
+<aside class="notes">四条结果全部符合才算任务完成；如果 Finance 能读到，说明 2.3 没禁用继承或忘了删 IT-Users。"有效访问"选项卡是图形化的有效权限计算器，可以让学生再查一下 charlie，对照概念 3 的表格。</aside>
+</section>
+
+<!-- 14 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>权限不符合预期？按这个顺序查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:32%">现象</th><th style="width:32%">原因</th><th>处理</th></tr>
+      <tr><td>删除 Users 时提示"继承"</td><td>继承未禁用</td><td>高级 → 禁用继承 → 转换为显式</td></tr>
+      <tr><td>bob 能读 Finance</td><td>2.3 漏删 IT-Users 或仍有 Users</td><td><code>icacls</code> 查看后删掉多余条目</td></tr>
+      <tr><td>管理员也打不开文件夹</td><td>选了"删除所有继承的权限"</td><td>高级 → 更改所有者 → 重新授权</td></tr>
+      <tr><td>改了组成员仍无效</td><td>令牌在登录时生成</td><td>关闭 runas 窗口重新打开</td></tr>
+      <tr><td><code>/restore</code> 找不到文件</td><td>备份记录的是相对路径</td><td>在父目录 <code>C:\</code> 上执行恢复</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">先让学生用 icacls 看实际 ACL，而不是凭记忆猜。访问令牌的问题很隐蔽：组成员变更后必须重新登录才生效，这一点在第 7 课共享权限时还会遇到。</aside>
+</section>
+
+<!-- 15 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>对照清单自查</h2></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>C:\CompanyData 及 4 个子文件夹存在</li>
+        <li>根目录已删除 Users，三个部门组已添加</li>
+        <li>IT、Finance、Confidential 已禁用继承</li>
+        <li>Public 有 Everyone 修改权限</li>
+        <li>C:\LabFiles\acl_backup.txt 存在</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>VM1 拍快照<br><code>Lesson06-Done</code></p>
+        <p class="small muted" style="margin-top:8px">第 7 课共享文件夹在此基础上做</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">以管理员身份在 DC1 上逐项人工核对左侧清单，有未达成项时对照任务 2 参数表逐条修正。左侧检查项是按本课任务整理的要点，以实际配置结果为准。清单逐项达成后，运行 check06.ps1 生成 PDF 报告提交（下载链接见最后一页「作业提交」）。快照一定要拍：第 7 课直接共享 C:\CompanyData，权限错了下节课的实验结果全会不对。</aside>
+</section>
+
+<!-- 16 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">NTFS 权限按用户和组控制文件访问，实现部门隔离与最小权限</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">禁用继承 → 转换为显式 → 删改组；<code>icacls</code> 查看、授予、备份</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">权限累加、拒绝优先、没写就没有；用 runas 实测有效权限</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 7 课：</b>共享文件夹与网络访问。把 C:\CompanyData 共享出去，从 CLIENT1 访问，理解共享权限与 NTFS 权限的叠加。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check06.ps1" download>check06.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check06.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 修改和完全控制差在哪？2. 禁用继承时为什么选"转换为显式权限"？3. charlie 对 Finance 文件夹有什么权限，为什么？4. (OI)(CI) 分别代表什么？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

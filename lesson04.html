@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第4课 · 本地安全策略与审计</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 2 · 用户管理　|　第 4 次课 · 学时 7–8</p>
+  <h1>本地安全策略与审计</h1>
+  <p class="muted">给账号加上"规则"，给操作留下"记录"</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 · DC1</span></div>
+</div>
+<aside class="notes">开场提问：上节课我们建了 alice、bob 等账号，如果有人给 alice 设了 123456 这种密码，或者有人整夜暴力猜 bob 的密码，我们能阻止吗？事后能知道吗？今天的三件事：密码策略管"设什么密码"，锁定策略管"能猜几次"，审计管"事后查得到"。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>概念</b>为什么要策略<br>审计与事件 ID</div>
+      <div class="seg" style="flex:19"><span class="t">19′</span><b>任务 1</b>密码策略</div>
+      <div class="seg" style="flex:15"><span class="t">15′</span><b>任务 2</b>账户锁定策略</div>
+      <div class="seg" style="flex:19"><span class="t">19′</span><b>任务 3</b>审计策略<br>查安全日志</div>
+      <div class="seg" style="flex:15"><span class="t">15′</span><b>任务 4</b>验证</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>在 <code>secpol.msc</code> 中配置密码策略和账户锁定策略</li>
+        <li>说出每项锁定参数的含义，并能测试、解锁被锁账户</li>
+        <li>开启审计，用事件 ID 4624 / 4625 / 4720 找到对应日志</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念部分可以穿插在任务之间讲，不必一次讲完。任务 2 和任务 3 都需要"故意失败"，提醒学生记住自己做了几次错误尝试，后面查日志时要对得上。</aside>
+</section>
+
+<!-- 02b 概念：教材补充 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>密码策略六要素（教材释义）</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:30%">策略项</th><th>系统释义</th></tr>
+      <tr><td><b>强制密码历史</b></td><td>重用旧密码前要记住的历史密码个数；用同一密码越久，被暴力破解的机会越大</td></tr>
+      <tr><td><b>密码最长使用期限</b></td><td>系统要求用户更改密码之前，可以使用该密码的天数</td></tr>
+      <tr><td><b>密码最短使用期限</b></td><td>用户更改密码之前必须使用的天数；取值须 <b>小于</b>最长使用期限</td></tr>
+      <tr><td><b>最短密码长度</b></td><td>可以组成账户密码的最少字符数</td></tr>
+      <tr><td><b>账户锁定阈值</b></td><td>导致账户被锁定的连续登录失败次数</td></tr>
+      <tr><td><b>账户锁定时间</b></td><td>自动解锁前账户保持锁定的时长（1–99999 分钟，0 = 须管理员手动解锁）</td></tr>
+      <tr><td><b>复位账户锁定计数器</b></td><td>一次登录失败后，多久没再失败就把失败计数器清零（分钟）</td></tr>
+    </table>
+    <div class="callout warn"><b>路径：</b>服务器管理器 → 工具 → 本地安全策略 → 账户策略</div>
+  </div>
+</div>
+<aside class="notes">这张表是教材"必备知识"里对密码策略每一项的标准解释，后面任务配具体数值时就对应这些含义：强制密码历史决定了重用旧密码前要记住几个历史密码，用户用同一个密码时间越长、被暴力破解的机会就越大，所以要限制重用；密码最长使用期限是系统强制你改密码之前能用多少天；密码最短使用期限是你改密码之前必须先用够多少天，它必须小于最长期限，否则就能连续改密码把历史挤掉再改回原密码；最短密码长度规定了密码至少几个字符。后三项是账户锁定策略：账户锁定阈值是连续错几次就锁账户，锁定之后在管理员复位或锁定时间到期前都不能用；账户锁定时间是自动解锁前锁多久，范围 1 到 99999 分钟，设成 0 就表示必须管理员手动解锁；复位账户锁定计数器是一次登录失败后，多久没再失败就把失败计数清零。所有这些都在"服务器管理器→工具→本地安全策略"里设置。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · 工作组独立服务器<br>本地账号 alice、bob</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>课前：</b>沿用第 3 课的快照，alice、bob 等本地用户已存在</div>
+      <div class="callout"><b>本课：</b>只在 DC1 上操作，所有策略都是<b>本地</b>策略</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">现在还没有域（第 17 课才建 lab.local），所以这里改的是本机的本地安全策略，只对 DC1 生效。开始前让学生 net user 确认 alice、bob 存在，不存在的先按第 3 课补建。</aside>
+</section>
+
+<!-- 04 概念1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>密码为什么需要"规则"</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>没有策略</h3>
+        <ul class="points">
+          <li>用户会选 123456、生日、用户名</li>
+          <li>弱密码在字典里，几秒内被猜中</li>
+          <li>一个密码用好几年，泄露了也不换</li>
+          <li>被迫改密码时又改回旧密码</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>有策略</h3>
+        <ul class="points">
+          <li><b>复杂性</b>：大写/小写/数字/符号任三类</li>
+          <li><b>最短长度 8</b>：拉大暴力破解空间</li>
+          <li><b>最长期限 90 天</b>：泄露也有期限</li>
+          <li><b>历史 5 个 + 最短期限 1 天</b>：防改回旧密码</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>一句话：</b>策略在"设置密码的那一刻"由系统强制检查，不依赖用户自觉。</div>
+  </div>
+</div>
+<aside class="notes">提问：为什么需要"最短使用期限 1 天"？答：否则用户可以连续改 5 次把历史挤掉，然后改回原密码。复杂性要求还禁止密码包含用户名。注意策略只在下次设置密码时检查，已有的旧密码不会被强制改。</aside>
+</section>
+
+<!-- 05 概念2 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>账户锁定：三个参数如何配合</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>输错密码</b>计数器 +1</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>15 分钟内没再错</b>计数器归零</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>累计到 5 次</b>账户被锁定</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>30 分钟后</b>自动解锁<br>或管理员手动解锁</div>
+    </div>
+    <table class="tbl">
+      <tr><th>参数</th><th>本课取值</th><th>作用</th></tr>
+      <tr><td>账户锁定阈值</td><td>5 次</td><td>错几次就锁；0 表示永不锁定</td></tr>
+      <tr><td>重置账户锁定计数器</td><td>15 分钟</td><td>多久不出错就清零计数</td></tr>
+      <tr><td>账户锁定时间</td><td>30 分钟</td><td>锁多久；必须 ≥ 重置时间</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">锁定策略是对付在线暴力破解的主要手段，但阈值太低会被人恶意锁死别人的账号（拒绝服务），所以要折中。系统要求锁定时间 ≥ 重置计数器时间，设置阈值时 Windows 会自动建议另两项的值。内置 Administrator 默认不受锁定影响，所以测试要用 bob。</aside>
+</section>
+
+<!-- 06 概念3 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>审计：让操作留下证据</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>① 开启审计策略</b>secpol.msc</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 发生事件</b>登录、建用户…</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>③ 写入安全日志</b>每条带事件 ID</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 查询分析</b>eventvwr / PowerShell</div>
+    </div>
+    <table class="tbl">
+      <tr><th>事件 ID</th><th>含义</th><th>由哪项审计产生</th></tr>
+      <tr><td><code>4624</code></td><td>登录成功</td><td>审核登录事件 · 成功</td></tr>
+      <tr><td><code>4625</code></td><td>登录失败</td><td>审核登录事件 · 失败</td></tr>
+      <tr><td><code>4720</code></td><td>用户账户已创建</td><td>审核账户管理 · 成功</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">强调：没开审计就没有记录，出事后再开已经晚了。"成功"和"失败"要分别勾选，只勾成功就看不到 4625 暴力破解痕迹。这三个事件 ID 在后面的日志分析、内网安全课中会反复出现，要求学生记住。</aside>
+</section>
+
+<!-- 07 任务1 GUI -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 19′ · DC1</span></span><h2>配置密码策略</h2><button class="more" data-pop="pop-l04-07-steps">📋 详细步骤</button><button class="more" data-pop="pop-l04-07-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p class="muted">Win+R 运行 <code>secpol.msc</code>，然后：</p>
+    <div class="crumb"><span>安全设置</span><i>›</i><span>账户策略</span><i>›</i><span>密码策略</span></div>
+    <table class="tbl">
+      <tr><th>策略项</th><th>设置为</th></tr>
+      <tr><td>密码必须符合复杂性要求</td><td><b>已启用</b></td></tr>
+      <tr><td>密码长度最小值</td><td>8 个字符</td></tr>
+      <tr><td>密码最短使用期限</td><td>1 天</td></tr>
+      <tr><td>密码最长使用期限</td><td>90 天</td></tr>
+      <tr><td>强制密码历史</td><td>5 个记住的密码</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">双击策略项即可修改。Server 默认已启用复杂性、最长期限 42 天，可以先让学生记下默认值再改，体会"默认并不安全"。改完不需要重启，但可以执行 gpupdate /force 让策略立即刷新。</aside>
+<template id="pop-l04-07-steps">
+  <h3>📋 详细步骤：配置密码策略</h3>
+  <div class="tip">幻灯片里的 DC1 / 10.10.10.10 是示例，你操作的是自己的 DC（计算机名 DC-学号）。本课还没有域，改的全是<b>本机</b>策略。</div>
+  <h4>第一步：打开本地安全策略</h4>
+  <ol>
+    <li>用 <b>Administrator</b> 登录你的 DC（示例里叫 DC1）</li>
+    <li>按 <code>Win + R</code>，输入 <code>secpol.msc</code> 回车（也可以：服务器管理器 → 工具 → 本地安全策略）</li>
+    <li>左侧依次展开「安全设置」→「账户策略」→ 单击「密码策略」，右侧会列出 6 项策略和“安全设置”一列当前值</li>
+  </ol>
+  <h4>第二步：先记下默认值</h4>
+  <ol>
+    <li>把右侧每一项的当前值抄下来（例如复杂性默认已启用、最长使用期限默认 42 天）</li>
+    <li>和下一步要改的值对比，体会“默认并不安全”</li>
+  </ol>
+  <h4>第三步：逐项修改</h4>
+  <ol>
+    <li>双击策略项 → 在弹出的属性窗口里修改 → 点「确定」。按下表改 5 项：
+      <table><tr><th>策略项</th><th>怎么改</th></tr>
+      <tr><td>密码必须符合复杂性要求</td><td>选「已启用」</td></tr>
+      <tr><td>密码长度最小值</td><td>输入 <code>8</code>（个字符）</td></tr>
+      <tr><td>密码最短使用期限</td><td>输入 <code>1</code>（天）</td></tr>
+      <tr><td>密码最长使用期限</td><td>输入 <code>90</code>（天）</td></tr>
+      <tr><td>强制密码历史</td><td>输入 <code>5</code>（个记住的密码）</td></tr></table>
+    </li>
+    <li>每改一项都要点「确定」，回到列表后看“安全设置”一列是否已变成新值</li>
+  </ol>
+  <div class="tip">建议先改「最长使用期限」再改「最短使用期限」：最短期限必须<b>小于</b>最长期限，顺序反了可能会弹提示。</div>
+  <h4>第四步：让策略立即生效</h4>
+  <ol>
+    <li>改完不需要重启。以管理员身份打开 PowerShell，执行：</li>
+  </ol>
+<pre>gpupdate /force          # 应提示“计算机策略更新成功完成”“用户策略更新成功完成”</pre>
+  <h4>第五步：怎么验证做对了</h4>
+  <ol>
+    <li>在 secpol.msc 右侧逐项核对 5 个值和上表一致</li>
+    <li>下一页用 <code>net accounts</code> 再从命令行核对一遍，并用弱密码实际测试</li>
+  </ol>
+</template>
+<template id="pop-l04-07-why">
+  <h3>💡 每一项密码策略为什么这么设</h3>
+  <table>
+    <tr><th style="width:26%">配置项</th><th>意义</th></tr>
+    <tr><td><b>密码必须符合复杂性要求</b><br>已启用</td><td>要求密码包含大写、小写、数字、符号中的<b>任意三类</b>，并且不能包含用户名。<code>123456</code>、生日这类字典里的密码会被直接拒绝。不启用的话，用户几乎一定会选弱密码，几秒就能被猜中。</td></tr>
+    <tr><td><b>密码长度最小值</b><br>8 个字符</td><td>每多一位，暴力破解要试的组合就成倍增加。8 位是本课的基线；太短的密码即使满足复杂性，也很快能被穷举出来。</td></tr>
+    <tr><td><b>密码最长使用期限</b><br>90 天</td><td>到期强制改密码。密码就算泄露了，最多也只能被用 90 天。默认 42 天虽然更短，但过于频繁地改密码会让用户写在纸上，本课取 90 天作为折中。</td></tr>
+    <tr><td><b>强制密码历史</b><br>5 个</td><td>系统记住最近 5 个旧密码，改密码时不能和它们重复，防止“被迫改了又改回去”。</td></tr>
+    <tr><td><b>密码最短使用期限</b><br>1 天</td><td>改完密码至少用满 1 天才能再改。它和“历史 5 个”是一对：如果最短期限是 0，用户可以一口气连改 5 次把历史挤掉，然后改回原来的密码，历史策略就白设了。它必须<b>小于</b>最长使用期限。</td></tr>
+    <tr><td><b>gpupdate /force</b></td><td>立即刷新策略，不用等后台自动刷新，也不用重启。</td></tr>
+    <tr><td><b>只在设置密码时检查</b></td><td>策略在“设置密码的那一刻”由系统强制检查；已有的旧密码不会被要求立刻修改。所以下一页要用“设一个新密码”的方式来测试。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>策略项是灰色、不能改：没有用管理员账户登录，或打开的不是 <code>secpol.msc</code></li>
+    <li>改最短使用期限时报错：它不能大于等于最长使用期限，先把最长期限改成 90</li>
+    <li>改完后弱密码仍能设置：策略没刷新，执行 <code>gpupdate /force</code> 后重试</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务1 验证 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 19′ · DC1</span></span><h2>查看策略并测试弱密码</h2><button class="more" data-pop="pop-l04-08-steps">📋 详细步骤</button><button class="more" data-pop="pop-l04-08-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 DC1 上，以管理员身份打开 PowerShell</div>
+<pre><code class="language-powershell" data-trim>
+# 查看当前生效的密码与锁定策略
+net accounts
+
+# 测试：给 alice 设置弱密码
+net user alice 123456
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>net accounts：</b>最小密码长度 8、最长期限 90、历史 5，与 secpol 一致</div>
+      <div class="callout warn"><b>预期失败：</b>提示密码不满足密码策略要求（复杂性 / 长度）</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">如果 net user alice 123456 竟然成功了，说明复杂性没有启用或没有刷新，回到 secpol 检查。可以追问：Lab@2026a 为什么能通过？（大写、小写、数字、符号四类都有，长度 9）。测试完不要把 alice 的密码改乱，后面课程还要用。</aside>
+<template id="pop-l04-08-steps">
+  <h3>📋 详细步骤：查看策略并测试弱密码</h3>
+  <h4>第一步：以管理员身份打开 PowerShell</h4>
+  <ol>
+    <li>右键「开始」→ <b>Windows PowerShell (管理员)</b></li>
+    <li>窗口标题里带“管理员”字样才对，否则后面 <code>net user</code> 会报“拒绝访问”</li>
+  </ol>
+  <h4>第二步：查看当前生效的策略</h4>
+<pre>net accounts</pre>
+  <p>预期看到（中文系统的字段名）：</p>
+  <table><tr><th>输出行</th><th>应为</th></tr>
+  <tr><td>密码最短使用期限(天)</td><td>1</td></tr>
+  <tr><td>密码最长使用期限(天)</td><td>90</td></tr>
+  <tr><td>密码长度最小值</td><td>8</td></tr>
+  <tr><td>保持的密码历史记录长度</td><td>5</td></tr>
+  <tr><td>锁定阈值 / 锁定持续时间 / 锁定观测窗口</td><td>这是任务 2 的锁定策略，现在还没配，先不管</td></tr></table>
+  <div class="tip"><code>net accounts</code> <b>不显示</b>“复杂性要求”这一项。复杂性开没开，要靠第三步的弱密码测试来证明。</div>
+  <h4>第三步：用弱密码测试</h4>
+<pre>net user alice 123456</pre>
+  <ol>
+    <li>预期<b>失败</b>，提示类似：“密码不满足密码策略的要求。检查最小密码长度、密码复杂性和密码历史的要求。”</li>
+    <li>如果显示“命令成功完成”，说明复杂性没有启用或没刷新，回 secpol.msc 检查并执行 <code>gpupdate /force</code></li>
+  </ol>
+  <div class="tip">测完<b>不要</b>把 alice 的密码改乱，后面课程还要用。可以想一想：<code>Lab@2026a</code> 为什么能通过？</div>
+  <h4>第四步：怎么验证做对了</h4>
+  <ul>
+    <li><code>net accounts</code> 显示最小长度 8、最长期限 90、历史 5，与 secpol 一致</li>
+    <li><code>net user alice 123456</code> 被拒绝</li>
+  </ul>
+</template>
+<template id="pop-l04-08-why">
+  <h3>💡 每一步为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">操作 / 现象</th><th>意义</th></tr>
+    <tr><td><b>net accounts</b></td><td>从命令行看“当前真正生效”的密码与锁定策略。GUI 里改了不等于已经生效，用命令行再核对一次最可靠；任务 2 配完锁定策略后也用它查看。</td></tr>
+    <tr><td><b>net user alice 123456</b></td><td>以管理员身份给 alice 设一个新密码。策略只在“设置密码的那一刻”检查，所以设新密码是最直接的测试方法。</td></tr>
+    <tr><td><b>为什么选 123456</b></td><td>只有 6 位（不满足最小长度 8），且只有数字一类（不满足复杂性三类），两条规则都违反，必然被拒。</td></tr>
+    <tr><td><b>Lab@2026a 能通过</b></td><td>大写、小写、数字、符号四类都有，长度 9，也不包含用户名，满足全部规则。后面建测试用户时可以按这个思路设密码。</td></tr>
+    <tr><td><b>管理员 PowerShell</b></td><td>修改其他用户的密码需要管理员权限，普通窗口会提示“拒绝访问”。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li><code>123456</code> 设置成功：复杂性未启用或没刷新，检查 secpol 后执行 <code>gpupdate /force</code></li>
+    <li>提示“找不到用户名”：alice 不存在，先按第 3 课补建</li>
+    <li><code>net accounts</code> 的值和 secpol 不一致：改完某一项时没点「确定」，回去重新确认</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 配置与测试 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 15′ · DC1</span></span><h2>配置账户锁定并测试</h2><button class="more" data-pop="pop-l04-09-steps">📋 详细步骤</button><button class="more" data-pop="pop-l04-09-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>secpol.msc</span><i>›</i><span>账户策略</span><i>›</i><span>账户锁定策略</span></div>
+    <div class="grid3">
+      <div class="card"><h3>锁定阈值</h3>5 次无效尝试</div>
+      <div class="card"><h3>锁定时间</h3>30 分钟</div>
+      <div class="card"><h3>重置计数器</h3>15 分钟</div>
+    </div>
+    <div class="code-cap">另开一个 CMD 窗口，故意输错 bob 的密码 5 次</div>
+<pre><code class="language-powershell" data-trim>
+runas /user:bob cmd
+</code></pre>
+  </div>
+</div>
+<aside class="notes">先设阈值，系统会弹窗建议另两项为 30 分钟，确认后再按本课取值核对。runas 每次只能试一次，要重复执行 5 次，每次故意输错。提醒学生不要用 Administrator 测试：内置管理员默认不会被锁定，测了也看不出效果。</aside>
+<template id="pop-l04-09-steps">
+  <h3>📋 详细步骤：配置账户锁定并测试</h3>
+  <h4>第一步：打开账户锁定策略</h4>
+  <ol>
+    <li><code>Win + R</code> → <code>secpol.msc</code></li>
+    <li>左侧「安全设置」→「账户策略」→ 单击「账户锁定策略」，右侧有 3 项（锁定阈值、锁定时间、重置计数器）</li>
+  </ol>
+  <div class="tip">一开始“账户锁定时间”和“重置账户锁定计数器”是灰色/不适用的，因为阈值是 0（不锁定）。<b>必须先设阈值</b>。</div>
+  <h4>第二步：先设锁定阈值</h4>
+  <ol>
+    <li>双击「账户锁定阈值」→ 输入 <code>5</code>（次无效登录）→「确定」</li>
+    <li>系统会弹出“建议的数值改动”，自动给另外两项填上建议值 → 点「确定」接受</li>
+  </ol>
+  <h4>第三步：按本课取值核对另两项</h4>
+  <ol>
+    <li>双击「账户锁定时间」→ 确认/改为 <code>30</code> 分钟 →「确定」</li>
+    <li>双击「重置账户锁定计数器」→ 改为 <code>15</code> 分钟 →「确定」</li>
+    <li>右侧最终应为：阈值 5 次、锁定时间 30 分钟、重置计数器 15 分钟</li>
+  </ol>
+  <div class="tip">锁定时间必须 ≥ 重置计数器时间。先把锁定时间定为 30，再把计数器改成 15，就不会报错。</div>
+  <p>等价的命令行写法（管理员 PowerShell）：</p>
+<pre>net accounts /lockoutthreshold:5 /lockoutduration:30 /lockoutwindow:15
+net accounts        # 锁定阈值 5、锁定持续时间(分) 30、锁定观测窗口(分) 15</pre>
+  <h4>第四步：用 bob 故意输错 5 次</h4>
+  <ol>
+    <li>另开一个 CMD 窗口，执行：</li>
+  </ol>
+<pre>runas /user:bob cmd</pre>
+  <ol>
+    <li>提示“输入 bob 的密码:”时，故意输一个错误密码回车（输入时屏幕不显示字符，正常）</li>
+    <li>预期报错：“1326: 用户名或密码不正确。”</li>
+    <li><b>runas 每次只能试一次</b>，按 ↑ 键调出上一条命令，重复执行，共输错 5 次</li>
+    <li>第 6 次再试（哪怕输对密码），会看到“引用的帐户当前已锁定，且可能无法登录”之类的提示</li>
+  </ol>
+  <div class="tip">一定用 <b>bob</b> 测试，不要用 Administrator：内置管理员默认不会被锁定，测了也看不出效果。5 次错误要在 15 分钟内输完，否则计数器会清零。</div>
+  <h4>第五步：怎么验证做对了</h4>
+  <ul>
+    <li><code>net accounts</code> 显示锁定阈值 5、持续时间 30、观测窗口 15</li>
+    <li>bob 输错 5 次后再尝试，提示账户已锁定（下一页再用 <code>net user bob</code> 确认）</li>
+  </ul>
+</template>
+<template id="pop-l04-09-why">
+  <h3>💡 三个锁定参数为什么这么设、怎么配合</h3>
+  <table>
+    <tr><th style="width:26%">配置项</th><th>意义</th></tr>
+    <tr><td><b>账户锁定阈值</b><br>5 次无效尝试</td><td>连续输错几次就锁账户。它是对付在线暴力破解的主要手段：攻击者连续猜错 5 次就会被锁 30 分钟，猜密码的速度被大大拖慢。设成 0 表示永不锁定（默认）；设得太低（如 1–2 次）又容易被人故意输错把别人的账号锁死，相当于拒绝服务，所以取 5 作为折中。</td></tr>
+    <tr><td><b>重置账户锁定计数器</b><br>15 分钟</td><td>每输错一次计数器 +1；如果 15 分钟内没有再输错，计数器清零。偶尔手滑输错一两次的正常用户不会越攒越多，最终被锁。</td></tr>
+    <tr><td><b>账户锁定时间</b><br>30 分钟</td><td>被锁后多久自动解锁。在这之前账户完全不能用（即使密码正确），除非管理员手动解锁。设成 0 表示必须管理员手动解锁。系统要求它 <b>≥ 重置计数器时间</b>。</td></tr>
+    <tr><td><b>三者合起来</b></td><td>“15 分钟内累计错满 5 次 → 锁 30 分钟 → 到时自动解锁，或管理员提前解锁”。</td></tr>
+    <tr><td><b>先设阈值</b></td><td>阈值为 0 时锁定功能是关闭的，另两项没有意义，所以是灰的；设了阈值，Windows 才会给另两项填建议值。</td></tr>
+    <tr><td><b>runas /user:bob cmd</b></td><td>以 bob 的身份启动一个 cmd，需要输入 bob 的密码，相当于一次登录尝试。用它可以在不注销管理员的情况下反复制造“登录失败”。</td></tr>
+    <tr><td><b>不用 Administrator 测</b></td><td>内置 Administrator 默认不受锁定策略影响（防止管理员把自己锁在外面），用它测永远锁不住。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>锁定时间/重置计数器无法设置：阈值还是 0，先设阈值 5</li>
+    <li>输错 5 次仍未锁定：用的是 Administrator，或 5 次之间间隔太久（超过 15 分钟计数器已清零）</li>
+    <li>runas 提示“找不到用户”：bob 不存在，按第 3 课补建</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 检查与解锁 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 15′ · DC1</span></span><h2>检查锁定状态并解锁</h2><button class="more" data-pop="pop-l04-10-steps">📋 详细步骤</button><button class="more" data-pop="pop-l04-10-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>① 检查 bob 的状态</h3>
+<pre><code class="language-powershell" data-trim>
+net user bob
+</code></pre>
+        <p class="small muted" style="margin-top:12px">预期："Account active" 显示 No 或锁定提示</p>
+      </div>
+      <div class="card blue">
+        <h3>② 解锁账户</h3>
+<pre><code class="language-powershell" data-trim>
+net user bob /active:yes
+</code></pre>
+        <p class="small muted" style="margin-top:12px">或图形界面操作（见下方路径）</p>
+      </div>
+    </div>
+    <div class="crumb"><span>lusrmgr.msc</span><i>›</i><span>用户</span><i>›</i><span>bob</span><i>›</i><span>属性</span><i>›</i><span>取消"账户已锁定"</span></div>
+  </div>
+</div>
+<aside class="notes">中文系统中这一行显示为"帐户启用"，锁定时可能显示 Locked（已锁定）。如果 net user bob /active:yes 后仍然登录不了，就用 lusrmgr.msc 取消勾选"账户已锁定"，这是最可靠的解锁方式。提问：如果管理员不管，bob 多久后能自己恢复？（30 分钟）</aside>
+<template id="pop-l04-10-steps">
+  <h3>📋 详细步骤：检查锁定状态并解锁</h3>
+  <h4>第一步：查看 bob 的状态</h4>
+  <ol>
+    <li>以管理员身份打开 PowerShell 或 CMD，执行：</li>
+  </ol>
+<pre>net user bob</pre>
+  <ol>
+    <li>找到“帐户启用”这一行（英文系统叫 <code>Account active</code>）</li>
+    <li>被锁定时这一行会显示 <code>Locked</code>（已锁定）或 <code>No</code>；正常时为 <code>Yes</code></li>
+  </ol>
+  <div class="tip">如果仍显示 Yes：回到上一页，确认是在 15 分钟内对 bob 连续输错了 5 次。</div>
+  <h4>第二步：用命令解锁</h4>
+<pre>net user bob /active:yes        # 应提示“命令成功完成”
+net user bob                     # 再看一次，“帐户启用”应为 Yes</pre>
+  <h4>第三步：命令无效时，用图形界面解锁（最可靠）</h4>
+  <ol>
+    <li><code>Win + R</code> → <code>lusrmgr.msc</code> 回车，打开「本地用户和组」</li>
+    <li>左侧单击「用户」→ 右侧双击 <b>bob</b>，打开属性</li>
+    <li>在「常规」选项卡里，<b>取消勾选「账户已锁定」</b>→「确定」</li>
+  </ol>
+  <div class="tip">「账户已锁定」这个复选框只有在账户真的被锁时才能点；平时是灰的，你不能手动把账户“锁上”。</div>
+  <h4>第四步：怎么验证做对了</h4>
+  <ol>
+    <li><code>net user bob</code> 中“帐户启用”为 Yes</li>
+    <li>再执行 <code>runas /user:bob cmd</code>，输入<b>正确</b>密码，应能弹出一个以 bob 身份运行的 cmd 窗口</li>
+  </ol>
+</template>
+<template id="pop-l04-10-why">
+  <h3>💡 每一步为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">操作 / 现象</th><th>意义</th></tr>
+    <tr><td><b>net user bob</b></td><td>查看单个用户的详细信息，包括是否启用、是否锁定、上次设置密码的时间等。用来确认锁定策略真的生效了。</td></tr>
+    <tr><td><b>帐户启用：Locked / No</b></td><td>说明 bob 已被锁定，此时即使输对密码也登录不了，直到锁定时间到期或管理员解锁。</td></tr>
+    <tr><td><b>net user bob /active:yes</b></td><td>把账户设为启用状态，课程方案里把它作为命令行解锁方法；但它不一定能清掉锁定标记，所以执行后要再用 <code>net user bob</code> 和一次真实登录来确认。</td></tr>
+    <tr><td><b>lusrmgr.msc 取消“账户已锁定”</b></td><td>直接清除锁定标记，是最可靠的解锁方式。命令执行后仍登录不了时就用它。</td></tr>
+    <tr><td><b>不管它会怎样</b></td><td>锁定时间设的是 30 分钟，管理员不处理的话，bob 30 分钟后会自动恢复。</td></tr>
+    <tr><td><b>一定要解锁</b></td><td>本课最后要拍快照 <code>Lesson04-Done</code>，下节课从这个快照开始。bob 处于锁定状态会影响后面的实验。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li><code>/active:yes</code> 后 bob 仍登录不了：锁定标记没清掉，用 lusrmgr.msc 取消勾选「账户已锁定」</li>
+    <li>lusrmgr 里「账户已锁定」是灰的：账户其实没被锁，问题在别处（例如密码记错了）</li>
+    <li>提示“拒绝访问”：没有用管理员身份运行命令窗口</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务3 配置审计 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 19′ · DC1</span></span><h2>开启审计策略</h2><button class="more" data-pop="pop-l04-11-steps">📋 详细步骤</button><button class="more" data-pop="pop-l04-11-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>secpol.msc</span><i>›</i><span>本地策略</span><i>›</i><span>审核策略</span></div>
+    <table class="tbl">
+      <tr><th>策略项</th><th>设置为</th><th>记录什么</th></tr>
+      <tr><td>审核账户登录事件</td><td>成功, 失败</td><td>凭据验证</td></tr>
+      <tr><td>审核登录事件</td><td>成功, 失败</td><td>4624 / 4625</td></tr>
+      <tr><td>审核对象访问</td><td>成功, 失败</td><td>文件等对象（需另设 SACL）</td></tr>
+      <tr><td>审核策略更改</td><td>成功, 失败</td><td>谁改了策略</td></tr>
+      <tr><td>审核账户管理</td><td>成功, 失败</td><td>4720 建用户等</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">每一项都要同时勾选"成功"和"失败"。"账户登录事件"和"登录事件"名字很像容易混：前者是验证凭据的机器记录，后者是被登录的机器记录，本机实验两者都会产生。对象访问还要在具体文件夹上配置审核项（SACL）才会有日志，第 6 课 NTFS 后可以回头体验。</aside>
+<template id="pop-l04-11-steps">
+  <h3>📋 详细步骤：开启审计策略</h3>
+  <h4>第一步：打开审核策略</h4>
+  <ol>
+    <li><code>Win + R</code> → <code>secpol.msc</code></li>
+    <li>左侧「安全设置」→「本地策略」→ 单击「审核策略」，右侧列出 9 项，默认大多是“无审核”</li>
+  </ol>
+  <div class="tip">注意是「本地策略 → 审核策略」，不是下面的「高级审核策略配置」。本课只用前者。</div>
+  <h4>第二步：逐项勾选“成功”和“失败”</h4>
+  <ol>
+    <li>双击策略项 → 在属性窗口里<b>同时勾选「成功」和「失败」</b>→「确定」。按下表配置 5 项：
+      <table><tr><th>策略项</th><th>勾选</th></tr>
+      <tr><td>审核账户登录事件</td><td>成功 + 失败</td></tr>
+      <tr><td>审核登录事件</td><td>成功 + 失败</td></tr>
+      <tr><td>审核对象访问</td><td>成功 + 失败</td></tr>
+      <tr><td>审核策略更改</td><td>成功 + 失败</td></tr>
+      <tr><td>审核账户管理</td><td>成功 + 失败</td></tr></table>
+    </li>
+    <li>回到列表，这 5 项的“安全设置”一列都应显示 <b>成功, 失败</b></li>
+  </ol>
+  <div class="tip">最常见的错误是只勾了「成功」——那样就看不到 4625 登录失败事件。</div>
+  <h4>第三步：刷新策略并用命令核对</h4>
+<pre>gpupdate /force
+auditpol /get /category:*      # 列出各类审核的当前设置</pre>
+  <p>在输出里找“登录/注销”类下的“登录”、“帐户管理”类下的“用户帐户管理”等子类别，应显示“成功和失败”。</p>
+  <h4>第四步：怎么验证做对了</h4>
+  <ul>
+    <li>secpol.msc 中 5 项都是“成功, 失败”</li>
+    <li>下一页制造事件后，安全日志里能同时找到 4624（成功）和 4625（失败）</li>
+  </ul>
+</template>
+<template id="pop-l04-11-why">
+  <h3>💡 每一项审计为什么要开</h3>
+  <table>
+    <tr><th style="width:26%">配置项</th><th>意义</th></tr>
+    <tr><td><b>审核账户登录事件</b></td><td>记录“凭据验证”：由<b>验证密码的那台机器</b>记录。本机账户就是在本机验证，所以本课实验会产生；以后有了域，它会记在域控上。</td></tr>
+    <tr><td><b>审核登录事件</b></td><td>由<b>被登录的那台机器</b>记录：成功产生 <code>4624</code>，失败产生 <code>4625</code>。这是追查暴力破解最重要的一项。名字和上一项很像，别混：一个管“谁验证的密码”，一个管“登录到了哪台机器”。</td></tr>
+    <tr><td><b>审核对象访问</b></td><td>记录对文件、文件夹等对象的访问。光开这一项还不够，还要在具体文件夹上配置审核项（SACL）才会产生日志，第 6 课学完 NTFS 权限后可以回头体验。</td></tr>
+    <tr><td><b>审核策略更改</b></td><td>记录“谁改了策略”。攻击者常常先关掉审计再干坏事，开了这一项，连改策略的动作本身都会留下痕迹。</td></tr>
+    <tr><td><b>审核账户管理</b></td><td>记录建用户、删用户、改密码等账户操作，例如 <code>4720</code>（用户账户已创建）。攻击者偷偷建后门账号就会被记下来。</td></tr>
+    <tr><td><b>成功 + 失败都勾</b></td><td>“成功”记下谁做成了什么，“失败”记下谁尝试了但没成功。只勾成功，暴力破解留下的大量 4625 就全看不到了。</td></tr>
+    <tr><td><b>先开启、后记录</b></td><td>审计不会补记开启之前发生的事。出了事再开已经晚了，所以服务器上线时就要开好。任务 2 里 bob 的那几次失败（开审计之前）不会出现在日志里。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>后面日志里有 4624 没有 4625：“审核登录事件”只勾了成功，补勾失败</li>
+    <li>安全日志里什么都找不到：审计开启后还没有重新触发事件，按下一页再做一次</li>
+    <li>开了对象访问却没有文件访问日志：正常，还没在文件夹上配置 SACL</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 任务3 触发与查看 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 19′ · DC1</span></span><h2>制造事件，再去日志里找它</h2><button class="more" data-pop="pop-l04-12-steps">📋 详细步骤</button><button class="more" data-pop="pop-l04-12-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>a. 注销重登</b>Administrator</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>b. bob 登录</b>故意输错密码</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>c. 新建用户</b>testaudit</div>
+    </div>
+    <div class="crumb"><span>eventvwr.msc</span><i>›</i><span>Windows 日志</span><i>›</i><span>安全</span><i>›</i><span>找 4624 / 4625 / 4720</span></div>
+<pre><code class="language-powershell" data-trim>
+Get-EventLog -LogName Security -Newest 20 |
+  Format-Table TimeGenerated, EventID, Message -Wrap
+</code></pre>
+  </div>
+</div>
+<aside class="notes">建 testaudit 时密码也要满足刚配置的复杂性要求，正好复习任务 1。日志很多时，在事件查看器右侧用"筛选当前日志"输入事件 ID 更快。打开一条 4625，让学生找出"失败原因"和"帐户名称"字段，这就是事后追查暴力破解的依据。</aside>
+<template id="pop-l04-12-steps">
+  <h3>📋 详细步骤：制造事件，再去日志里找它</h3>
+  <div class="tip">先确认上一页的审计已经开好。审计只记录开启<b>之后</b>发生的事，下面 a、b、c 三步必须在开启审计之后做。</div>
+  <h4>第一步（a）：注销并重新登录 Administrator → 产生 4624</h4>
+  <ol>
+    <li>「开始」→ 点用户头像 →「注销」</li>
+    <li>按 <code>Ctrl + Alt + Del</code>（VMware 里用 <code>Ctrl + Alt + Insert</code> 或菜单「发送 Ctrl+Alt+Del」），用 Administrator 正常登录</li>
+  </ol>
+  <h4>第二步（b）：bob 输错密码 → 产生 4625</h4>
+  <ol>
+    <li>打开 CMD，执行 <code>runas /user:bob cmd</code>，故意输错密码 1–2 次</li>
+    <li>看到“1326: 用户名或密码不正确”即可</li>
+  </ol>
+  <div class="tip">别输错满 5 次，否则 bob 又会被锁 30 分钟。记住自己输错了几次，查日志时要对得上。</div>
+  <h4>第三步（c）：新建用户 testaudit → 产生 4720</h4>
+<pre>net user testaudit Lab@2026a /add      # 应提示“命令成功完成”</pre>
+  <p>也可以在 <code>lusrmgr.msc</code> → 用户 → 右键「新用户」里建。密码同样要满足任务 1 的复杂性要求，用 <code>123456</code> 会失败。</p>
+  <h4>第四步：在事件查看器里找</h4>
+  <ol>
+    <li><code>Win + R</code> → <code>eventvwr.msc</code></li>
+    <li>左侧「Windows 日志」→「安全」</li>
+    <li>右侧操作栏点「筛选当前日志」→ 在“&lt;所有事件 ID&gt;”框里输入 <code>4624,4625,4720</code> →「确定」</li>
+    <li>双击一条 <b>4625</b>，在“常规”里找“登录失败的帐户”下的<b>帐户名称</b>（应为 bob）和<b>失败原因</b>（未知用户名或错误密码）</li>
+    <li>再找到 4720，确认“新帐户”的帐户名称是 testaudit</li>
+  </ol>
+  <h4>第五步：用 PowerShell 查询</h4>
+<pre>Get-EventLog -LogName Security -Newest 20 |
+  Format-Table TimeGenerated, EventID, Message -Wrap</pre>
+  <p>预期看到最近 20 条安全事件，EventID 一列中有 4624、4625、4720。只想看某一种可以这样：</p>
+<pre>Get-EventLog -LogName Security -InstanceId 4625 -Newest 5 |
+  Format-Table TimeGenerated, EventID, Message -Wrap</pre>
+  <div class="tip">提示“不允许请求的注册表访问”或拒绝访问：PowerShell 不是以管理员身份运行的。</div>
+  <h4>第六步：怎么验证做对了</h4>
+  <ul>
+    <li>安全日志中存在 4624 和 4625 事件（这是任务 4 自查清单的最后一项）</li>
+    <li>能找到 testaudit 对应的 4720，并能在 4625 里读出帐户名称和失败原因</li>
+  </ul>
+</template>
+<template id="pop-l04-12-why">
+  <h3>💡 每个事件、每个参数是什么意思</h3>
+  <table>
+    <tr><th style="width:26%">项目</th><th>意义</th></tr>
+    <tr><td><b>4624</b> 登录成功</td><td>由“审核登录事件 · 成功”产生。注销重登 Administrator 就会产生。日常大量出现是正常的，用来回答“谁、什么时间、登录了这台机器”。</td></tr>
+    <tr><td><b>4625</b> 登录失败</td><td>由“审核登录事件 · 失败”产生。里面的“帐户名称”和“失败原因”字段是事后追查暴力破解的依据：短时间内同一账号大量 4625，基本就是有人在猜密码。</td></tr>
+    <tr><td><b>4720</b> 用户账户已创建</td><td>由“审核账户管理 · 成功”产生。新建 testaudit 就会产生。不是你建的账号突然出现 4720，要怀疑有人留了后门。</td></tr>
+    <tr><td><b>4740</b> 账户被锁定</td><td>同样属于账户管理类事件。如果你在开启审计后又让 bob 连错 5 次，就会看到它，和 4625 连起来看就是一次完整的“猜密码 → 被锁”过程。本课不要求制造。</td></tr>
+    <tr><td><b>筛选当前日志</b></td><td>安全日志条目非常多，按事件 ID 筛选比一条条翻快得多。</td></tr>
+    <tr><td><b>Get-EventLog -LogName Security</b></td><td>读取“安全”日志；<code>-Newest 20</code> 只取最近 20 条，避免刷屏。</td></tr>
+    <tr><td><b>Format-Table … -Wrap</b></td><td>只显示时间、事件 ID、消息三列；<code>-Wrap</code> 让长消息换行显示，而不是被截断成“…”。</td></tr>
+    <tr><td><b>testaudit 的密码</b></td><td>同样受任务 1 密码策略约束，正好复习：弱密码会被拒绝，满足复杂性的密码才能建成功。</td></tr>
+  </table>
+  <p>这三个事件 ID（4624 / 4625 / 4720）在后面的日志分析、内网安全课中会反复出现，要记住。</p>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>只有 4624 没有 4625：“审核登录事件”只勾了成功，或者 b 步是在开审计之前做的——补勾失败后重做 b 步</li>
+    <li>没有 4720：“审核账户管理”没开，或 testaudit 因密码不合规没建成功（<code>net user testaudit</code> 查一下）</li>
+    <li><code>Get-EventLog</code> 报拒绝访问：用管理员身份运行 PowerShell</li>
+    <li>runas 提示账户已锁定：bob 又被锁了，按任务 2 的方法解锁</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>结果不对？按这个表查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>弱密码 123456 设置成功</td><td>复杂性未启用 / 未刷新</td><td>检查 secpol，执行 <code>gpupdate /force</code></td></tr>
+      <tr><td>输错 5 次仍未锁定</td><td>用的是 Administrator</td><td>改用 bob 测试</td></tr>
+      <tr><td>锁定时间无法设置</td><td>阈值为 0（未启用锁定）</td><td>先设阈值 5，再设时间</td></tr>
+      <tr><td>安全日志里没有 4625</td><td>只勾了"成功"</td><td>审核登录事件补勾"失败"</td></tr>
+      <tr><td>Get-EventLog 拒绝访问</td><td>非管理员 PowerShell</td><td>以管理员身份运行</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">先让学生描述现象、自己猜原因，再翻这一页。审计是"先开启、后记录"，策略开启之前发生的事件不会补记，所以没日志时要在开启后重新触发一次。</aside>
+</section>
+
+<!-- 14 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 4 · 验证与提交</span><h2>任务 4 · 15′ · 对照清单自查</h2></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>密码最短长度 &gt;= 8</li>
+        <li>密码复杂性已启用</li>
+        <li>账户锁定阈值 = 5</li>
+        <li>审核登录事件 = 成功+失败</li>
+        <li>安全日志中存在 4624 和 4625 事件</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>DC1 拍快照<br><code>Lesson04-Done</code></p>
+        <p class="small muted" style="margin-top:8px">下节课从这个快照开始</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上以管理员身份逐项核对左侧清单。最后一项未达成最常见：说明审计开启后没有重新触发登录成功/失败，回到任务 3 再做一遍 a、b 两步。清单逐项达成后，运行 check04.ps1 生成 PDF 报告提交（下载链接见最后一页「作业提交」）。拍快照前确认 bob 已解锁，否则下节课会受影响。</aside>
+</section>
+
+<!-- 15 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">密码与锁定策略防"猜中"，审计让入侵"查得到"</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small"><code>secpol.msc</code> 配策略 → <code>net accounts</code> 查看 → 事件查看器查日志</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">锁定阈值 5；审计要勾"成功+失败"；记住 4624 / 4625 / 4720</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 5 课：</b>用户权限分配与 UAC。谁能本地登录、谁能关机，以及管理员为什么也要"确认提升"。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check04.ps1" download>check04.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check04.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 为什么要设"密码最短使用期限"？2. 账户锁定的三个参数分别是什么意思？3. 登录失败的事件 ID 是多少？没看到它最可能是什么原因？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

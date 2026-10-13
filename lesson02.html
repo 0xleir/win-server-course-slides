@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第2课 · 服务器管理器与角色/功能</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 1 · 走进 Windows 服务器　|　第 2 次课 · 学时 3–4</p>
+  <h1>服务器管理器与角色/功能</h1>
+  <p class="muted">让一台"裸"服务器开始干活：装上 DHCP 和 DNS</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 (DC1)</span></div>
+</div>
+<aside class="notes">开场提问：上节课装好的 Windows Server 和一台普通 Win10 电脑有什么区别？答案是：现在还没区别，服务器的价值来自它承担的"角色"。今天学会用两种方式给服务器加角色：图形界面和 PowerShell。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>概念</b>角色 vs 功能<br>DHCP · DNS</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 1</b>服务器管理器探索</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 2</b>GUI 安装<br>Telnet + DHCP</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 3</b>PowerShell<br>安装 DNS</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 4</b>验证与提交</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清楚"角色"和"功能"的区别，并各举 3 个例子</li>
+        <li>用服务器管理器安装 DHCP 并配置作用域 <code>Lab-Scope</code></li>
+        <li>用 <code>Install-WindowsFeature</code> 安装 DNS 并建立 <code>lab.local</code> 区域</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念讲解控制在 10 分钟，可以穿插在任务 1 中讲。任务 2 和任务 3 故意用两种方法装角色，课后请学生比较哪种更快、更适合批量操作。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · 主实验服务器<br>今天装上 DHCP + DNS</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>课前：</b>恢复到快照 <code>Lesson01-Done</code>，计算机名 DC1、静态 IP 10.10.10.10</div>
+      <div class="callout"><b>课后：</b>DC1 能给网段分配地址（DHCP），也能解析 <code>dc1.lab.local</code>（DNS）</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">本课只需要 VM1。开始前让学生执行 ipconfig 确认 IP 是 10.10.10.10：DHCP 服务器自己必须是静态 IP，否则安装时会出警告。今天建的 DHCP 作用域，会在后续课程给 CLIENT1 分配地址。</aside>
+</section>
+
+<!-- 04 概念：角色 vs 功能 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>角色 vs 功能</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>角色 Role：服务器的"职业"</h3>
+        <ul class="points">
+          <li>对网络中的其他电脑提供服务</li>
+          <li>例：AD DS、IIS（Web）、DHCP、DNS</li>
+          <li>通常带有自己的服务和管理控制台</li>
+        </ul>
+      </div>
+      <div class="card blue">
+        <h3>功能 Feature：服务器的"工具"</h3>
+        <ul class="points">
+          <li>辅助本机或支撑某个角色</li>
+          <li>例：.NET、Telnet 客户端、SNMP</li>
+          <li>单独装上，一般不对外提供服务</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>判断方法：</b>别的电脑会不会来"找它要服务"？会 → 角色；不会 → 功能。</div>
+  </div>
+</div>
+<aside class="notes">这是任务 1.3 要求记录的内容。提问：Telnet 客户端是角色还是功能？为什么？——它只让本机主动连别人，不对外服务，所以是功能。注意：在 PowerShell 里两者统一叫 WindowsFeature，用同一组命令管理。</aside>
+</section>
+
+<!-- 05 概念：DHCP -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>DHCP：自动发放 IP 地址</h2></div>
+  <div class="body">
+    <p class="muted">一台新电脑接入网络、请求地址的四步（DORA）：</p>
+    <div class="flow">
+      <div class="node"><b>① Discover</b>客户端广播<br>"谁能给我地址？"</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② Offer</b>DC1 提供<br>10.10.10.100</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>③ Request</b>客户端<br>"我要这个"</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>④ Ack</b>确认租约<br>附带 DNS 等选项</div>
+    </div>
+    <table class="tbl">
+      <tr><th>术语</th><th>含义</th></tr>
+      <tr><td><b>作用域 Scope</b></td><td>一段可分配的地址池，本课是 10.10.10.100–200</td></tr>
+      <tr><td><b>租约 Lease</b></td><td>地址不是永久给出，到期要续租</td></tr>
+      <tr><td><b>作用域选项</b></td><td>随地址一起下发的参数，如 DNS 服务器</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">强调地址池 100–200 避开了 10.10.10.10、.20、.50 等静态地址，防止冲突。作用域建好后必须"激活"才会发地址，这是学生最常漏的一步。DNS 选项填 10.10.10.10，为第 17 课客户端加域埋下伏笔。</aside>
+</section>
+
+<!-- 06 概念：DNS -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>DNS：把名字翻译成地址</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">DNS 服务器 DC1</div>
+        <div class="nest">
+          <div class="lbl">正向查找区域 lab.local</div>
+          <span class="obj">📄 A 记录 dc1 → 10.10.10.10</span>
+        </div>
+      </div>
+      <table class="tbl">
+        <tr><th>名词</th><th>含义</th></tr>
+        <tr><td><b>区域 Zone</b></td><td>DNS 服务器负责管理的一段名字空间</td></tr>
+        <tr><td><b>正向查找</b></td><td>名字 → IP（本课只做正向）</td></tr>
+        <tr><td><b>A 记录</b></td><td>一个主机名对应一个 IPv4 地址</td></tr>
+        <tr><td><b>区域文件</b></td><td>记录保存在 <code>lab.local.dns</code></td></tr>
+      </table>
+    </div>
+    <div class="callout"><b>查询效果：</b>访问 <code>dc1.lab.local</code> → 区域 lab.local → A 记录 → 10.10.10.10</div>
+  </div>
+</div>
+<aside class="notes">今天建的 lab.local 只是一个普通 DNS 区域，还不是"域"，第 17 课才会创建真正的 AD 域。提问：为什么人们记域名而不记 IP？反向查找（IP → 名字）后续 DNS 专题再讲。</aside>
+</section>
+
+<!-- 06b 概念：系统服务与日志（教材补充） -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 · 教材补充</span><h2>系统服务与 Windows 日志</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>Windows 系统服务</h3>
+        <ul class="points">
+          <li>可在自身会话中长时间运行的程序</li>
+          <li>随开机自动启动，可暂停/重启</li>
+          <li>不显示任何用户界面（后台运行）</li>
+          <li>角色装好后就是靠服务对外工作</li>
+        </ul>
+      </div>
+      <div class="card blue">
+        <h3>Windows 日志类型</h3>
+        <ul class="points">
+          <li>应用程序日志 · 安全日志 · 系统日志</li>
+          <li>Scheduler 服务日志</li>
+          <li>FTP 日志 · WWW 日志 · DNS 服务器日志</li>
+          <li>排障与安全审计都从日志入手</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>联系本课：</b>DHCP、DNS 装完都会生成对应的后台服务，<code>services.msc</code> 里可查，运行状态和事件会写进系统/服务日志。</div>
+  </div>
+</div>
+<aside class="notes">这页是对接教材"必备知识"的补充：教材把"系统服务""服务端口""日志"作为走进 Windows 服务器的基础概念。服务是没有界面的后台程序，角色（DHCP/DNS）本质上就是一组服务——这正好接上本课装的两个角色。日志按用途分成应用程序、安全、系统等多类，安全日志在后面的用户审计、密码攻击检测课会反复用到。可现场打开 services.msc 让学生找到 DHCP Server 和 DNS 两个服务。</aside>
+</section>
+
+<!-- 07 任务1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 16′ · DC1</span></span><h2>服务器管理器深度探索</h2><button class="more" data-pop="pop-l02-07-steps">📋 详细步骤</button><button class="more" data-pop="pop-l02-07-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p>登录后自动启动；关闭后可运行 <code>ServerManager.exe</code> 重新打开。</p>
+    <div class="grid3">
+      <div class="card"><h3>仪表板</h3><p class="small">服务器状态总览：事件、服务、性能告警</p></div>
+      <div class="card"><h3>本地服务器</h3><p class="small">查看/修改计算机名、IP、防火墙、远程桌面等属性</p></div>
+      <div class="card"><h3>所有服务器</h3><p class="small">添加远程服务器统一管理（后续课程使用）</p></div>
+    </div>
+    <div class="callout"><b>📝 记录：</b>在实验报告中写下"角色"与"功能"的区别，各举例 3 个。</div>
+  </div>
+</div>
+<aside class="notes">让学生在"本地服务器"里核对上节课的配置：计算机名 DC1、IP 10.10.10.10。右上角的小旗子是通知中心，任务 2 装完 DHCP 后要从这里点"完成配置"，提前告诉学生它的位置。</aside>
+<template id="pop-l02-07-steps">
+  <h3>📋 详细步骤：服务器管理器深度探索</h3>
+  <h4>第一步：打开服务器管理器</h4>
+  <ol>
+    <li>登录 DC 后，服务器管理器通常会<b>自动弹出</b></li>
+    <li>如果已经关掉了：右键「开始」→「运行」（或 <code>Win + R</code>），输入 <code>ServerManager.exe</code> 回车；也可以点任务栏上的服务器管理器图标</li>
+  </ol>
+  <h4>第二步：看「仪表板」</h4>
+  <ol>
+    <li>左侧点「仪表板」，中间是「欢迎使用服务器管理器」和下面一排状态方块</li>
+    <li>每个方块对应一类角色或服务器组，里面列出「可管理性」「事件」「服务」「性能」「BPA 结果」</li>
+    <li>某项变红并带数字，说明有告警，点进去能看到具体是哪条事件或哪个服务</li>
+  </ol>
+  <h4>第三步：在「本地服务器」里核对上节课的配置</h4>
+  <ol>
+    <li>左侧点「本地服务器」，看「属性」区域</li>
+    <li>「计算机名」应是你自己的名字 <code>DC-学号</code>（幻灯片示例叫 DC1）</li>
+    <li>NIC1（VMnet-Lab）那一行应显示你的静态地址 <code>10.10.10.x</code>（示例 10.10.10.10）；NIC2 显示“由 DHCP 分配”</li>
+    <li>同一区域里还能看到「Windows Defender 防火墙」「远程桌面」等，<b>点蓝色文字</b>就能直接打开对应的设置窗口</li>
+  </ol>
+  <div class="tip">属性区的信息不会实时刷新。刚改过设置却还显示旧值，按 <code>F5</code> 或点右上角的刷新按钮。</div>
+  <h4>第四步：认识「所有服务器」和通知旗子</h4>
+  <ol>
+    <li>左侧点「所有服务器」，现在列表里只有本机一台；以后可以在这里「添加服务器」统一管理（后续课程使用，今天不用加）</li>
+    <li>找到右上角的 <b>小旗子 🚩</b>（通知中心）。任务 2 装完 DHCP 后要从这里点「完成 DHCP 配置」，先记住它的位置</li>
+  </ol>
+  <h4>第五步：完成记录并自查</h4>
+  <ol>
+    <li>在实验报告里写下“角色”和“功能”的区别，各举 3 个例子（可参考概念页：角色如 AD DS、IIS、DHCP、DNS；功能如 .NET、Telnet 客户端、SNMP）</li>
+    <li>用命令再确认一次名字和地址，结果应与「本地服务器」页一致：</li>
+  </ol>
+<pre>hostname                     # 应显示 DC-学号
+ipconfig                     # NIC1 应为 10.10.10.x</pre>
+</template>
+<template id="pop-l02-07-why">
+  <h3>💡 每个面板为什么要看</h3>
+  <table>
+    <tr><th style="width:24%">项目</th><th>意义</th></tr>
+    <tr><td><b>服务器管理器</b><br><code>ServerManager.exe</code></td><td>Windows Server 的“总控台”：装角色、看状态、跳转各种管理工具都从这里开始。记住程序名，关掉之后能随时找回来。</td></tr>
+    <tr><td><b>仪表板</b></td><td>一眼看出服务器“健不健康”。今天装完 DHCP、DNS 后，这里会多出两个角色方块；以后出了问题（服务停止、报错事件），先来这里看哪块变红。</td></tr>
+    <tr><td><b>本地服务器</b></td><td>集中显示计算机名、IP、防火墙、远程桌面等属性。今天先核对计算机名和静态 IP——DHCP 服务器自己<b>必须是静态 IP</b>，否则安装时会出警告；名字和地址不对，后面的 DNS 记录也会跟着错。</td></tr>
+    <tr><td><b>所有服务器</b></td><td>把多台服务器加进来集中管理，不用逐台登录。今天只有一台，后续课程有了更多服务器时会用到。</td></tr>
+    <tr><td><b>通知旗子 🚩</b></td><td>安装角色后的“收尾工作”提醒都在这里。DHCP 装完要从这里点「完成 DHCP 配置」，不点的话旗子会一直显示黄色感叹号。</td></tr>
+    <tr><td><b>角色 vs 功能记录</b></td><td>判断方法：别的电脑会不会来“找它要服务”？会 → 角色（DHCP、DNS）；不会 → 功能（Telnet 客户端）。这是任务 2、3 的基础，装东西时要知道去哪个页面勾选。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>计算机名还是 <code>WIN-XXXXXXX</code>：上节课改名后没重启，或者恢复的不是 <code>Lesson01-Done</code> 快照</li>
+    <li>NIC1 显示 <code>169.254.x.x</code> 或“由 DHCP 分配”：静态 IP 没配好或配到了 NIC2 上，先回到第 1 课的方法改正，再继续今天的实验</li>
+    <li>属性显示的信息和 <code>ipconfig</code> 不一致：服务器管理器没刷新，按 <code>F5</code></li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务2 GUI -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 20′ · DC1</span></span><h2>图形界面安装：功能 + 角色</h2><button class="more" data-pop="pop-l02-08-steps">📋 详细步骤</button><button class="more" data-pop="pop-l02-08-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p class="muted">① 安装 Telnet 客户端（功能）</p>
+    <div class="crumb"><span>服务器管理器</span><i>›</i><span>添加角色和功能</span><i>›</i><span>功能</span><i>›</i><span>勾选 Telnet Client</span><i>›</i><span>安装</span></div>
+    <p class="muted">② 安装 DHCP 服务器（角色）</p>
+    <div class="crumb"><span>添加角色和功能</span><i>›</i><span>服务器角色</span><i>›</i><span>勾选 DHCP Server</span><i>›</i><span>安装</span></div>
+    <div class="crumb"><span>通知 🚩</span><i>›</i><span>Complete DHCP configuration</span><i>›</i><span>默认设置完成向导</span></div>
+    <div class="callout"><b>验证 Telnet：</b>命令行输入 <code>telnet</code>，应能进入 telnet 控制台（<code>quit</code> 退出）。</div>
+  </div>
+</div>
+<aside class="notes">勾选 DHCP Server 时会弹出"添加所需功能"（管理工具），点"添加功能"即可。安装后若不点"完成 DHCP 配置"，服务器管理器会一直显示黄色感叹号，在工作组环境下它主要是创建 DHCP 管理安全组。</aside>
+<template id="pop-l02-08-steps">
+  <h3>📋 详细步骤：图形界面安装 Telnet 客户端 + DHCP 服务器</h3>
+  <h4>第一步：安装 Telnet 客户端（功能）</h4>
+  <ol>
+    <li>服务器管理器 → 右上角「管理」→「添加角色和功能」</li>
+    <li>「开始之前」页直接点「下一步」</li>
+    <li>「安装类型」选<b>「基于角色或基于功能的安装」</b>→ 下一步</li>
+    <li>「服务器选择」选「从服务器池中选择服务器」，选中本机（你的 DC）→ 下一步</li>
+    <li>「服务器角色」页<b>什么都不勾</b>，直接下一步</li>
+    <li>「功能」页往下翻，勾选 <b>Telnet Client（Telnet 客户端）</b>→ 下一步</li>
+    <li>「确认」页点「安装」，等进度条显示“安装成功”后点「关闭」</li>
+  </ol>
+  <div class="tip">Telnet 客户端在「功能」页，不在「服务器角色」页——它只让本机去连别人，不对外服务，所以是功能。</div>
+  <h4>第二步：安装 DHCP 服务器（角色）</h4>
+  <ol>
+    <li>再次打开「添加角色和功能」，前面几页同上</li>
+    <li>「服务器角色」页勾选 <b>DHCP Server（DHCP 服务器）</b></li>
+    <li>弹出“添加 DHCP 服务器所需的功能？”（管理工具），点<b>「添加功能」</b></li>
+    <li>如果弹出静态 IP 相关的警告，说明本机没有静态地址，先取消，回去检查 NIC1</li>
+    <li>后面的「功能」「DHCP 服务器」介绍页都点「下一步」，在「确认」页点「安装」</li>
+    <li>安装完成后可以直接点「关闭」</li>
+  </ol>
+  <h4>第三步：完成 DHCP 配置</h4>
+  <ol>
+    <li>点服务器管理器右上角的<b>小旗子 🚩</b>（会带黄色感叹号）</li>
+    <li>点<b>「完成 DHCP 配置」（Complete DHCP configuration）</b></li>
+    <li>向导里「说明」页点「下一步」，「授权」页保持默认，点「提交」</li>
+    <li>摘要页显示“完成”后点「关闭」，旗子上的感叹号消失</li>
+  </ol>
+  <div class="tip">现在还没有域（工作组环境），授权页的选项不用管，保持默认提交即可；这一步主要是创建 DHCP 管理用的安全组。</div>
+  <h4>第四步：验证</h4>
+  <ol>
+    <li><b>新开</b>一个命令提示符或 PowerShell，输入 <code>telnet</code>，应出现 <code>Microsoft Telnet&gt;</code> 提示符，输入 <code>quit</code> 退出</li>
+    <li>服务器管理器左侧应多出「DHCP」节点</li>
+  </ol>
+  <p>等价的 PowerShell 命令（管理员身份运行；GUI 做过了就不用再跑）：</p>
+<pre>Install-WindowsFeature Telnet-Client
+Install-WindowsFeature DHCP -IncludeManagementTools
+Get-WindowsFeature Telnet-Client, DHCP     # 两项前面都应是 [X]，状态 Installed</pre>
+</template>
+<template id="pop-l02-08-why">
+  <h3>💡 每一步为什么这么做</h3>
+  <table>
+    <tr><th style="width:24%">配置项</th><th>意义</th></tr>
+    <tr><td><b>基于角色或基于功能的安装</b></td><td>这是给本机装角色/功能的常规选项。另一个「远程桌面服务安装」是专门部署远程桌面的，今天用不上，选错会进入完全不同的向导。</td></tr>
+    <tr><td><b>Telnet Client</b>（功能）</td><td>一个简单的命令行连接工具，本课用它体会“功能”的含义：装上后只给本机多一个工具，别的电脑不会来找它要服务。后面也可以用它测试某个端口通不通。</td></tr>
+    <tr><td><b>DHCP Server</b>（角色）</td><td>让你的 DC 给 10.10.10.0/24 网段的电脑自动发 IP。它对外提供服务，所以是角色。后续课程的客户端会从这里拿地址。</td></tr>
+    <tr><td><b>添加所需功能</b>（管理工具）</td><td>角色本身只是后台服务，没有管理工具就没有 DHCP 管理器（<code>dhcpmgmt.msc</code>），下一页配置作用域就无从下手。</td></tr>
+    <tr><td><b>完成 DHCP 配置</b></td><td>安装只是把程序装上，这一步做“收尾”：工作组环境下主要是创建 DHCP 管理安全组。不点的话服务器管理器会一直显示黄色感叹号。</td></tr>
+    <tr><td><b>重开命令行再试 telnet</b></td><td>已经打开的命令行窗口不会感知新装的程序，必须新开一个窗口才能找到 <code>telnet</code> 命令。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>提示 <code>'telnet' 不是内部或外部命令</code>：功能还没装完，或者用的是安装前打开的旧窗口——确认安装成功后重开命令行</li>
+    <li>旗子一直有黄色感叹号：还没点「完成 DHCP 配置」</li>
+    <li>安装时出现静态 IP 警告：本机网卡用的是自动获取地址，回到第 1 课检查 NIC1</li>
+    <li>功能页找不到 Telnet Client：多半是在「服务器角色」页里找了，它在下一页「功能」里</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 作用域 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 20′ · DC1</span></span><h2>配置 DHCP 作用域</h2><button class="more" data-pop="pop-l02-09-steps">📋 详细步骤</button><button class="more" data-pop="pop-l02-09-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>dhcpmgmt.msc</span><i>›</i><span>右键 IPv4</span><i>›</i><span>新建作用域</span><i>›</i><span>填写参数</span><i>›</i><span>激活作用域</span></div>
+    <table class="tbl">
+      <tr><th>参数</th><th>本课取值</th></tr>
+      <tr><td>名称</td><td><code>Lab-Scope</code></td></tr>
+      <tr><td>起始 IP / 结束 IP</td><td><code>10.10.10.100</code> – <code>10.10.10.200</code></td></tr>
+      <tr><td>子网掩码</td><td><code>255.255.255.0</code></td></tr>
+      <tr><td>DNS 服务器</td><td><code>10.10.10.10</code></td></tr>
+    </table>
+    <div class="callout warn"><b>别忘了激活：</b>作用域图标带红色向下箭头 = 未激活，不会发放任何地址。</div>
+  </div>
+</div>
+<aside class="notes">向导中的排除地址、租用期限保持默认即可；路由器（网关）原文未要求，可留空。向导最后选择"是，我想现在激活此作用域"就能一步激活。完成后展开作用域，查看"地址池"确认范围。</aside>
+<template id="pop-l02-09-steps">
+  <h3>📋 详细步骤：新建并激活 DHCP 作用域</h3>
+  <div class="tip">表里的 <code>10.10.10.10</code> 是示例 DC 的地址。DNS 服务器那一项填<b>你自己 DC 的 IP</b>（10.10.10.x）；地址池 .100–.200 大家都一样。</div>
+  <h4>第一步：打开 DHCP 管理器</h4>
+  <ol>
+    <li><code>Win + R</code> 输入 <code>dhcpmgmt.msc</code> 回车（或服务器管理器 →「工具」→「DHCP」）</li>
+    <li>左侧展开你的服务器名，能看到 <b>IPv4</b> 和 IPv6 两个节点</li>
+  </ol>
+  <h4>第二步：新建作用域向导</h4>
+  <ol>
+    <li>右键 <b>IPv4</b> →「新建作用域」→ 欢迎页点「下一步」</li>
+    <li><b>作用域名称</b>：名称填 <code>Lab-Scope</code>，描述可空 → 下一步</li>
+    <li><b>IP 地址范围</b>：起始 IP <code>10.10.10.100</code>，结束 IP <code>10.10.10.200</code>；长度会自动变成 <code>24</code>，子网掩码自动变成 <code>255.255.255.0</code>，核对一下 → 下一步</li>
+    <li><b>添加排除和延迟</b>：保持默认，直接下一步</li>
+    <li><b>租用期限</b>：保持默认 → 下一步</li>
+    <li><b>配置 DHCP 选项</b>：选「是，我想现在配置这些选项」→ 下一步</li>
+    <li><b>路由器（默认网关）</b>：留空 → 下一步</li>
+    <li><b>域名称和 DNS 服务器</b>：在「IP 地址」框里填 <code>10.10.10.10</code>（你的 DC 地址）→ 点「添加」，确认它出现在下方列表里 → 下一步</li>
+    <li><b>WINS 服务器</b>：留空 → 下一步</li>
+    <li><b>激活作用域</b>：选<b>「是，我想现在激活此作用域」</b>→ 下一步 →「完成」</li>
+  </ol>
+  <div class="tip">点「添加」DNS 地址时，可能提示该地址“不是有效的 DNS 服务器”——因为 DNS 角色要到任务 3 才装。这是正常的，选择仍然添加即可。只填进框里、没点「添加」，这项是不会保存的。</div>
+  <h4>第三步：怎么验证做对了</h4>
+  <ol>
+    <li>左侧展开 IPv4，看到「作用域 [10.10.10.0] Lab-Scope」，图标<b>没有红色向下箭头</b></li>
+    <li>展开作用域 →「地址池」，范围是 10.10.10.100 – 10.10.10.200</li>
+    <li>「作用域选项」里有「006 DNS 服务器」= 你的 DC 地址</li>
+  </ol>
+  <p>也可以用 PowerShell 查看（管理员身份）：</p>
+<pre>Get-DhcpServerv4Scope                          # State 应为 Active，StartRange/EndRange 为 .100/.200
+Get-DhcpServerv4OptionValue -ScopeId 10.10.10.0  # 应看到 DNS Servers = 10.10.10.10</pre>
+  <p>等价的建作用域命令（用 GUI 做过就不要再跑，否则会报已存在）：</p>
+<pre>Add-DhcpServerv4Scope -Name "Lab-Scope" -StartRange 10.10.10.100 -EndRange 10.10.10.200 -SubnetMask 255.255.255.0 -State Active
+Set-DhcpServerv4OptionValue -ScopeId 10.10.10.0 -DnsServer 10.10.10.10 -Force</pre>
+</template>
+<template id="pop-l02-09-why">
+  <h3>💡 每个参数为什么这么填</h3>
+  <table>
+    <tr><th style="width:24%">配置项</th><th>意义</th></tr>
+    <tr><td><b>名称</b><br><code>Lab-Scope</code></td><td>只是给人看的标签，方便在管理器里认出它。全班统一叫这个名字，验收时对照清单更方便。</td></tr>
+    <tr><td><b>地址范围</b><br><code>.100</code> – <code>.200</code></td><td>这是“地址池”，客户端只会拿到这段里的地址。它<b>避开了</b> 10.10.10.10、.20、.50 等留给服务器的静态地址，防止 DHCP 把服务器正在用的地址再发给别人，造成 IP 冲突。</td></tr>
+    <tr><td><b>子网掩码</b><br><code>255.255.255.0</code></td><td>即 /24，和你 DC 的 NIC1 一致。掩码不一致，客户端拿到地址后会认为自己和 DC 不在同一个网段，通信就会出问题。</td></tr>
+    <tr><td><b>排除、租用期限</b><br>保持默认</td><td>地址池已经避开了静态地址，不需要再排除；租约到期客户端会自动续租，实验环境用默认值就够了。</td></tr>
+    <tr><td><b>路由器（网关）</b><br>留空</td><td>VMnet-Lab 是封闭的实验网，没有出口，课程方案也没要求填。填一个不存在的网关反而会让客户端的流量发到“死路”上。</td></tr>
+    <tr><td><b>DNS 服务器</b><br><code>10.10.10.10</code></td><td>随地址一起下发给客户端的“作用域选项”。客户端拿到地址时，也知道了该去问谁解析名字。今天任务 3 就让 DC 当 DNS 服务器；后续客户端加入域，正是靠这个 DNS 找到域控。</td></tr>
+    <tr><td><b>激活作用域</b></td><td>没激活的作用域只是一份“草稿”，不会发出任何地址。这是本课最常漏的一步。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>作用域图标带红色向下箭头：未激活 → 右键作用域 →「激活」</li>
+    <li>作用域选项里没有 DNS 服务器：向导里只在框里填了地址，没点「添加」→ 右键「作用域选项」→「配置选项」→ 勾选 006 补上</li>
+    <li>右键 IPv4 菜单是灰的，或服务器图标带红色标记：DHCP 服务没运行，或上一页「完成 DHCP 配置」没做</li>
+    <li>地址池范围不对：起止地址填错，删掉作用域重建最省事</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务3 安装 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>PowerShell 安装 DNS 角色</h2><button class="more" data-pop="pop-l02-10-steps">📋 详细步骤</button><button class="more" data-pop="pop-l02-10-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">以管理员身份运行 PowerShell</div>
+<pre><code class="language-powershell" data-trim>
+# 查看已安装的角色和功能
+Get-WindowsFeature | Where-Object {$_.Installed}
+
+# 安装 DNS 服务器（含管理工具）
+Install-WindowsFeature DNS -IncludeManagementTools
+
+# 验证：Install State 应为 Installed
+Get-WindowsFeature DNS
+</code></pre>
+    <div class="callout"><b>对比任务 2：</b>GUI 点了 6–7 步，这里一行命令完成，还能写进脚本批量执行。</div>
+  </div>
+</div>
+<aside class="notes">第一条命令的输出里应能看到刚才装的 DHCP 和 Telnet-Client，说明 GUI 和 PowerShell 管理的是同一份清单。-IncludeManagementTools 不加就没有 DNS 管理器控制台。可以让学生试 Get-WindowsFeature *dns* 体验通配符搜索。</aside>
+<template id="pop-l02-10-steps">
+  <h3>📋 详细步骤：用 PowerShell 安装 DNS 角色</h3>
+  <h4>第一步：以管理员身份打开 PowerShell</h4>
+  <ol>
+    <li>右键「开始」→ <b>Windows PowerShell (管理员)</b></li>
+    <li>弹出“用户账户控制”时点「是」</li>
+    <li>窗口标题栏应带有“管理员”字样</li>
+  </ol>
+  <div class="tip">不用管理员身份运行，安装命令会提示“拒绝访问”或要求提升权限——这是本课最常见的错误之一。</div>
+  <h4>第二步：查看已经装了什么</h4>
+<pre>Get-WindowsFeature | Where-Object {$_.Installed}</pre>
+  <ol>
+    <li>输出是一张表，前面带 <code>[X]</code> 的是已安装项</li>
+    <li>应能找到刚才用 GUI 装的 <b>DHCP 服务器</b>（Name 列为 <code>DHCP</code>）和 <b>Telnet 客户端</b>（<code>Telnet-Client</code>）——说明 GUI 和 PowerShell 管理的是同一份清单</li>
+  </ol>
+  <p>想找某个角色的准确名字，可以用通配符搜索：</p>
+<pre>Get-WindowsFeature *dns*</pre>
+  <h4>第三步：安装 DNS 服务器</h4>
+<pre>Install-WindowsFeature DNS -IncludeManagementTools</pre>
+  <ol>
+    <li>窗口上方会出现进度条，等它跑完（一般 1–2 分钟）</li>
+    <li>结束后输出一行结果：<code>Success</code> 列为 <code>True</code>，<code>Restart Needed</code> 列为 <code>No</code></li>
+  </ol>
+  <div class="tip">安装过程中不要关闭窗口，也不要按 Ctrl+C。命令里 <code>-IncludeManagementTools</code> 前面是英文短横线，和 DNS 之间有空格。</div>
+  <h4>第四步：怎么验证做对了</h4>
+<pre>Get-WindowsFeature DNS</pre>
+  <ol>
+    <li>显示 <code>[X] DNS 服务器</code>，<code>Install State</code> 为 <code>Installed</code></li>
+    <li>服务器管理器左侧（按 F5 刷新）多出「DNS」节点；「工具」菜单里多出「DNS」管理器</li>
+  </ol>
+  <p>等价的图形操作：服务器管理器 →「添加角色和功能」→「服务器角色」→ 勾选「DNS 服务器」→ 弹窗里点「添加功能」→ 安装。</p>
+</template>
+<template id="pop-l02-10-why">
+  <h3>💡 每条命令、每个选项为什么这么写</h3>
+  <table>
+    <tr><th style="width:28%">命令 / 选项</th><th>意义</th></tr>
+    <tr><td><b>以管理员身份运行</b></td><td>安装、卸载角色会修改系统，普通权限的窗口没有这个资格。后面所有改配置的命令也都需要管理员窗口。</td></tr>
+    <tr><td><code>Get-WindowsFeature</code></td><td>列出本机所有角色和功能。在 PowerShell 里角色和功能统一叫 WindowsFeature，用同一组命令管理。</td></tr>
+    <tr><td><code>| Where-Object {$_.Installed}</code></td><td>管道过滤：只留下 <code>Installed</code> 为真的项，也就是“已安装”的。不加过滤会列出几百行，很难找。</td></tr>
+    <tr><td><code>Install-WindowsFeature DNS</code></td><td>安装名为 <code>DNS</code> 的角色。这里写的是 Name 列里的英文名，不是显示名“DNS 服务器”。</td></tr>
+    <tr><td><code>-IncludeManagementTools</code></td><td>同时安装管理工具：DNS 管理器控制台和 PowerShell 的 DNS 模块。<b>不加就没有 DNS 管理器</b>，下一页的 <code>Add-DnsServer...</code> 命令也可能无法识别。GUI 里那个“添加所需功能”弹窗做的就是同一件事。</td></tr>
+    <tr><td><code>Get-WindowsFeature DNS</code></td><td>单独查这一项的状态，用来确认安装结果。验收清单里“DNS Server 角色已安装”就是看它。</td></tr>
+    <tr><td><b>为什么换成命令行</b></td><td>GUI 要点 6–7 步，命令只要一行，还能写进脚本、在多台服务器上批量执行。后面的课程会越来越多地用 PowerShell。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>提示“拒绝访问”或需要提升权限：PowerShell 不是管理员身份 → 关掉后右键「以管理员身份运行」</li>
+    <li>输出里 <code>Success</code> 为 <code>False</code>：看下面的报错信息，多半是名字写错了，用 <code>Get-WindowsFeature *dns*</code> 查准确名字</li>
+    <li>DNS 显示 Installed，但「工具」菜单里没有 DNS：安装时漏了 <code>-IncludeManagementTools</code> → 重跑一次完整命令</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务3 区域 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>创建区域、添加记录、查服务</h2><button class="more" data-pop="pop-l02-11-steps">📋 详细步骤</button><button class="more" data-pop="pop-l02-11-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Add-DnsServerPrimaryZone -Name "lab.local" `
+    -ZoneFile "lab.local.dns"
+Add-DnsServerResourceRecordA -ZoneName "lab.local" `
+    -Name "dc1" -IPv4Address "10.10.10.10"
+Resolve-DnsName dc1.lab.local
+Get-Service DHCPServer, DNS |
+    Format-Table Name, Status, StartType
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>Resolve-DnsName</b> 应返回 <code>10.10.10.10</code></div>
+      <div class="callout"><b>两个服务</b> Status = Running，StartType = Automatic</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">为了适应屏幕，这里用反引号续行，学生也可以写成一行，命令与手册完全一致。如果 Resolve-DnsName 失败，检查 DC1 网卡的 DNS 是否指向 10.10.10.10 或 127.0.0.1。管道符 | 结尾可以直接换行，不需要反引号。</aside>
+<template id="pop-l02-11-steps">
+  <h3>📋 详细步骤：建 lab.local 区域、加 A 记录、查服务</h3>
+  <div class="tip">A 记录的名字统一用 <code>dc1</code>（验收清单查的是 dc1.lab.local），但 IP 要填<b>你自己 DC 的地址</b> 10.10.10.x；下面命令里的 10.10.10.10 是示例。</div>
+  <h4>第一步：创建正向查找区域</h4>
+  <ol>
+    <li>在<b>管理员</b> PowerShell 中输入（可以写成一行，也可以按幻灯片用反引号续行）：</li>
+  </ol>
+<pre>Add-DnsServerPrimaryZone -Name "lab.local" -ZoneFile "lab.local.dns"</pre>
+  <ol>
+    <li>成功时<b>没有任何输出</b>，直接回到提示符</li>
+    <li>确认区域已建好：<code>Get-DnsServerZone lab.local</code>，应看到 ZoneType 为 <code>Primary</code></li>
+  </ol>
+  <div class="tip">用反引号 <code>`</code>（键盘左上角 Esc 下面那个键）续行时，它必须是该行<b>最后一个字符</b>，后面不能有空格，否则命令会被截断报错。拿不准就写成一行。</div>
+  <h4>第二步：添加 A 记录</h4>
+<pre>Add-DnsServerResourceRecordA -ZoneName "lab.local" -Name "dc1" -IPv4Address "10.10.10.10"</pre>
+  <ol>
+    <li>同样成功时没有输出</li>
+    <li>查看记录：<code>Get-DnsServerResourceRecord -ZoneName lab.local -Name dc1</code>，RecordType 为 <code>A</code>，数据为你的 IP</li>
+  </ol>
+  <h4>第三步：测试解析</h4>
+<pre>Resolve-DnsName dc1.lab.local</pre>
+  <ol>
+    <li>应返回一行：Name 为 <code>dc1.lab.local</code>，Type 为 <code>A</code>，IPAddress 为你的 DC 地址（示例 10.10.10.10）</li>
+    <li>如果报“找不到 DNS 名称”，先检查本机 NIC1 的首选 DNS 是否为 127.0.0.1 或本机 IP，然后执行 <code>ipconfig /flushdns</code> 再试</li>
+  </ol>
+  <h4>第四步：查看两个服务的状态</h4>
+<pre>Get-Service DHCPServer, DNS | Format-Table Name, Status, StartType</pre>
+  <ol>
+    <li>应看到两行：<code>DHCPServer</code> 和 <code>DNS</code>，Status 都是 <code>Running</code>，StartType 都是 <code>Automatic</code></li>
+    <li>管道符 <code>|</code> 结尾的行可以直接回车换行，不需要反引号</li>
+  </ol>
+  <h4>第五步：怎么验证做对了</h4>
+  <ol>
+    <li>服务器管理器 →「工具」→「DNS」，展开「正向查找区域」，能看到 <code>lab.local</code>，里面有 <code>dc1</code> 的“主机(A)”记录</li>
+    <li><code>services.msc</code> 里能找到「DHCP Server」和「DNS Server」两个服务，状态“正在运行”</li>
+    <li>上面 <code>Resolve-DnsName</code> 和 <code>Get-Service</code> 两条命令的结果都符合预期</li>
+  </ol>
+  <p>等价的图形操作：DNS 管理器 → 右键「正向查找区域」→「新建区域」→ 主要区域 → 区域名 lab.local → 创建新文件 lab.local.dns → 不允许动态更新 → 完成；再右键 lab.local →「新建主机(A 或 AAAA)」→ 名称 dc1、IP 填你的地址 →「添加主机」。</p>
+</template>
+<template id="pop-l02-11-why">
+  <h3>💡 每个参数为什么这么写</h3>
+  <table>
+    <tr><th style="width:28%">命令 / 参数</th><th>意义</th></tr>
+    <tr><td><code>Add-DnsServerPrimaryZone</code></td><td>创建“主要区域”：这台 DNS 服务器是 lab.local 这段名字的<b>权威</b>，记录在这里新增和修改。</td></tr>
+    <tr><td><code>-Name "lab.local"</code></td><td>区域名，也就是这片名字空间的后缀。今天它只是一个普通 DNS 区域，<b>还不是域</b>；后续课程创建 AD 域时也会用到 lab.local 这个名字。</td></tr>
+    <tr><td><code>-ZoneFile "lab.local.dns"</code></td><td>区域里的记录保存到这个文件（在 DNS 服务器的数据目录里）。不和 AD 集成的区域必须指定文件，否则命令会报错。</td></tr>
+    <tr><td><code>Add-DnsServerResourceRecordA</code></td><td>添加 A 记录：一个主机名对应一个 IPv4 地址。</td></tr>
+    <tr><td><code>-Name "dc1"</code></td><td>只写主机部分，系统会自动拼上区域名，变成 <code>dc1.lab.local</code>。不要写成完整的 dc1.lab.local，否则会变成 dc1.lab.local.lab.local。</td></tr>
+    <tr><td><code>-IPv4Address</code></td><td>名字要翻译成的地址，必须是你 DC 的真实 IP。填错了解析会“成功”，但结果指向别的机器。</td></tr>
+    <tr><td><code>Resolve-DnsName</code></td><td>真正发起一次 DNS 查询，验证“名字 → 区域 → A 记录 → IP”这条链是通的。它走的是网卡上配置的 DNS 服务器，所以 NIC1 的 DNS 必须指向本机。</td></tr>
+    <tr><td><code>Get-Service DHCPServer, DNS</code></td><td>角色本质上就是一组后台服务。<code>Status = Running</code> 说明现在正在工作；<code>StartType = Automatic</code> 说明开机会自动启动，重启后不用手动开。</td></tr>
+    <tr><td><code>| Format-Table Name, Status, StartType</code></td><td>只挑这三列做成表格，结果清楚，便于和验收清单对照。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li><code>Add-DnsServer...</code> 提示“无法识别”：DNS 角色或管理工具没装好 → 重跑 <code>Install-WindowsFeature DNS -IncludeManagementTools</code></li>
+    <li><code>Resolve-DnsName</code> 找不到 dc1：网卡 DNS 没指向本机（例如填了 8.8.8.8 之类的外部地址）→ 改为 127.0.0.1 或本机 IP，再 <code>ipconfig /flushdns</code></li>
+    <li>提示区域已存在：之前已经建过一次，不用再建，直接进行下一步</li>
+    <li>某个服务 Status 为 Stopped：用 <code>Start-Service 服务名</code> 启动，或在 <code>services.msc</code> 里右键「启动」</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 预期结果 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 2–3 验证</span><h2>看到这些说明成功</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>检查</th><th>方法</th><th>预期结果</th></tr>
+      <tr><td>Telnet 客户端</td><td><code>telnet</code></td><td>出现 <code>Microsoft Telnet&gt;</code> 提示符</td></tr>
+      <tr><td>DHCP 作用域</td><td>dhcpmgmt.msc</td><td>Lab-Scope 已激活，地址池 100–200</td></tr>
+      <tr><td>DNS 角色</td><td><code>Get-WindowsFeature DNS</code></td><td>[X] DNS 服务器，Installed</td></tr>
+      <tr><td>A 记录</td><td><code>Resolve-DnsName</code></td><td>dc1.lab.local → 10.10.10.10</td></tr>
+      <tr><td>服务状态</td><td><code>Get-Service</code></td><td>DHCPServer、DNS 均为 Running</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">先让学生自查这张表，核对各项是否达成，这样有问题时更容易定位。也可以在服务器管理器左侧看到新增的 DHCP、DNS 两个角色节点，说明 GUI 和 PowerShell 的结果是互通的。</aside>
+</section>
+
+<!-- 13 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>常见故障速查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>'telnet' 不是内部或外部命令</td><td>功能未装完或窗口未刷新</td><td>确认安装成功后重开命令行</td></tr>
+      <tr><td>DHCP 作用域有红色箭头</td><td>作用域未激活</td><td>右键作用域 → 激活</td></tr>
+      <tr><td>Add-DnsServer... 无法识别</td><td>DNS 角色/管理工具未装</td><td>重跑 <code>Install-WindowsFeature DNS -IncludeManagementTools</code></td></tr>
+      <tr><td>Resolve-DnsName 找不到 dc1</td><td>网卡 DNS 未指向本机</td><td>DNS 设为 10.10.10.10，<code>ipconfig /flushdns</code></td></tr>
+      <tr><td>命令提示"拒绝访问"</td><td>PowerShell 非管理员</td><td>右键 → 以管理员身份运行</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">先让学生说出可能原因，再翻出这一页。Resolve-DnsName 失败最常见：上节课 DNS 可能填的是 8.8.8.8 之类的外部地址，本机区域查不到。"拒绝访问"几乎都是忘了用管理员身份运行。</aside>
+</section>
+
+<!-- 14 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>任务 4 · 16′ · 自查与提交</h2></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>DHCP Server 角色已安装且服务运行中</li>
+        <li>DHCP 作用域 10.10.10.100-200 已配置</li>
+        <li>DNS Server 角色已安装且服务运行中</li>
+        <li>lab.local 区域存在</li>
+        <li>dc1.lab.local A 记录解析正确</li>
+        <li>Telnet Client 功能已安装</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>VM1 拍快照<br><code>Lesson02-Done</code></p>
+        <p class="small muted" style="margin-top:8px">下节课从这个快照开始</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对左侧清单，6 项全部达成后再拍快照。清单逐项达成后，运行 check02.ps1 生成 PDF 报告提交（下载链接见最后一页「作业提交」）。快照名大小写要与手册一致，方便后续统一恢复。</aside>
+</section>
+
+<!-- 15 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">服务器的价值来自角色：角色对外服务，功能是辅助工具</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">GUI：添加角色和功能向导；命令：<code>Install-WindowsFeature</code></p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">DHCP 作用域要激活；装角色带 <code>-IncludeManagementTools</code></p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 3 课：</b>本地用户与组管理。在 DC1 上创建本地用户和组，理解账户与权限。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check02.ps1" download>check02.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check02.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. IIS 是角色还是功能？.NET 呢？2. 作用域建好了但客户端拿不到地址，先查什么？3. 怎样用一条命令列出本机已安装的角色？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

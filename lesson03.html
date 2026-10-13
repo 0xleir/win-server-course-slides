@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第3课 · 本地用户与组管理</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 2 · Windows 服务器用户管理　|　第 3 次课 · 学时 5–6</p>
+  <h1>本地用户与组管理</h1>
+  <p class="muted">谁能登录这台服务器？能做什么？</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 · DC1</span></div>
+</div>
+<aside class="notes">开场提问：一台服务器只有一个 Administrator 账号，全组人共用，会出什么问题？（无法追责、密码泄露全员受影响、权限过大。）今天学习给每个人建独立账号，并用组来分配权限，这是后面 NTFS 权限、安全策略、域管理的基础。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>概念</b>账户与 SID<br>内置账户 · 组</div>
+      <div class="seg" style="flex:19"><span class="t">19′</span><b>任务 1</b>GUI 管理<br>用户和组</div>
+      <div class="seg" style="flex:19"><span class="t">19′</span><b>任务 2</b>命令行 / PowerShell<br>管理用户</div>
+      <div class="seg" style="flex:19"><span class="t">19′</span><b>任务 3</b>CSV 批量<br>创建用户</div>
+      <div class="seg" style="flex:11"><span class="t">11′</span><b>任务 4</b>验证与快照</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清楚本地账户存在哪里，以及"用组授权"比"给个人授权"好在哪</li>
+        <li>分别用 <code>lusrmgr.msc</code>、<code>net user</code>、<code>New-LocalUser</code> 创建用户和组</li>
+        <li>用 <code>Import-Csv</code> + <code>foreach</code> 从 CSV 批量创建用户</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">三种方式做的是同一件事：GUI 适合少量、直观；命令行适合远程和脚本；CSV 批量适合开学建 50 个学生账号这种场景。让学生在操作时体会三种方式的效率差别。</aside>
+</section>
+
+<!-- 02b 概念：教材补充 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>账户分类与强密码原则</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card"><h3>内置账户</h3><p class="small">系统安装时自带，如 Administrator、Guest；不能随意删除</p></div>
+      <div class="card blue"><h3>本地账户</h3><p class="small">建在本机 SAM 库里，只对这一台机器有效（本课重点）</p></div>
+      <div class="card"><h3>域用户账户</h3><p class="small">建在域控制器上，可登录域内任意成员机（第 17 课）</p></div>
+    </div>
+    <div class="card good">
+      <h3>Windows 密码管理原则</h3>
+      <ul class="points check">
+        <li>身份验证最常用的方式就是<b>密码</b>，弱口令最易被攻破</li>
+        <li>强密码：至少 <b>8 位</b>，由<b>字母 + 数字 + 符号</b>组合而成</li>
+        <li>定期更换密码，降低被暴力破解 / 手工猜测成功的概率</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">教材把 Windows 账户分成三类：内置账户是系统装好就有的（Administrator、Guest），本地账户建在本机的 SAM 数据库里只能登录这一台机器，域用户账户建在域控制器上、可以登录域里任意一台成员机——今天建的全是本地账户，域要到第 17 课才搭。密码方面：在 Windows 上做身份验证最常用的就是密码，安全环境要求所有用户使用强密码——至少 8 个字符，并且包含字母、数字和符号的组合，这样能防止别人用手工或自动化工具猜出弱密码；再加上定期更换，就能进一步降低密码被攻破的可能。这也呼应任务里"密码永不过期"只是实验方便，生产环境该受密码策略约束，下节课就讲密码策略。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · Windows Server 2022<br>工作组模式 · 本课唯一用到的机器</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>课前：</b>VM1 处于 <code>Lesson02-Done</code> 快照状态，以 Administrator 登录</div>
+      <div class="callout"><b>本课：</b>所有用户和组都建在 DC1 的<b>本地</b>账户数据库中（还没有域）</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">虽然机器名叫 DC1，但现在它还不是域控制器，lab.local 域要到第 17 课才创建。所以今天建的全部是本地账户，只能登录这一台机器。提醒学生用"以管理员身份运行"打开 PowerShell，否则创建用户会报"拒绝访问"。</aside>
+</section>
+
+<!-- 04 概念1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>本地账户存在哪里？</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>① 输入用户名密码</b>username / password</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>② 查本机 SAM 数据库</b>核对密码哈希</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>③ 取出 SID</b>S-1-5-21-…-1001</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 生成访问令牌</b>用户 SID + 所属组 SID</div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>SAM：</b>每台 Windows 自带的本地账户库，只对本机有效</div>
+      <div class="callout"><b>SID：</b>系统认的是 SID 而不是名字；删了重建同名用户，SID 已不同</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">可以现场演示 whoami /user 查看自己的 SID，whoami /groups 查看令牌里的组。强调"删除再重建同名用户，原来的权限全部失效"，因为权限绑定的是 SID。这页也为第 17 课的"工作组 vs 域"埋下伏笔。</aside>
+</section>
+
+<!-- 05 概念2 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>内置账户与内置组</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:26%">名称</th><th style="width:18%">类型</th><th>说明</th></tr>
+      <tr><td><b>Administrator</b></td><td>内置用户</td><td>最高权限，不能删除；日常不应共用</td></tr>
+      <tr><td><b>Guest</b></td><td>内置用户</td><td>匿名来宾，默认禁用，<span class="orange">必须保持禁用</span></td></tr>
+      <tr><td><b>Administrators</b></td><td>内置组</td><td>成员拥有本机完全控制权</td></tr>
+      <tr><td><b>Users</b></td><td>内置组</td><td>新建用户自动加入，只有普通权限</td></tr>
+      <tr><td><b>Remote Desktop Users</b></td><td>内置组</td><td>允许通过远程桌面登录</td></tr>
+    </table>
+    <div class="callout warn"><b>最小权限原则：</b>账号只给完成工作所需的最低权限，别把人随手加进 Administrators。</div>
+  </div>
+</div>
+<aside class="notes">提问：为什么 Guest 默认禁用还要专门检查？因为它无需密码，一旦被误启用，任何人都能访问共享资源，是攻防课上 Kali 常用的突破口。新建用户默认只在 Users 组，所以 alice 现在登录也做不了管理操作。</aside>
+</section>
+
+<!-- 06 概念3 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>为什么要用组？</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>直接给个人授权</h3>
+        <ul class="points">
+          <li>每个文件夹都要逐个添加用户</li>
+          <li>新人入职 = 把所有权限再配一遍</li>
+          <li>有人调岗时很容易漏删权限</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>用户 → 组 → 权限</h3>
+        <ul class="points">
+          <li>权限只授予组，组里放人</li>
+          <li>新人入职：加入组即可</li>
+          <li>调岗：换个组，权限自动跟随</li>
+        </ul>
+      </div>
+    </div>
+    <div class="nest">
+      <div class="lbl">本课的组规划（一个用户可同时属于多个组）</div>
+      <span class="obj">👥 IT-Admins：alice</span><span class="obj">👥 IT-Users：bob, charlie</span><span class="obj">👥 Finance：charlie</span><span class="obj">👥 Developers：dave, frank</span>
+    </div>
+  </div>
+</div>
+<aside class="notes">注意 charlie 同时属于 IT-Users 和 Finance，登录时令牌里会同时带上两个组的 SID，权限取并集。今天只建组、不分配权限，第 6 课 NTFS 权限会把这些组真正用起来。</aside>
+</section>
+
+<!-- 07 任务1 用户 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 19′ · DC1</span></span><h2>GUI 创建用户</h2><button class="more" data-pop="pop-l03-07-steps">📋 详细步骤</button><button class="more" data-pop="pop-l03-07-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>Win+R</span><i>›</i><span>lusrmgr.msc</span><i>›</i><span>用户</span><i>›</i><span>右键空白处</span><i>›</i><span>新用户</span></div>
+    <table class="tbl">
+      <tr><th>用户名</th><th>全名</th><th>密码</th></tr>
+      <tr><td><code>alice</code></td><td>Alice Wang</td><td><code>Lab@2026a</code></td></tr>
+      <tr><td><code>bob</code></td><td>Bob Zhang</td><td><code>Lab@2026b</code></td></tr>
+      <tr><td><code>charlie</code></td><td>Charlie Li</td><td><code>Lab@2026c</code></td></tr>
+    </table>
+    <div class="grid2">
+      <div class="callout">☐ 取消勾选"用户下次登录时须更改密码"</div>
+      <div class="callout">☑ 勾选"密码永不过期"（仅教学用途）</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">"密码永不过期"只是为了实验方便，生产环境不应这样做，第 4 课会用密码策略约束它。常见错误：没取消"下次登录须改密码"就勾不上"永不过期"，两者互斥，要先取消前者。密码不满足复杂度要求时会报错，原文的密码都已满足。</aside>
+<template id="pop-l03-07-steps">
+  <h3>📋 详细步骤：用 lusrmgr.msc 创建 alice / bob / charlie</h3>
+  <div class="tip">幻灯片里的 DC1 是示例名，实际是你的 DC（计算机名 DC-学号）。本课还没有域，所有账户都建在这台机器的本地。</div>
+  <h4>第一步：打开「本地用户和组」</h4>
+  <ol>
+    <li>以 <b>Administrator</b> 登录（虚拟机应处于 <code>Lesson02-Done</code> 快照状态）</li>
+    <li>按 <code>Win + R</code>，输入 <code>lusrmgr.msc</code> 回车</li>
+    <li>左侧会看到「用户」和「组」两个文件夹，单击「用户」</li>
+    <li>右侧列出现有账户：Administrator、Guest（图标带向下箭头 = 已禁用）、DefaultAccount 等</li>
+  </ol>
+  <h4>第二步：新建 alice</h4>
+  <ol>
+    <li>在右侧<b>空白处</b>右键 →「新用户…」</li>
+    <li>按表填写：
+      <table><tr><th>输入框</th><th>填写</th></tr>
+      <tr><td>用户名</td><td><code>alice</code></td></tr>
+      <tr><td>全名</td><td>Alice Wang</td></tr>
+      <tr><td>描述</td><td>可留空</td></tr>
+      <tr><td>密码 / 确认密码</td><td><code>Lab@2026a</code>（两次一致）</td></tr></table>
+    </li>
+    <li><b>先取消</b>勾选「用户下次登录时须更改密码」</li>
+    <li><b>再勾选</b>「密码永不过期」</li>
+    <li>点「创建」。对话框会清空并保持打开，可以直接接着建下一个</li>
+  </ol>
+  <div class="tip">「下次登录须更改密码」和「密码永不过期」互斥：前者没取消时，后者是灰色勾不上的。顺序一定是先取消、再勾选。</div>
+  <h4>第三步：同样方法建 bob、charlie</h4>
+  <ol>
+    <li>bob：全名 Bob Zhang，密码 <code>Lab@2026b</code></li>
+    <li>charlie：全名 Charlie Li，密码 <code>Lab@2026c</code></li>
+    <li>每个都要重复“取消须改密码 → 勾选永不过期”两步，再点「创建」</li>
+    <li>全部建完点「关闭」</li>
+  </ol>
+  <div class="tip">如果提示“密码不满足密码策略的要求”，多半是密码打错了（大小写、@ 符号）。严格照抄幻灯片上的密码，它们都已满足复杂度要求。</div>
+  <h4>第四步：怎么验证做对了</h4>
+  <ol>
+    <li>按 <code>F5</code> 刷新，右侧列表里应出现 alice、bob、charlie，图标<b>没有</b>向下箭头（已启用）</li>
+    <li>双击 alice 打开属性，确认「密码永不过期」已勾选、「须更改密码」未勾选</li>
+    <li>切到「隶属于」选项卡，应只有 <b>Users</b>（新用户默认只在 Users 组）</li>
+  </ol>
+  <p>也可以在管理员 PowerShell 里查看：</p>
+<pre>Get-LocalUser alice,bob,charlie | Format-Table Name,FullName,Enabled,PasswordExpires
+# 应看到 3 行，Enabled 为 True，PasswordExpires 为空（表示永不过期）</pre>
+</template>
+<template id="pop-l03-07-why">
+  <h3>💡 每一项为什么这么设置</h3>
+  <table>
+    <tr><th style="width:26%">配置项</th><th>意义</th></tr>
+    <tr><td><b>lusrmgr.msc</b></td><td>「本地用户和组」管理单元，直接操作本机的 <b>SAM 账户库</b>。这里建的账户只对这一台机器有效；以后有了域，域账户要改用另外的工具管理。</td></tr>
+    <tr><td><b>用户名</b><br><code>alice</code> 等</td><td>登录时输入的名字，要求简短、无空格。系统内部真正认的是创建时生成的 <b>SID</b>：删掉 alice 再建一个同名的，SID 不同，原来的权限全部失效。</td></tr>
+    <tr><td><b>全名</b><br>Alice Wang</td><td>只是显示用的“真实姓名”，不参与登录。填上后在列表、审计日志里一眼能看出账号属于谁——这就是“一人一号可追责”。</td></tr>
+    <tr><td><b>密码</b><br><code>Lab@2026a</code></td><td>包含大写、小写、数字和符号，满足 Windows 默认的复杂度要求，所以能直接创建成功。每人一个不同的密码，不共用。</td></tr>
+    <tr><td><b>取消「下次登录须更改密码」</b></td><td>生产环境里管理员设初始密码、让用户首次登录自己改是好习惯；但实验中我们要反复用这些账号测试，改掉就记不住了。并且不取消它就勾不上「永不过期」。</td></tr>
+    <tr><td><b>勾选「密码永不过期」</b></td><td><b>仅为教学方便</b>，防止实验做到一半密码过期。生产环境不应这样做，第 4 课会用密码策略来约束密码有效期。</td></tr>
+    <tr><td><b>默认只在 Users 组</b></td><td>新用户只有普通权限，alice 现在登录也做不了管理操作——这符合最小权限原则。要给权限，下一页通过“组”来给。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>「永不过期」是灰的勾不上：还没先取消「下次登录须更改密码」</li>
+    <li>报“密码不满足密码策略的要求”：密码输错或少了某类字符，照抄原文密码</li>
+    <li>新建用户时报“拒绝访问”：当前登录的不是 Administrator 等管理员账户</li>
+    <li>列表里看不到新用户：按 F5 刷新；或在对话框里填完没点「创建」就直接关了</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务1 组 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 19′ · DC1</span></span><h2>GUI 创建组并确认 Guest</h2><button class="more" data-pop="pop-l03-08-steps">📋 详细步骤</button><button class="more" data-pop="pop-l03-08-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>lusrmgr.msc</span><i>›</i><span>组</span><i>›</i><span>右键</span><i>›</i><span>新建组</span><i>›</i><span>添加…成员</span></div>
+    <div class="grid3">
+      <div class="card"><h3>IT-Admins</h3>成员：<code>alice</code></div>
+      <div class="card"><h3>IT-Users</h3>成员：<code>bob</code>, <code>charlie</code></div>
+      <div class="card"><h3>Finance</h3>成员：<code>charlie</code></div>
+    </div>
+    <div class="crumb"><span>用户</span><i>›</i><span>Guest</span><i>›</i><span>属性</span><i>›</i><span>☑ 账户已禁用</span></div>
+    <div class="callout">Guest 默认已禁用，这一步是<b>确认</b>；图标上有向下箭头即为禁用状态。</div>
+  </div>
+</div>
+<aside class="notes">添加成员时点"检查名称"，名字下出现下划线表示找到了该用户。可以在新建组的对话框里直接添加成员，也可以建好后在用户属性的"隶属于"选项卡里加组，两个方向结果一样。</aside>
+<template id="pop-l03-08-steps">
+  <h3>📋 详细步骤：建 3 个组并确认 Guest 已禁用</h3>
+  <h4>第一步：新建 IT-Admins 并加入 alice</h4>
+  <ol>
+    <li>在 <code>lusrmgr.msc</code> 左侧单击「组」，右侧空白处右键 →「新建组…」</li>
+    <li>组名填 <code>IT-Admins</code>，描述可留空</li>
+    <li>点下方「添加…」，在“输入对象名称”框里输入 <code>alice</code></li>
+    <li>点「检查名称」：名字变成带下划线的 <code>DC1\alice</code>（你的机器上是 <code>DC-学号\alice</code>）说明找到了，点「确定」</li>
+    <li>回到新建组对话框，成员列表里有 alice 后，点「创建」</li>
+  </ol>
+  <div class="tip">点「检查名称」后弹出“找不到名称”，说明用户名拼错或上一页还没建这个用户。</div>
+  <h4>第二步：新建 IT-Users 和 Finance</h4>
+  <ol>
+    <li>对话框清空后继续：组名 <code>IT-Users</code>，添加成员时输入 <code>bob;charlie</code>（多个名字用分号隔开）→「检查名称」→「确定」→「创建」</li>
+    <li>组名 <code>Finance</code>，成员 <code>charlie</code> →「创建」</li>
+    <li>点「关闭」</li>
+  </ol>
+  <div class="tip">另一种做法：先建空组，再双击用户 →「隶属于」选项卡 →「添加…」把组加进来。两个方向结果完全一样，任选其一。</div>
+  <h4>第三步：确认 Guest 已禁用</h4>
+  <ol>
+    <li>左侧单击「用户」，双击 <b>Guest</b></li>
+    <li>在「常规」选项卡确认「<b>账户已禁用</b>」是勾选状态；如果没勾，勾上后点「确定」</li>
+    <li>回到列表，Guest 图标上应有一个向下的箭头</li>
+  </ol>
+  <h4>第四步：怎么验证做对了</h4>
+  <ol>
+    <li>在「组」里双击每个组，成员应为：IT-Admins = alice；IT-Users = bob、charlie；Finance = charlie</li>
+    <li>双击 charlie →「隶属于」，应同时看到 Users、IT-Users、Finance</li>
+  </ol>
+  <p>等价的 PowerShell 查看命令：</p>
+<pre>Get-LocalGroupMember IT-Admins
+Get-LocalGroupMember IT-Users
+Get-LocalGroupMember Finance
+Get-LocalUser Guest | Format-Table Name,Enabled   # Enabled 应为 False</pre>
+</template>
+<template id="pop-l03-08-why">
+  <h3>💡 每一项为什么这么设置</h3>
+  <table>
+    <tr><th style="width:26%">配置项</th><th>意义</th></tr>
+    <tr><td><b>用组而不是直接给人授权</b></td><td>权限只授予组、组里放人：新人入职加进组就行，调岗换个组权限自动跟随，不会漏删。今天只建组、<b>不分配权限</b>，第 6 课 NTFS 权限会把这些组真正用起来。</td></tr>
+    <tr><td><b>IT-Admins</b>：alice</td><td>模拟 IT 管理岗位。注意它只是一个普通的自建组，<b>不是</b>内置的 Administrators，加进来并不会让 alice 变成管理员。</td></tr>
+    <tr><td><b>IT-Users</b>：bob、charlie</td><td>模拟普通 IT 员工，后面给共享/文件夹授权时作为一类人统一处理。</td></tr>
+    <tr><td><b>Finance</b>：charlie</td><td>charlie 同时属于 IT-Users 和 Finance，演示“一个用户可以属于多个组”。登录时令牌里同时带两个组的 SID，权限取<b>并集</b>。</td></tr>
+    <tr><td><b>「检查名称」</b></td><td>把你输入的文字解析成真正的账户（也就是找到它的 SID）。出现下划线才代表解析成功，避免拼写错误加了个不存在的成员。</td></tr>
+    <tr><td><b>Guest 保持禁用</b></td><td>Guest 无需密码，一旦被误启用，任何人都能访问本机共享资源，是攻防课上 Kali 常用的突破口。它默认就是禁用的，这一步是<b>确认</b>，养成检查习惯。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>“找不到名称”：用户名拼错，或者该用户还没创建</li>
+    <li>“指定的帐户名已是此组的成员”：重复添加了，不影响结果，点确定即可</li>
+    <li>创建组报“组已存在”：之前已经建过，直接双击该组补成员，不用再建</li>
+    <li>Guest 图标没有向下箭头：账户被启用了，立即勾选「账户已禁用」</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 net user + New-LocalUser -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 19′ · DC1</span></span><h2>命令行创建用户</h2><button class="more" data-pop="pop-l03-09-steps">📋 详细步骤</button><button class="more" data-pop="pop-l03-09-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">① 传统 net user 命令（cmd 和 PowerShell 都能用）</div>
+<pre><code class="language-powershell" data-trim>
+net user dave Lab@2026d /add `
+    /fullname:"Dave Liu" /comment:"开发部"
+net user eve Lab@2026e /add `
+    /fullname:"Eve Chen" /comment:"市场部"
+</code></pre>
+    <div class="code-cap">② PowerShell 原生命令：密码必须先转成 SecureString</div>
+<pre><code class="language-powershell" data-trim>
+$pw = ConvertTo-SecureString "Lab@2026f" -AsPlainText -Force
+New-LocalUser -Name "frank" -Password $pw `
+    -FullName "Frank Zhao" -Description "运维部" `
+    -PasswordNeverExpires
+</code></pre>
+  </div>
+</div>
+<aside class="notes">对比两种方式：net user 简单但输出是文本；New-LocalUser 返回对象，能接管道、能写进脚本做判断。提问：为什么 -Password 不能直接写字符串？——防止密码以明文形式留在内存和历史记录里。反引号续行后面不能有空格。</aside>
+<template id="pop-l03-09-steps">
+  <h3>📋 详细步骤：用命令行建 dave / eve / frank</h3>
+  <h4>第一步：以管理员身份打开 PowerShell</h4>
+  <ol>
+    <li>右键「开始」→ <b>Windows PowerShell (管理员)</b></li>
+    <li>窗口标题栏应显示“管理员: Windows PowerShell”</li>
+  </ol>
+  <div class="tip">不是管理员窗口时，创建用户会报“拒绝访问”。这是本课最常见的错误。</div>
+  <h4>第二步：用 net user 建 dave 和 eve</h4>
+  <ol>
+    <li>输入（每条命令两行，第一行末尾的反引号 <code>`</code> 表示“下一行接着写”）：</li>
+  </ol>
+<pre>net user dave Lab@2026d /add `
+    /fullname:"Dave Liu" /comment:"开发部"
+net user eve Lab@2026e /add `
+    /fullname:"Eve Chen" /comment:"市场部"</pre>
+  <ol start="2">
+    <li>每条成功后会显示“<b>命令成功完成。</b>”</li>
+  </ol>
+  <div class="tip">反引号 <code>`</code> 在键盘左上角 Esc 下面（和 ~ 同键），不是单引号；它后面<b>不能有空格</b>。反引号续行只在 PowerShell 里有效，如果在 cmd 里运行，把每条命令写成一行即可。</div>
+  <h4>第三步：用 New-LocalUser 建 frank</h4>
+<pre>$pw = ConvertTo-SecureString "Lab@2026f" -AsPlainText -Force
+New-LocalUser -Name "frank" -Password $pw `
+    -FullName "Frank Zhao" -Description "运维部" `
+    -PasswordNeverExpires</pre>
+  <ol>
+    <li>第一行执行后没有任何输出，这是正常的（只是把密码存进了变量 <code>$pw</code>）</li>
+    <li>第二条执行成功后会输出一张表：<code>Name = frank</code>、<code>Enabled = True</code>、<code>Description = 运维部</code></li>
+  </ol>
+  <h4>第四步：怎么验证做对了</h4>
+<pre>net user dave                 # 看“全名”“注释”两行是否正确
+Get-LocalUser dave,eve,frank | Format-Table Name,FullName,Description,Enabled</pre>
+  <p>应看到 3 行，FullName 和 Description 与命令里填的一致，Enabled 都是 True。也可以打开 <code>lusrmgr.msc</code> 按 F5 刷新，看到新建的 3 个用户。</p>
+</template>
+<template id="pop-l03-09-why">
+  <h3>💡 每一项为什么这么写</h3>
+  <table>
+    <tr><th style="width:28%">命令 / 参数</th><th>意义</th></tr>
+    <tr><td><code>net user 用户名 密码 /add</code></td><td>传统命令，cmd 和 PowerShell 都能用，老系统也有。简单直接，但输出是<b>文本</b>，脚本不好拿来做判断。</td></tr>
+    <tr><td><code>/fullname:"Dave Liu"</code></td><td>对应 GUI 里的「全名」。值里有空格，所以要加双引号。</td></tr>
+    <tr><td><code>/comment:"开发部"</code></td><td>对应 GUI 里的「描述」，用来记录部门等说明，方便以后识别账号用途。</td></tr>
+    <tr><td><b>反引号</b> <code>`</code></td><td>PowerShell 的续行符，让长命令分多行写、更好读。它必须是行尾最后一个字符，后面多一个空格就会失效，下一行被当成新命令而报错。</td></tr>
+    <tr><td><code>ConvertTo-SecureString … -AsPlainText -Force</code></td><td><code>New-LocalUser</code> 的 <code>-Password</code> 只接受 <b>SecureString</b>（加密保存的字符串），不收普通文本，目的是防止密码以明文留在内存和历史记录里。<code>-AsPlainText</code> 表示“我给的是明文”，<code>-Force</code> 表示“我知道这样不安全，照做”，两者要一起写。</td></tr>
+    <tr><td><code>New-LocalUser</code></td><td>PowerShell 原生命令，返回的是<b>对象</b>，能接管道、能写进脚本做判断——第 12 页的批量脚本就是用它。</td></tr>
+    <tr><td><code>-Description "运维部"</code></td><td>等同 net user 的 <code>/comment</code>。</td></tr>
+    <tr><td><code>-PasswordNeverExpires</code></td><td>等同 GUI 里勾选「密码永不过期」，仅为教学方便；第 4 课的密码策略会约束这类设置。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>“拒绝访问” / “发生系统错误 5”：PowerShell 不是以管理员身份运行</li>
+    <li>“密码不满足密码策略的要求”（net user）或 <code>InvalidPasswordException</code>（New-LocalUser）：密码打错，照抄原文</li>
+    <li>第二行 <code>/fullname…</code> 单独报错“无法识别”：反引号后面多了空格，或在 cmd 里用了反引号</li>
+    <li>“无法将参数绑定到 Password…”：<code>-Password</code> 后直接写了字符串，没先转成 SecureString</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 组 + 查看 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 19′ · DC1</span></span><h2>管理组成员并查看结果</h2><button class="more" data-pop="pop-l03-10-steps">📋 详细步骤</button><button class="more" data-pop="pop-l03-10-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+New-LocalGroup -Name "Developers"
+Add-LocalGroupMember -Group "Developers" -Member "dave","frank"
+Get-LocalGroupMember -Group "Developers"
+
+Get-LocalUser  | Format-Table Name, Enabled, LastLogon
+Get-LocalGroup | Format-Table Name, Description
+</code></pre>
+    <table class="tbl">
+      <tr><th>命令</th><th>看到这个说明成功</th></tr>
+      <tr><td><code>Get-LocalGroupMember</code></td><td>列出 DC1\dave 和 DC1\frank</td></tr>
+      <tr><td><code>Get-LocalUser</code></td><td>alice…frank 共 6 个新用户，Guest 的 Enabled = False</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">-Member 可以一次传多个名字，用逗号分隔。LastLogon 为空说明这些账号还从未登录过，这在安全审计中可以用来发现"僵尸账号"。可以顺便让学生试试 net localgroup Developers，对比两种输出。</aside>
+<template id="pop-l03-10-steps">
+  <h3>📋 详细步骤：建 Developers 组并查看结果</h3>
+  <h4>第一步：新建组</h4>
+<pre>New-LocalGroup -Name "Developers"</pre>
+  <ol>
+    <li>在管理员 PowerShell 中执行，成功后输出一行：<code>Name = Developers</code></li>
+  </ol>
+  <h4>第二步：一次加入两个成员</h4>
+<pre>Add-LocalGroupMember -Group "Developers" -Member "dave","frank"</pre>
+  <ol>
+    <li>成功时<b>没有任何输出</b>，这是正常的（PowerShell 的习惯：没消息就是好消息）</li>
+  </ol>
+  <div class="tip">多个成员用<b>英文逗号</b>分隔、每个名字加英文引号。写成中文逗号或 <code>"dave,frank"</code>（一对引号包住两个名字）会被当成一个不存在的用户。</div>
+  <h4>第三步：查看组成员</h4>
+<pre>Get-LocalGroupMember -Group "Developers"</pre>
+  <ol>
+    <li>应列出两行：<code>DC1\dave</code> 和 <code>DC1\frank</code>，ObjectClass 为“用户”，PrincipalSource 为 Local</li>
+    <li>你的机器上前缀是自己的计算机名（<code>DC-学号\dave</code>）</li>
+  </ol>
+  <h4>第四步：查看所有用户和组</h4>
+<pre>Get-LocalUser  | Format-Table Name, Enabled, LastLogon
+Get-LocalGroup | Format-Table Name, Description</pre>
+  <ol>
+    <li>用户表里应有 alice、bob、charlie、dave、eve、frank 共 6 个新用户，Enabled 都是 True</li>
+    <li><b>Guest 的 Enabled = False</b></li>
+    <li>LastLogon 列是空的——这些账号还没登录过</li>
+    <li>组表里应能找到 Administrators、Users、Remote Desktop Users 等内置组，以及 IT-Admins、IT-Users、Finance、Developers</li>
+  </ol>
+  <h4>第五步：怎么验证做对了（对比一下 net 命令）</h4>
+<pre>net localgroup Developers</pre>
+  <p>“成员”下方应列出 dave、frank，最后显示“命令成功完成。”和上面 <code>Get-LocalGroupMember</code> 的结果一致即可。</p>
+</template>
+<template id="pop-l03-10-why">
+  <h3>💡 每一项为什么这么写</h3>
+  <table>
+    <tr><th style="width:30%">命令 / 参数</th><th>意义</th></tr>
+    <tr><td><code>New-LocalGroup -Name "Developers"</code></td><td>等同 GUI 的「新建组」。Developers 用来放开发人员 dave、frank，后面课程按组授权时直接用它。</td></tr>
+    <tr><td><code>Add-LocalGroupMember … -Member "dave","frank"</code></td><td><code>-Member</code> 接受一个列表，一条命令加多人，比 GUI 一个个点快，也方便写进脚本。</td></tr>
+    <tr><td><code>Get-LocalGroupMember</code></td><td>做完就查，是运维的基本习惯。输出的 <code>DC1\dave</code> 中“DC1\”表示这是<b>本机</b>账户；以后有了域，域账户的前缀会是域名，一眼就能区分。</td></tr>
+    <tr><td><code>Format-Table Name, Enabled, LastLogon</code></td><td>只挑关心的列显示成表格。<code>Enabled</code> 用来检查 Guest 是否禁用；<code>LastLogon</code> 为空说明从未登录过，安全审计中常用它找出长期没人用的“僵尸账号”。</td></tr>
+    <tr><td><code>Get-LocalGroup … Description</code></td><td>一次看清本机所有组，包括内置组的说明，方便核对自建的 4 个组都在。</td></tr>
+    <tr><td><code>net localgroup</code></td><td>传统命令，输出是文本；<code>Get-LocalGroupMember</code> 输出是对象，可以继续筛选、计数。两种都会用，以后看到老脚本也能读懂。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>“找不到主体 dave”：dave 还没建（回上一页），或名字拼错</li>
+    <li>“dave 已是组 Developers 的成员”：命令重复执行了，结果不受影响</li>
+    <li>“找不到组 Developers”：第一步没执行成功，或组名大小写/拼写写错了</li>
+    <li>Guest 的 Enabled 是 True：回到 lusrmgr.msc 勾选「账户已禁用」，或执行 <code>Disable-LocalUser Guest</code></li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务3 CSV -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 19′ · DC1</span></span><h2>准备 CSV：users.csv</h2><button class="more" data-pop="pop-l03-11-steps">📋 详细步骤</button><button class="more" data-pop="pop-l03-11-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-plaintext" data-trim>
+Username,FullName,Department,Password
+user01,Student 01,教学部,Stu@2026!
+user02,Student 02,教学部,Stu@2026!
+user03,Student 03,实训部,Stu@2026!
+user04,Student 04,实训部,Stu@2026!
+user05,Student 05,行政部,Stu@2026!
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>第一行是表头：</b>列名会变成 <code>$u.Username</code>、<code>$u.Password</code> 等属性名</div>
+      <div class="callout warn"><b>保存编码：</b>记事本另存为 UTF-8，否则中文部门名会乱码</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">可以用记事本创建，注意文件扩展名不要变成 users.csv.txt（建议打开"显示文件扩展名"）。Windows Server 2022 自带的 PowerShell 5.1 读取 UTF-8 文件一般没问题，但若 Description 显示乱码，就是编码问题。提醒：真实环境中不应在 CSV 里明文保存密码。</aside>
+<template id="pop-l03-11-steps">
+  <h3>📋 详细步骤：创建 C:\LabFiles\users.csv</h3>
+  <h4>第一步：打开“显示文件扩展名”</h4>
+  <ol>
+    <li>打开文件资源管理器 →「查看」菜单 → 勾选「<b>文件扩展名</b>」</li>
+    <li>这样才能看出文件到底叫 <code>users.csv</code> 还是 <code>users.csv.txt</code></li>
+  </ol>
+  <h4>第二步：准备文件夹</h4>
+  <ol>
+    <li>确认 <code>C:\LabFiles</code> 文件夹存在；没有就在 C 盘新建一个，或在 PowerShell 执行：</li>
+  </ol>
+<pre>New-Item -ItemType Directory -Path C:\LabFiles -Force</pre>
+  <h4>第三步：用记事本写入内容</h4>
+  <ol>
+    <li>打开记事本，<b>原样</b>输入（或复制）幻灯片上的 6 行：第一行是表头，下面 5 行是用户</li>
+    <li>逗号用<b>英文逗号</b>，每行末尾不要多空格，表头写成 <code>Username,FullName,Department,Password</code></li>
+  </ol>
+  <h4>第四步：另存为 UTF-8</h4>
+  <ol>
+    <li>「文件」→「另存为」，位置选 <code>C:\LabFiles</code></li>
+    <li>「保存类型」选「<b>所有文件 (*.*)</b>」</li>
+    <li>文件名填 <code>users.csv</code></li>
+    <li>「编码」选 <b>UTF-8</b> → 保存</li>
+  </ol>
+  <div class="tip">保存类型如果留着“文本文档 (*.txt)”，记事本会自动加上 .txt，文件就成了 <code>users.csv.txt</code>，下一步脚本会报“找不到文件”。</div>
+  <h4>第五步：怎么验证做对了</h4>
+<pre>Import-Csv C:\LabFiles\users.csv | Format-Table</pre>
+  <p>应看到一张 4 列 5 行的表：列名是 Username、FullName、Department、Password，Department 列的中文（教学部 / 实训部 / 行政部）显示正常、没有乱码。</p>
+</template>
+<template id="pop-l03-11-why">
+  <h3>💡 每一项为什么这么设置</h3>
+  <table>
+    <tr><th style="width:26%">设置项</th><th>意义</th></tr>
+    <tr><td><b>CSV 格式</b></td><td>“逗号分隔的表格”，Excel 和记事本都能编辑，HR 给的员工名单通常就是这种格式。用它当“数据”，脚本当“动作”，名单改了脚本不用改。</td></tr>
+    <tr><td><b>第一行是表头</b></td><td><code>Import-Csv</code> 会把表头的每个列名变成对象的属性名，下一页脚本里的 <code>$u.Username</code>、<code>$u.Password</code> 就来自这里。表头拼错一个字母，对应属性就是空的。</td></tr>
+    <tr><td><b>Username</b></td><td>对应 <code>New-LocalUser -Name</code>，登录名 user01–user05。</td></tr>
+    <tr><td><b>FullName</b></td><td>对应 <code>-FullName</code>，显示用的全名。</td></tr>
+    <tr><td><b>Department</b></td><td>对应 <code>-Description</code>，记录部门。中文内容决定了文件必须用 UTF-8 保存。</td></tr>
+    <tr><td><b>Password</b><br><code>Stu@2026!</code></td><td>满足复杂度要求的练习密码。5 个账号共用同一个密码<b>只是为了实验方便</b>；真实环境中不应在 CSV 里明文保存密码。</td></tr>
+    <tr><td><b>保存为 UTF-8</b></td><td>保证中文部门名能被正确读取。编码不对时，用户能建出来，但描述会变成乱码。</td></tr>
+    <tr><td><b>路径</b> <code>C:\LabFiles\users.csv</code></td><td>下一页脚本里写死了这个路径，文件名和位置必须完全一致。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>“找不到路径 …users.csv”：文件其实叫 users.csv.txt，或没存在 C:\LabFiles 里</li>
+    <li>导入后 Department 显示乱码：保存时编码不是 UTF-8，重新另存一次</li>
+    <li>导入后只有一列、所有内容挤在一起：用了中文逗号</li>
+    <li>某一列整列为空：表头拼写和脚本里用的属性名不一致</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 任务3 脚本 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 19′ · DC1</span></span><h2>批量创建脚本</h2><button class="more" data-pop="pop-l03-12-steps">📋 详细步骤</button><button class="more" data-pop="pop-l03-12-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$users = Import-Csv C:\LabFiles\users.csv
+foreach ($u in $users) {
+  $pw = ConvertTo-SecureString $u.Password -AsPlainText -Force
+  New-LocalUser -Name $u.Username -Password $pw `
+    -FullName $u.FullName -Description $u.Department `
+    -PasswordNeverExpires
+  Write-Host "已创建: $($u.Username)" -ForegroundColor Green
+}
+</code></pre>
+    <div class="code-cap">验证：<code>Get-LocalUser | Measure-Object</code></div>
+    <div class="callout"><b>预期：</b>Count 至少 11（Administrator + 6 个手动 + 5 个批量），内置的 Guest 等账户也会计入</div>
+  </div>
+</div>
+<aside class="notes">逐行讲解：Import-Csv 把每一行变成一个对象，foreach 依次处理。建议学生先把脚本保存成 .ps1 再运行，方便修改。如果重复运行，会报"用户已存在"，这正好引出改进思路：先用 Get-LocalUser -ErrorAction SilentlyContinue 判断再创建。</aside>
+<template id="pop-l03-12-steps">
+  <h3>📋 详细步骤：用脚本批量创建 user01–user05</h3>
+  <h4>第一步：把脚本保存成 .ps1 文件</h4>
+  <ol>
+    <li>在开始菜单搜索 <b>PowerShell ISE</b>，右键 →「以管理员身份运行」；用记事本写也可以</li>
+    <li>原样输入幻灯片上的脚本（8 行）</li>
+    <li>保存到 <code>C:\LabFiles</code>，文件名如 <code>New-BulkUsers.ps1</code>（名字自取，扩展名必须是 <code>.ps1</code>）</li>
+  </ol>
+  <div class="tip">保存成文件再运行，出错时改一处再跑就行，不用整段重新敲。脚本里有中文，用记事本保存时编码也选 UTF-8。</div>
+  <h4>第二步：运行脚本</h4>
+  <ol>
+    <li>在管理员 PowerShell 中执行：</li>
+  </ol>
+<pre>cd C:\LabFiles
+.\New-BulkUsers.ps1</pre>
+  <ol start="2">
+    <li>每创建一个用户，会先输出一张表（New-LocalUser 返回的用户信息），再输出一行绿色的“<b>已创建: user01</b>”……直到 user05</li>
+  </ol>
+  <div class="tip">报“无法加载文件 …，因为在此系统上禁止运行脚本”：执行策略被重置了（比如回滚过快照），以管理员身份执行 <code>Set-ExecutionPolicy RemoteSigned</code> 后重试，这是第 1 课已经设置过的值。</div>
+  <h4>第三步：不小心重复运行了怎么办</h4>
+  <ol>
+    <li>第二次运行每个用户都会报红字“用户 user01 已存在”，已经建好的账户不受影响，无需处理</li>
+    <li>改进思路：在循环里先用 <code>Get-LocalUser -Name $u.Username -ErrorAction SilentlyContinue</code> 判断，存在就跳过</li>
+  </ol>
+  <h4>第四步：怎么验证做对了</h4>
+<pre>Get-LocalUser | Measure-Object
+Get-LocalUser user0* | Format-Table Name,FullName,Description</pre>
+  <ol>
+    <li>第一条：<b>Count 至少 11</b>（Administrator + 6 个手动 + 5 个批量）；Guest、DefaultAccount 等内置账户也会被计入，所以实际数字会比 11 多几个，属于正常</li>
+    <li>第二条：列出 user01–user05，Description 分别是教学部 / 实训部 / 行政部，中文正常</li>
+    <li>最后对照「验证与提交」页的清单自查，全部达成后拍快照 <code>Lesson03-Done</code></li>
+  </ol>
+</template>
+<template id="pop-l03-12-why">
+  <h3>💡 脚本每一行为什么这么写</h3>
+  <table>
+    <tr><th style="width:32%">代码</th><th>意义</th></tr>
+    <tr><td><code>$users = Import-Csv …</code></td><td>读取 CSV，把每一行变成一个对象，表头就是属性名。<code>$users</code> 里装着 5 个对象。</td></tr>
+    <tr><td><code>foreach ($u in $users) { … }</code></td><td>依次取出每个对象放进 <code>$u</code>，大括号里的命令对每个用户执行一遍。100 个人也是这几行，这就是批量的意义。</td></tr>
+    <tr><td><code>ConvertTo-SecureString $u.Password …</code></td><td>和上一页一样，把 CSV 里的明文密码转成 SecureString，<code>New-LocalUser</code> 只收这种类型。</td></tr>
+    <tr><td><code>-Name $u.Username</code> 等</td><td>把 CSV 的列一一对应到参数：Username→Name、FullName→FullName、Department→Description。</td></tr>
+    <tr><td><code>-PasswordNeverExpires</code></td><td>和手动建的用户保持一致，实验期间不会过期；仅教学用途。</td></tr>
+    <tr><td><code>Write-Host … -ForegroundColor Green</code></td><td>每建成一个就打印一行绿字，跑的时候能直观看到进度，出错时也能知道卡在第几个。</td></tr>
+    <tr><td><code>$($u.Username)</code></td><td>在双引号字符串里取对象的属性必须用 <code>$( )</code> 包起来；直接写 <code>$u.Username</code> 只会输出对象本身再接上“.Username”字样。</td></tr>
+    <tr><td><code>Get-LocalUser | Measure-Object</code></td><td>统计本机账户总数，快速确认批量结果。预期至少 11，内置账户也会被计入。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>“找不到路径 C:\LabFiles\users.csv”：文件名或位置不对，回上一页检查扩展名</li>
+    <li>“无法加载脚本文件”：执行策略不是 RemoteSigned，重新设置</li>
+    <li>每个用户都报“已存在”：脚本跑了第二遍，账户其实已经建好了</li>
+    <li>报“无法将参数绑定到 Name，因为它是空值”：CSV 表头拼写和 <code>$u.Username</code> 不一致</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>创建失败？先看报错</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:30%">原因</th><th>处理</th></tr>
+      <tr><td>拒绝访问</td><td>PowerShell 未以管理员运行</td><td>右键"以管理员身份运行"</td></tr>
+      <tr><td>密码不满足策略要求</td><td>复杂度 / 长度不够</td><td>严格使用原文密码，如 <code>Lab@2026a</code></td></tr>
+      <tr><td>用户已存在</td><td>重复执行了命令或脚本</td><td><code>Get-LocalUser</code> 确认后跳过</td></tr>
+      <tr><td>找不到文件 users.csv</td><td>路径错或扩展名变成 .txt</td><td>检查 <code>users.csv</code></td></tr>
+      <tr><td>无法加载脚本文件</td><td>执行策略限制</td><td>确认第 1 课已设 RemoteSigned</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">让学生先读红字报错的第一行，再对照这张表。密码策略报错时，net user 会显示"密码不满足密码策略的要求"，New-LocalUser 会报 InvalidPasswordException。执行策略在第 1 课已设置为 RemoteSigned，如果回滚过快照可能需要重新设置。</aside>
+</section>
+
+<!-- 14 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>任务 4 · 11′ · 对照清单自查</h2></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>alice, bob, charlie, dave, eve, frank 用户存在</li>
+        <li>IT-Admins 组包含 alice</li>
+        <li>Developers 组包含 dave, frank</li>
+        <li>user01–user05 批量用户存在</li>
+        <li>Guest 账户已禁用</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>VM1 拍快照<br><code>Lesson03-Done</code></p>
+        <p class="small muted" style="margin-top:8px">下节课从这个快照开始</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上以管理员身份逐项核对左侧清单。哪一项未达成就回到对应任务补做，不必全部重来。清单逐项达成后，运行 check03.ps1 生成 PDF 报告提交（下载链接见最后一页「作业提交」）。快照名必须一致，后续课程会按快照名回滚；第 6 课 NTFS 权限会直接用到今天建的用户和组。</aside>
+</section>
+
+<!-- 15 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">一人一号可追责；权限给组不给人，便于增删和调岗</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small"><code>lusrmgr.msc</code> → <code>net user</code> / <code>New-LocalUser</code> → <code>Import-Csv</code> 批量</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">账户存于本机 SAM，系统认 SID；Guest 保持禁用</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 4 课：</b>本地安全策略与审计。给今天的账号加上密码策略、锁定策略，并记录登录事件。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check03.ps1" download>check03.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check03.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 删掉 alice 再建一个同名 alice，原来的权限还在吗？为什么？2. New-LocalUser 的 -Password 为什么要 SecureString？3. 新员工入职，用组管理权限要做几步？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第7课 · 共享文件夹与网络访问</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 3 · 共享管理　|　第 7 次课 · 学时 13–14</p>
+  <h1>共享文件夹与网络访问</h1>
+  <p class="muted">把 DC1 上的部门文件夹，安全地开放给网络上的同事</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑🧑 结对操作</span><span class="chip lab">VM1 + VM3</span></div>
+</div>
+<aside class="notes">开场提问：上节课我们给 C:\CompanyData 配好了 NTFS 权限，但同事坐在自己电脑前，怎么才能打开这些文件？今天就是把文件夹"搬上网络"。本课结束的快照 S3-ShareReady 是关键快照，下节课 阶段考核 1 考核就基于它。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>概念</b>SMB 共享<br>两道门 · ABE</div>
+      <div class="seg" style="flex:19"><span class="t">19′</span><b>任务 1</b>创建共享文件夹</div>
+      <div class="seg" style="flex:19"><span class="t">19′</span><b>任务 2</b>客户端访问<br>映射驱动器</div>
+      <div class="seg" style="flex:15"><span class="t">15′</span><b>任务 3</b>权限叠加 · ABE</div>
+      <div class="seg" style="flex:15"><span class="t">15′</span><b>任务 4</b>验证</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>用图形界面和 <code>New-SmbShare</code> 创建普通共享与隐藏共享</li>
+        <li>算出"共享权限 + NTFS 权限"叠加后的有效权限</li>
+        <li>在客户端用 UNC 路径访问共享，并用 <code>net use</code> 映射驱动器</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念讲解控制在 15 分钟以内。任务 3 是本课的思维难点，任务 2 中让学生先亲手试出"能/不能"，任务 3 再解释为什么。任务 4 的时间如果有富余，可以带学生预习 阶段考核 1 的考核范围。</aside>
+</section>
+
+<!-- 02b 概念：教材补充 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>协议、安全弱点与两种共享模型</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card">
+        <h3>FTP · 文件传输协议</h3>
+        <ul class="points">
+          <li>工作在<b>应用层</b>（OSI 第 7 层 / TCP 第 4 层）</li>
+          <li>基于 <b>TCP</b> 而非 UDP，面向连接</li>
+          <li>传输前先完成<b>三次握手</b>，连接可靠</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <h3>SMB · 局域网文件共享</h3>
+        <ul class="points">
+          <li>Server Message Block，本课共享走的就是它（445）</li>
+          <li>靠客户端发送<b>验证密码</b>来授权文件传输</li>
+          <li>弱点：密码可被截获 → 窃取访问权限</li>
+        </ul>
+      </div>
+    </div>
+    <table class="tbl">
+      <tr><th>组策略「本地账户的共享和安全模型」</th><th>经典（Classic）</th><th>仅来宾（Guest only）</th></tr>
+      <tr><td>身份处理</td><td>验证本地用户，<b>保留本来身份</b></td><td>验证本地用户，但身份降为<b>来宾</b></td></tr>
+      <tr><td>网络登录</td><td>需输入<b>用户名 + 口令</b></td><td>只需 guest 口令，无口令直接进</td></tr>
+      <tr><td>安全性</td><td class="green">可精细授权，推荐</td><td class="red">难以追溯，风险高</td></tr>
+    </table>
+    <div class="callout warn"><b>加固方向：</b>服务器共享选"经典"模型，让网络访问必须带账号口令，才能发挥第 6 课按部门分配的 NTFS 权限。</div>
+  </div>
+</div>
+<aside class="notes">这页把教材 P3 的三块必备知识压到一张卡上。第一块是 FTP：文件传输协议工作在 OSI 第七层、TCP 模型第四层也就是应用层，用的是 TCP 不是 UDP，客户端和服务器建连前要经过三次握手，保证连接可靠、面向连接，为数据传输提供可靠保证——这是"文件怎么在网络上传"的通用底层，和本课的 SMB 共享并列理解即可。第二块是 SMB：Server Message Block 是局域网文件共享传输协议，本课客户端访问共享走的 445 端口就是它。它控制文件安全传输的机制是客户身份验证——客户端向服务器发送验证密码换取传输权限；弱点在于针对该机制的网络攻击较严重，攻击程序可以截获验证密码来窃取文件访问权限，局域网下传输安全得不到充分保障，这也是后面安全配置课要加固的原因。第三块最关键，用右边表格对比：组策略里"网络访问:本地账户的共享和安全模型"有两种，经典模型对本地用户做身份验证且不改变其本来身份，网络登录共享服务器时必须输入用户名和口令；仅来宾模型同样做验证但把身份统一降为来宾，登录时不需要用户名，只要输入 guest 账户口令，如果 guest 没设口令就直接登录。显然经典模型安全得多——它让我们第 6 课按部门配的 NTFS 权限真正能区分出"谁是谁"，所以服务器共享加固时要选经典、关掉来宾模型。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · 文件服务器<br>C:\CompanyData · DHCP</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3 · Win10-Client<br>DNS → 10.10.10.10</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>课前：</b>启动 VM3，确认能 ping 通 DC1；第 6 课的文件夹和 NTFS 权限已就绪</div>
+      <div class="callout"><b>账号：</b>alice（IT-Admins）、bob（IT-Users）、charlie（IT-Users + Finance）</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">结对分工：A 同学在 DC1 上建共享，B 同学在 CLIENT1 上测试访问，任务 3 交换。现在还是工作组环境，alice、bob、charlie 都是 DC1 上的本地账号，客户端访问时要输入 DC1 上的账号密码。</aside>
+</section>
+
+<!-- 04 概念：共享与 UNC -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>共享 = 给文件夹开一扇"网络门"</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>CLIENT1</b>输入 UNC 路径</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>SMB 协议</b>TCP 445</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>DC1 共享名</b>IT-Share</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>本地路径</b>C:\CompanyData\IT</div>
+    </div>
+    <table class="tbl">
+      <tr><th>写法</th><th>含义</th></tr>
+      <tr><td><code>\\10.10.10.10\IT-Share</code></td><td>UNC 路径：\\服务器\共享名</td></tr>
+      <tr><td><code>Public$</code></td><td>共享名以 $ 结尾 = <b>隐藏共享</b>，浏览时看不到</td></tr>
+      <tr><td><code>net use S: ...</code></td><td>把共享映射成本地盘符，像 U 盘一样使用</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">强调共享名和文件夹名可以不同：客户端只看到共享名，看不到服务器上的真实路径。隐藏共享只是"不列出来"，知道名字照样能访问，它不是安全措施。提问：C$、ADMIN$ 是谁建的？（系统默认的管理共享）</aside>
+</section>
+
+<!-- 05 概念：两道门 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>网络访问要过两道门</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>网络用户</b>bob</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>第 1 道：共享权限</b>完全控制 / 更改 / 读取</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>第 2 道：NTFS 权限</b>第 6 课配置的 ACL</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>文件</b>readme.txt</div>
+    </div>
+    <div class="grid2">
+      <div class="card good"><h3>有效权限 = 取交集</h3><p class="small">两道门都允许的操作才能做，<b>以更严格的为准</b>。例：更改 ∩ 修改 = 修改</p></div>
+      <div class="card bad"><h3>拒绝优先</h3><p class="small">任一道门是"无访问/拒绝"，直接被挡，<b>根本不看另一道</b></p></div>
+    </div>
+    <div class="callout warn"><b>本地登录</b>只过 NTFS 一道门；<b>网络访问</b>两道都要过。</div>
+  </div>
+</div>
+<aside class="notes">这页是本课核心。可以比喻：共享权限是大楼门禁，NTFS 是办公室门锁。企业常见做法是共享权限放宽（如 Everyone 更改），用 NTFS 精细控制，这样只需维护一套规则。提问：bob 本地登录 DC1 时，共享权限还起作用吗？</aside>
+</section>
+
+<!-- 06 概念：ABE -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>ABE：看不到，就不会去点</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>未启用 ABE（默认）</h3>
+        <ul class="points">
+          <li>打开共享，所有子文件夹都列出来</li>
+          <li>bob 也能看到 Confidential</li>
+          <li>点进去才提示"拒绝访问"</li>
+          <li>暴露了目录结构，还引发求助电话</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>启用 ABE（AccessBased）</h3>
+        <ul class="points">
+          <li>只列出用户有权访问的项目</li>
+          <li>bob 看不到 Confidential</li>
+          <li>alice 照常可见</li>
+          <li>不改变权限，只改变"显示"</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>ABE</b> = Access-Based Enumeration，基于访问的枚举。它是共享的属性，只对网络访问生效。</div>
+  </div>
+</div>
+<aside class="notes">第 6 课中 Confidential 只保留了 Administrators 和 alice，正好用来演示 ABE。强调 ABE 不是权限：即使看不到，权限依然由 NTFS 决定。它和隐藏共享一样属于"减少暴露"，不能替代权限配置。</aside>
+</section>
+
+<!-- 07 任务1 GUI -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 19′ · DC1</span></span><h2>图形界面创建隐藏共享 Public$</h2><button class="more" data-pop="pop-l07-07-steps">📋 详细步骤</button><button class="more" data-pop="pop-l07-07-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>右键 C:\CompanyData\Public</span><i>›</i><span>属性</span><i>›</i><span>共享</span><i>›</i><span>高级共享</span></div>
+    <div class="grid3">
+      <div class="card"><h3>① 勾选</h3>共享此文件夹</div>
+      <div class="card"><h3>② 共享名</h3><code>Public$</code></div>
+      <div class="card"><h3>③ 权限</h3>Everyone → 更改</div>
+    </div>
+    <div class="callout"><b>为什么 Everyone 可以给"更改"？</b>第 6 课已用 NTFS 给 Public 设了权限，真正的控制在第二道门。</div>
+  </div>
+</div>
+<aside class="notes">注意要点"高级共享"，不要用上面的"共享"按钮，那个是简易向导，共享名不能自定义。默认的共享权限是 Everyone 读取，需要点"权限"按钮改成更改。$ 必须是共享名最后一个字符。</aside>
+
+<template id="pop-l07-07-steps">
+  <h3>📋 详细步骤：图形界面创建隐藏共享 Public$</h3>
+  <div class="tip">这是在 <b>DC1（文件服务器）</b>上操作。第 6 课已给 C:\CompanyData\Public 配好 NTFS 权限（Everyone 修改），本任务只是给它开一扇"网络门"。</div>
+  <h4>第一步：进入高级共享</h4>
+  <ol>
+    <li>资源管理器定位 <code>C:\CompanyData\Public</code> → 右键 →「属性」→「共享」选项卡</li>
+    <li>点「<b>高级共享</b>」（<b>不要</b>点上面那个"共享"按钮，那是简易向导，共享名不能自定义）</li>
+  </ol>
+  <h4>第二步：设共享名（带 $ 隐藏）</h4>
+  <ol>
+    <li>勾选「<b>共享此文件夹</b>」</li>
+    <li>共享名填 <code>Public$</code> —— <b>$ 必须是最后一个字符</b>，这样它就成了隐藏共享</li>
+  </ol>
+  <h4>第三步：改共享权限</h4>
+  <ol>
+    <li>点「权限」按钮 → 默认是 Everyone <b>读取</b></li>
+    <li>把 Everyone 改成「<b>更改</b>」（勾上"更改"的允许）→ 确定 → 确定</li>
+  </ol>
+  <h4>第四步：验证</h4>
+  <ol>
+    <li>在 DC1 上 <code>net share</code>，应能看到 Public$ 以及系统默认的 C$ / ADMIN$ / IPC$</li>
+    <li>从 CLIENT1 浏览 <code>\\DC1</code> 时 <b>看不到</b> Public$（隐藏），但直接输 <code>\\DC1\Public$</code> 照样能进</li>
+  </ol>
+</template>
+<template id="pop-l07-07-why">
+  <h3>💡 每项为什么：隐藏共享</h3>
+  <ul>
+    <li><b>为什么共享权限给 Everyone 更改这么宽？</b>因为真正的控制在<b>第二道门 NTFS</b>（第 6 课已配）。企业常见做法：共享权限放宽、NTFS 精细控制，只维护一套规则。</li>
+    <li><b>$ 结尾=隐藏共享：</b>它只是"浏览列表里不显示"，<b>不是安全措施</b>——知道名字的人照样能访问。C$、ADMIN$ 也是系统自建的隐藏管理共享。</li>
+    <li><b>共享名可以和文件夹名不同：</b>客户端只看到共享名，看不到服务器上的真实路径，这本身是一层信息隐藏。</li>
+    <li><b>为什么必须用"高级共享"？</b>简易"共享"向导不让自定义共享名（加不了 $），也默认只给读取。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务1 PowerShell -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 19′ · DC1</span></span><h2>PowerShell 创建部门共享</h2><button class="more" data-pop="pop-l07-08-steps">📋 详细步骤</button><button class="more" data-pop="pop-l07-08-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+New-SmbShare -Name "IT-Share" -Path "C:\CompanyData\IT" `
+  -FullAccess "IT-Admins" -ChangeAccess "IT-Users" `
+  -ReadAccess "Everyone"
+New-SmbShare -Name "Finance-Share" `
+  -Path "C:\CompanyData\Finance" -FullAccess "IT-Admins" `
+  -ChangeAccess "Finance" -NoAccess "IT-Users"
+</code></pre>
+    <div class="code-cap">查看所有共享（两种方式结果应一致）</div>
+<pre><code class="language-powershell" data-trim>
+Get-SmbShare | Format-Table Name, Path, Description
+net share
+</code></pre>
+  </div>
+</div>
+<aside class="notes">-NoAccess "IT-Users" 是本课的伏笔：charlie 同时属于 IT-Users 和 Finance，任务 2 中他访问 Finance-Share 的结果值得课堂讨论。net share 中会看到 C$、ADMIN$、IPC$ 等默认共享，以及刚建的 Public$。</aside>
+
+<template id="pop-l07-08-steps">
+  <h3>📋 详细步骤：PowerShell 创建部门共享</h3>
+  <div class="tip">在 DC1 上以管理员打开 PowerShell。共享名用了连字符，<code>New-SmbShare</code> 的权限参数直接接受组名。</div>
+  <h4>创建 IT-Share</h4>
+<pre>New-SmbShare -Name "IT-Share" -Path "C:\CompanyData\IT" `
+  -FullAccess "IT-Admins" -ChangeAccess "IT-Users" `
+  -ReadAccess "Everyone"</pre>
+  <h4>创建 Finance-Share（含 NoAccess 伏笔）</h4>
+<pre>New-SmbShare -Name "Finance-Share" `
+  -Path "C:\CompanyData\Finance" -FullAccess "IT-Admins" `
+  -ChangeAccess "Finance" -NoAccess "IT-Users"</pre>
+  <h4>验证（两种方式结果应一致）</h4>
+<pre>Get-SmbShare | Format-Table Name, Path, Description
+net share
+Get-SmbShareAccess -Name "Finance-Share"   # 看 IT-Users 那条是 Deny</pre>
+  <div class="tip">若共享已存在要重建，先 <code>Remove-SmbShare -Name "IT-Share" -Force</code> 再建。<code>Get-SmbShareAccess</code> 能看到每个账户是 Allow 还是 Deny、权限级别。</div>
+</template>
+<template id="pop-l07-08-why">
+  <h3>💡 每项为什么：部门共享</h3>
+  <ul>
+    <li><b>三级共享权限：</b><code>-FullAccess</code>（完全控制）/ <code>-ChangeAccess</code>（更改）/ <code>-ReadAccess</code>（读取），对应共享这道门的三档。</li>
+    <li><b>IT-Share 给 Everyone 读取：</b>共享门放宽，具体谁能写由 NTFS（IT-Users 修改）决定——又一次"共享松、NTFS 严"。</li>
+    <li><b>-NoAccess "IT-Users" 是全课核心伏笔：</b>它在共享 ACL 上生成一条<b>拒绝</b>条目。charlie 同时属于 Finance（有更改）和 IT-Users（被拒绝）——下一个任务实测会发现<b>拒绝优先</b>，charlie 照样进不去 Finance-Share。</li>
+    <li><b>为什么不用"不授予"而用"拒绝"？</b>这正是教学讨论点：给组设"拒绝"要特别小心成员重叠，否则会误伤像 charlie 这种跨组用户。生产中常改用"不授予"而非显式"拒绝"。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 访问 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 19′ · CLIENT1</span></span><h2>客户端访问共享</h2><button class="more" data-pop="pop-l07-09-steps">📋 详细步骤</button><button class="more" data-pop="pop-l07-09-why">💡 关键现象解释</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>① 先确认网络</h3>
+        <ul class="points">
+          <li>IP 已从 DHCP 获取（10.10.10.100–200）</li>
+          <li>DNS = <code>10.10.10.10</code></li>
+        </ul>
+<pre><code class="language-powershell" data-trim>
+ipconfig /all
+ping 10.10.10.10
+</code></pre>
+      </div>
+      <div class="card blue">
+        <h3>② 资源管理器地址栏输入</h3>
+<pre><code class="language-powershell" data-trim>
+\\10.10.10.10\IT-Share
+\\10.10.10.10\Public$
+</code></pre>
+        <p class="small muted" style="margin-top:12px">IT-Share 以 bob 认证；Public$ 以 charlie 认证</p>
+      </div>
+    </div>
+    <div class="callout">在共享里尝试<b>创建、修改、删除</b>文件，记录哪些成功、哪些被拒绝。</div>
+  </div>
+</div>
+<aside class="notes">Windows 会缓存已认证的会话，换用户前先执行 net use * /delete 清除连接，否则一直是第一次登录的身份。Public$ 在浏览 \\10.10.10.10 时看不到，必须手动输入完整名称，正好验证隐藏共享。</aside>
+
+<template id="pop-l07-09-steps">
+  <h3>📋 详细步骤：客户端访问共享</h3>
+  <div class="tip">这一步在 <b>CLIENT1</b> 上操作。现在是工作组环境，alice/bob/charlie 都是 <b>DC1 上的本地账号</b>，客户端访问时要输 DC1 的账号密码。</div>
+  <h4>第一步：确认网络</h4>
+<pre>ipconfig /all          # IP 应从 DHCP 拿到 10.10.10.100-200
+ping 10.10.10.10       # 能通 DC1</pre>
+  <h4>第二步：用 UNC 路径访问（资源管理器地址栏）</h4>
+  <ol>
+    <li>地址栏输入 <code>\\10.10.10.10\IT-Share</code> → 弹登录框 → 输 <b>bob</b> / 密码</li>
+    <li>地址栏输入 <code>\\10.10.10.10\Public$</code> → 这个在浏览 <code>\\10.10.10.10</code> 时看不到，必须手敲完整名（验证隐藏共享）→ 以 <b>charlie</b> 认证</li>
+    <li>在共享里试着<b>新建、修改、删除</b>文件，记录哪些成功、哪些被拒</li>
+  </ol>
+  <h4>换用户前务必清会话</h4>
+<pre>net use * /delete /y   # 否则一直沿用第一次登录的身份</pre>
+</template>
+<template id="pop-l07-09-why">
+  <h3>💡 关键现象解释</h3>
+  <ul>
+    <li><b>为什么换用户前要 net use * /delete？</b>Windows 会<b>缓存已认证的会话</b>，一台客户端对同一台服务器通常只保持一个身份。不清掉，你以为换了 charlie，其实还是 bob。</li>
+    <li><b>Public$ 浏览时看不到：</b>隐藏共享不在列表里，手敲 <code>\\...\Public$</code> 才进得去——亲手验证"隐藏≠安全"。</li>
+    <li><b>映射/连接成功 ≠ 有权访问（重要）：</b>net use 或资源管理器"连上了"只代表会话建立；真正的权限墙在你<b>打开/读写文件</b>时才撞上，那时才会报"拒绝访问"。</li>
+    <li><b>本地登录 vs 网络访问：</b>bob 直接坐在 DC1 前登录只过 NTFS 一道门；从 CLIENT1 过来要过<b>共享+NTFS 两道门</b>。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 映射 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 19′ · CLIENT1</span></span><h2>映射网络驱动器</h2><button class="more" data-pop="pop-l07-10-steps">📋 详细步骤</button><button class="more" data-pop="pop-l07-10-why">💡 charlie 为什么被拒</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+net use S: \\10.10.10.10\IT-Share /user:alice Lab@2026a
+net use F: \\10.10.10.10\Finance-Share /user:charlie Lab@2026c
+
+# 查看当前所有映射
+net use
+</code></pre>
+    <table class="tbl">
+      <tr><th>盘符</th><th>共享</th><th>身份</th><th>预期</th></tr>
+      <tr><td><b>S:</b></td><td>IT-Share</td><td>alice</td><td>资源管理器中出现 S: 盘</td></tr>
+      <tr><td><b>F:</b></td><td>Finance-Share</td><td>charlie</td><td>资源管理器中出现 F: 盘</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">提醒：命令行里写明文密码只适合实验，生产环境应省略密码让系统提示输入。如果 F: 映射报"拒绝访问"，引导学生思考 charlie 也在 IT-Users 组、而 Finance-Share 对 IT-Users 是 NoAccess，这是任务 3 的讨论点。</aside>
+
+<template id="pop-l07-10-steps">
+  <h3>📋 详细步骤：映射网络驱动器</h3>
+  <div class="tip">在 CLIENT1 上把共享映射成本地盘符，像 U 盘一样用。命令行写明文密码只适合实验，生产环境应省略密码让系统提示输入。</div>
+  <h4>映射两个盘</h4>
+<pre>net use S: \\10.10.10.10\IT-Share /user:alice Lab@2026a
+net use F: \\10.10.10.10\Finance-Share /user:charlie Lab@2026c
+net use                                  # 查看当前所有映射</pre>
+  <table><tr><th>盘符</th><th>共享</th><th>身份</th><th>预期</th></tr>
+  <tr><td>S:</td><td>IT-Share</td><td>alice</td><td>出现 S: 盘，可访问（含 Confidential）</td></tr>
+  <tr><td>F:</td><td>Finance-Share</td><td>charlie</td><td>映射命令可能"成功"，但进去读写被拒 ← 见右侧</td></tr></table>
+  <div class="tip"><b>真机实证：</b>charlie 映射 F: 时 net use 可能提示"命令成功完成"，但一旦 <code>dir F:\</code> 或打开文件就报<b>拒绝访问</b>——因为 charlie 也在 IT-Users 组，而 Finance-Share 对 IT-Users 是 NoAccess。</div>
+</template>
+<template id="pop-l07-10-why">
+  <h3>💡 charlie 为什么被拒（拒绝优先）</h3>
+  <ul>
+    <li><b>charlie 的身份：</b>他同时属于 <b>Finance</b>（Finance-Share 给了更改）和 <b>IT-Users</b>（Finance-Share 设了 NoAccess=拒绝）。</li>
+    <li><b>直觉 vs 真相：</b>任务 3 分析表故意让你先填"charlie→Finance-Share→修改✓"（只看 Finance 组的允许）。但真机实测 charlie <b>读写全被拒</b>。</li>
+    <li><b>规则：拒绝优先于允许。</b>只要用户落在任一"拒绝"条目里，直接被挡，<b>根本不看</b>其他允许条目，也不看第二道门 NTFS。</li>
+    <li><b>教学结论：</b>给组设"拒绝"要特别小心<b>成员重叠</b>——一个人跨两个组就可能被误伤。生产中更推荐"不授予"（没写就没有）而非显式"拒绝"。</li>
+    <li><b>对比 bob：</b>bob 只在 IT-Users，映射 Finance-Share 同样"连得上、读不了"，道理一样。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务3 权限分析 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 3 <span class="t">· 15′ · 📝 分析表</span></span><h2>权限叠加：算一算有效权限</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>谁 → 访问哪里</th><th>共享权限</th><th>NTFS 权限</th><th>有效权限</th></tr>
+      <tr><td>bob → \\DC1\IT-Share\readme.txt</td><td>IT-Users → 更改</td><td>IT-Users → 修改</td><td class="green">修改 ✓</td></tr>
+      <tr><td>charlie → \\DC1\Finance-Share\readme.txt</td><td>Finance → 更改</td><td>Finance → 修改</td><td class="green">修改 ✓</td></tr>
+      <tr><td>bob → \\DC1\Finance-Share\readme.txt</td><td>IT-Users → 无访问</td><td>（不再检查）</td><td class="red">拒绝 ✗</td></tr>
+    </table>
+    <div class="callout warn"><b>思考题：</b>charlie 同时也是 IT-Users 成员，而 Finance-Share 对 IT-Users 设了"无访问"。用任务 2 的实测结果验证：拒绝优先会不会影响他？</div>
+  </div>
+</div>
+<aside class="notes">让学生先独立填表再公布答案。第三行强调：第一道门就拒绝了，NTFS 写什么都没用。思考题：-NoAccess 在共享 ACL 中生成的是"拒绝"条目，而拒绝优先于允许，所以 charlie 实际也可能被拒绝；如果实测如此，这正是"给组设拒绝要小心成员重叠"的生动案例，可让学生讨论改用"不授予"而非"拒绝"。</aside>
+</section>
+
+<!-- 12 任务3 ABE -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 15′ · DC1</span></span><h2>启用 ABE 并对比效果</h2><button class="more" data-pop="pop-l07-11-steps">📋 详细步骤</button><button class="more" data-pop="pop-l07-11-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Set-SmbShare -Name "IT-Share" -FolderEnumerationMode AccessBased
+
+# 确认：应显示 AccessBased
+Get-SmbShare IT-Share | Select Name, FolderEnumerationMode
+</code></pre>
+    <div class="grid2">
+      <div class="card bad"><h3>启用前 · bob 打开 IT-Share</h3><p class="small">能看到 Confidential，点进去拒绝访问</p></div>
+      <div class="card good"><h3>启用后 · bob 打开 IT-Share</h3><p class="small">Confidential 不再显示（按 F5 刷新）</p></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">建议先让 CLIENT1 上的 bob 打开 IT-Share 截图，再在 DC1 执行命令，刷新后对比。Set-SmbShare 会询问确认，输入 Y 或加 -Force。如果切换到 alice 的 S: 盘，应该仍能看到 Confidential。</aside>
+
+<template id="pop-l07-11-steps">
+  <h3>📋 详细步骤：启用 ABE 并对比效果</h3>
+  <div class="tip">ABE=Access-Based Enumeration（基于访问的枚举）。它是<b>共享的属性</b>，只对网络访问生效，只改"显示"不改权限。在 DC1 上操作。</div>
+  <h4>第一步：先看启用前（在 CLIENT1 上，以 bob）</h4>
+  <ol>
+    <li>bob 浏览 <code>\\10.10.10.10\IT-Share</code>，<b>能看到</b> Confidential 文件夹名（虽然点进去会被拒）——暴露了目录结构</li>
+  </ol>
+  <h4>第二步：在 DC1 启用 ABE</h4>
+<pre>Set-SmbShare -Name "IT-Share"      -FolderEnumerationMode AccessBased -Force
+Set-SmbShare -Name "Finance-Share" -FolderEnumerationMode AccessBased -Force
+Set-SmbShare -Name "Public$"       -FolderEnumerationMode AccessBased -Force
+Get-SmbShare | Select Name, FolderEnumerationMode   # 应为 AccessBased</pre>
+  <h4>第三步：对比启用后（CLIENT1 上先清会话）</h4>
+<pre>net use * /delete /y</pre>
+  <ol>
+    <li>bob 再浏览 IT-Share → <b>看不到</b> Confidential 了（只剩他有权的 readme.txt）</li>
+    <li>alice 浏览 IT-Share → <b>照常看得到</b> Confidential（她有权）</li>
+  </ol>
+  <div class="tip">ABE 改了"显示"要客户端<b>重新连接</b>才生效，所以对比前先 net use * /delete。</div>
+</template>
+<template id="pop-l07-11-why">
+  <h3>💡 每项为什么：ABE</h3>
+  <ul>
+    <li><b>ABE 解决什么？</b>没启用时，用户能看到所有子文件夹名（即使进不去），既暴露目录结构，又引发"我怎么打不开"的求助电话。</li>
+    <li><b>启用后：</b>只列出用户<b>有权访问</b>的项目。bob 看不到 Confidential，alice 照常可见——第 6 课 Confidential 只留 Admin+alice，正好用来演示。</li>
+    <li><b>ABE 不是权限！</b>它只改"显示"，权限依然由 NTFS 决定。即使看得到，没权限照样打不开；看不到，也不代表权限变了。</li>
+    <li><b>和隐藏共享一个性质：</b>都属于"减少暴露"，是锦上添花，<b>不能替代</b>权限配置。</li>
+    <li><b>为什么要先清会话？</b>ABE 的枚举结果在建立连接时确定，不断开重连看不到变化。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>访问不了共享？按这个顺序查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>找不到网络路径</td><td>网络不通或防火墙拦 445</td><td>先 <code>ping 10.10.10.10</code>，再查 DC1 防火墙的"文件和打印机共享"</td></tr>
+      <tr><td>换了用户还是旧身份</td><td>会话被缓存</td><td><code>net use * /delete</code> 后重新连接</td></tr>
+      <tr><td>发生系统错误 85</td><td>盘符已被占用</td><td>先 <code>net use S: /delete</code></td></tr>
+      <tr><td>能看见但改不了</td><td>两道门取交集</td><td>分别查共享权限和 NTFS 权限</td></tr>
+      <tr><td>系统错误 1219 多重连接</td><td>同一服务器已用别的用户连接</td><td>断开旧连接后再映射</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">课堂上最常见的是第二种：学生换用户测试却得到同样结果，误以为权限没生效。错误 1219：同一服务器不能用两个不同用户同时连接，alice 映射 S: 后再用 charlie 映射 F: 就可能触发，可先断开或用 \\DC1 与 \\10.10.10.10 两种名称区分。浏览看不到 Public$ 是隐藏共享的正常现象。</aside>
+</section>
+
+<!-- 14 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 4 <span class="t">· 15′ · 验证与提交</span></span><h2>对照清单自查</h2></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>IT-Share 共享存在且路径正确</li>
+        <li>Finance-Share 共享存在</li>
+        <li>Public$ 隐藏共享存在</li>
+        <li>DHCP 已为 CLIENT1 分配IP</li>
+        <li>ABE 已启用</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照（关键）</h3>
+        <p><code>S3-ShareReady</code></p>
+        <p class="small muted" style="margin-top:8px">下节课 阶段考核 1 的考核快照基于它制作</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对清单。任何一项不通过都要当堂修好再拍快照，因为教师要基于 S3-ShareReady 制作考核起始快照 CR1-Start。清单逐项达成后，运行 check07.ps1 生成 PDF 报告提交（下载链接见最后一页「作业提交」）。提醒学生交上任务 3 的权限分析表。</aside>
+</section>
+
+<!-- 15 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">共享让文件通过 SMB 被网络访问，ABE 和隐藏共享减少暴露</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small"><code>New-SmbShare</code> → UNC 访问 → <code>net use</code> 映射 → <code>Set-SmbShare</code></p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">网络访问过两道门：共享 ∩ NTFS，拒绝优先</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 8 课：</b>阶段考核 1 基础模块考核（80 分钟）：用户、NTFS 与共享权限、DHCP/DNS、审核。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check07.ps1" download>check07.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check07.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 共享权限"更改"、NTFS"读取"，网络用户的有效权限是什么？2. Public$ 能阻止别人访问吗？3. 换用户测试前要先执行什么命令？提醒同学们复习第 3–7 课，下节课是考核。</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

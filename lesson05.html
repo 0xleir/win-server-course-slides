@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第5课 · 用户权限分配与 UAC</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 2 · 用户管理　|　第 5 次课 · 学时 9–10</p>
+  <h1>用户权限分配与 UAC</h1>
+  <p class="muted">账号建好之后：谁能登录、谁能关机、谁能"提权"</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 · DC1</span></div>
+</div>
+<aside class="notes">开场提问：第 3 课我们建了 alice、bob、charlie，并把他们分进不同的组。但"在哪个组"本身并不决定他能做什么——今天就来回答"组能做什么"由谁说了算。本课结束后要拍关键快照 S2-UserMgmt，是项目 2 的收尾。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>概念</b>用户权限<br>UAC · 最小权限</div>
+      <div class="seg" style="flex:24"><span class="t">24′</span><b>任务 1</b>用户权限分配<br>并测试效果</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 2</b>UAC 级别<br>注册表与策略</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 3</b>runas 与<br>服务账户</div>
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>任务 4</b>验证 + 快照</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>在 <code>secpol.msc</code> 中给组分配/拒绝"用户权限"，并验证效果</li>
+        <li>说清 UAC 的作用，能查看 <code>EnableLUA</code> 等注册表值</li>
+        <li>用 <code>runas</code> 切换身份，创建受限的服务账户 <code>svc_backup</code></li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念部分 10 分钟左右，穿插在任务前讲即可。任务 1 需要多次注销、切换用户，最耗时；提醒学生每次注销前先保存好正在编辑的内容。</aside>
+</section>
+
+<!-- 概念：教材补充 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>Windows 权限 · NTFS 权限 · EFS</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>Windows 权限（用户权限）</h3>
+        <ul class="points">
+          <li>管<b>系统级能力</b>：登录、关机、备份、改时间</li>
+          <li>由"本地安全策略"→用户权限分配下发</li>
+          <li>授予对象：用户或<b>组</b>（赋给组最省心）</li>
+          <li>和具体文件无关，是"能做什么操作"</li>
+        </ul>
+      </div>
+      <div class="card blue">
+        <h3>NTFS 权限（对象权限）</h3>
+        <ul class="points">
+          <li>管<b>某文件/文件夹</b>的读、写、修改、完全控制</li>
+          <li>写在对象自己的 <b>ACL</b> 上，随对象走</li>
+          <li>默认<b>继承</b>父文件夹；可打断继承</li>
+          <li>"拒绝"优先于"允许"；只能用于 NTFS 卷</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout warn"><b>EFS 加密授权原理：</b>每个文件用随机"文件加密密钥(FEK)"对称加密；FEK 再用用户证书的<b>公钥</b>加密后随文件存放。只有持有对应<b>私钥</b>的用户（或恢复代理）才能解出 FEK → 看到明文。所以 EFS 把"谁能解密"与账户证书绑定，复制到别处也打不开。</div>
+  </div>
+</div>
+<aside class="notes">这页来自教材"必备知识"：Windows 权限、NTFS 权限、EFS 工作原理。先讲两类权限别混淆——Windows 权限（也叫用户权限）管的是"能不能登录、能不能关机、能不能备份"这类系统级操作，在本地安全策略里给组下发，和具体哪个文件无关；NTFS 权限管的是"这个文件夹你能不能读、能不能写、能不能改名删除"，写在对象自己的访问控制列表 ACL 上，默认从父文件夹继承，拒绝优先于允许，而且只有 NTFS 分区才支持。本课任务 1 配的是前者，第 6 课配的是后者。EFS 是加密文件系统：加密时系统随机生成一个文件加密密钥 FEK 把文件内容做对称加密（快），再用当前用户数字证书里的公钥把这个 FEK 加密后一起存起来；解密时必须用对应的私钥先解出 FEK，才能还原明文。因此 EFS 的授权本质是"用户证书的公私钥对"——换个账号、把文件拷到别的机器，没有私钥就无法打开。企业里还会配置"数据恢复代理"，防止员工离职或证书丢失后文件永远打不开。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · 工作组模式<br>本课所有操作都在这里</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>沿用第 3 课：</b>用户 alice / bob / charlie，组 IT-Admins / IT-Users / Finance</div>
+      <div class="callout"><b>组成员：</b>alice ∈ IT-Admins；charlie ∈ IT-Users + Finance</div>
+    </div>
+    <div class="callout warn"><b>开始前：</b>确认已从第 4 课快照继续，<code>Get-LocalGroupMember IT-Admins</code> 能看到 alice。</div>
+  </div>
+</div>
+<aside class="notes">本课还没有域，所有账号都是 DC1 上的本地账号，登录时用户名直接写 alice 即可。如果第 3 课的组没建好，先补建再开始，否则任务 1 的测试结果会对不上。</aside>
+</section>
+
+<!-- 04 概念：权限 vs 权限 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>"用户权限"管的是什么？</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>用户权限（User Rights）</h3>
+        <ul class="points">
+          <li>管<b>系统级操作</b>：登录、关机、备份、改时间…</li>
+          <li>在 <code>secpol.msc</code> → 用户权限分配</li>
+          <li>授予给用户或<b>组</b></li>
+          <li>本课任务 1</li>
+        </ul>
+      </div>
+      <div class="card blue">
+        <h3>对象权限（NTFS / 共享）</h3>
+        <ul class="points">
+          <li>管<b>某个文件夹/文件</b>能否读写</li>
+          <li>在文件属性 → 安全 选项卡</li>
+          <li>写在对象自己的 ACL 上</li>
+          <li>下节课（第 6 课）</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout warn"><b>"拒绝"优先于"允许"：</b>charlie 同时在 IT-Users（允许本地登录）和 Finance（拒绝远程桌面登录）中，两条规则各管各的通道，并不冲突。</div>
+  </div>
+</div>
+<aside class="notes">学生容易把"用户权限"和"文件权限"混为一谈，这页先把两者分开。强调权限最好授予给组而不是个人，人员变动只需调整组成员。提问：如果某人同时属于"允许本地登录"和"拒绝本地登录"的组，结果是什么？（拒绝生效）</aside>
+</section>
+
+<!-- 05 概念：UAC -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>UAC：管理员也只拿"普通令牌"</h2></div>
+  <div class="body">
+    <p class="muted">管理员登录时，Windows 会发两张令牌，平时只用"过滤后"的那一张：</p>
+    <div class="flow">
+      <div class="node"><b>① 管理员登录</b>生成完整令牌<br>+ 过滤令牌</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 日常程序</b>用过滤令牌<br>（标准权限）</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>③ 需要提权</b>弹出 UAC 确认<br>（安全桌面）</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 同意后</b>该进程使用<br>完整令牌</div>
+    </div>
+    <div class="grid2">
+      <div class="card bad"><h3>关闭 UAC</h3><p class="small">恶意程序以管理员身份静默运行，用户毫无察觉</p></div>
+      <div class="card good"><h3>启用 UAC</h3><p class="small">每次提权都要人确认，攻击者多一道关卡</p></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">这就是"管理员批准模式"：EnableLUA=1 时才有过滤令牌。安全桌面会让屏幕变暗，普通程序无法模拟点击"是"按钮，这是 PromptOnSecureDesktop 的意义。常见误解：UAC 不是杀毒软件，它只是让提权"可见"。</aside>
+</section>
+
+<!-- 06 概念：最小权限 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>最小权限：够用就好</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:26%">场景</th><th style="width:37%">错误做法</th><th>本课做法</th></tr>
+      <tr><td>临时做管理操作</td><td>一直用 Administrator 登录</td><td><code>runas</code> / 以管理员运行</td></tr>
+      <tr><td>备份程序的账号</td><td>直接用管理员账号跑</td><td>建 <code>svc_backup</code>，只进 Backup Operators</td></tr>
+      <tr><td>财务人员远程登录</td><td>默认都能登</td><td>Finance 组拒绝远程桌面登录</td></tr>
+      <tr><td>谁能关机</td><td>所有用户都能</td><td>仅 Administrators、IT-Admins</td></tr>
+    </table>
+    <div class="callout"><b>一句话：</b>账号被盗时，能造成的破坏 = 它拥有的权限。权限越小，损失越小。</div>
+  </div>
+</div>
+<aside class="notes">这页把今天的三个任务串起来，都是"最小权限原则"的不同应用。服务账户专门用于运行程序，设置密码永不过期、不允许用户改密码，避免服务因密码过期突然停止。</aside>
+</section>
+
+<!-- 07 任务1 配置 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 24′ · DC1</span></span><h2>配置用户权限分配</h2><button class="more" data-pop="pop-l05-07-steps">📋 详细步骤</button><button class="more" data-pop="pop-l05-07-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>secpol.msc</span><i>›</i><span>本地策略</span><i>›</i><span>用户权限分配</span><i>›</i><span>双击策略 → 添加用户或组</span></div>
+    <table class="tbl">
+      <tr><th style="width:38%">策略</th><th style="width:30%">操作</th><th>目的</th></tr>
+      <tr><td>允许本地登录</td><td>添加 IT-Admins, IT-Users</td><td>两组可坐在机器前登录</td></tr>
+      <tr><td>拒绝通过远程桌面服务登录</td><td>添加 Finance</td><td>财务人员禁止 RDP</td></tr>
+      <tr><td>关闭系统</td><td>仅保留 Administrators, IT-Admins</td><td>其他人不能关机</td></tr>
+      <tr><td>备份文件和目录</td><td>添加 IT-Admins</td><td>可绕过 NTFS 读取做备份</td></tr>
+    </table>
+    <div class="callout warn"><b>"关闭系统"要先删除</b>原有的 Users、Backup Operators 等，再确认只剩两项。</div>
+  </div>
+</div>
+<aside class="notes">添加组时点"对象类型"勾上"组"，否则搜不到 IT-Admins。"允许本地登录"里不要删掉 Administrators，否则可能把自己锁在门外。改完后可执行 gpupdate /force 让策略立即生效。</aside>
+
+<template id="pop-l05-07-steps">
+  <h3>📋 详细步骤：配置用户权限分配</h3>
+  <div class="tip">用户权限分配属于<b>本地安全策略</b>，和具体文件无关。幻灯片里的组名 IT-Admins/IT-Users/Finance 是第 3 课建的本地组，开始前先确认它们都在（<code>net localgroup</code> 可列出所有组）。</div>
+  <h4>第一步：打开用户权限分配</h4>
+  <ol>
+    <li>用 <b>Administrator</b> 登录你的 DC</li>
+    <li>按 <code>Win + R</code>，输入 <code>secpol.msc</code> 回车</li>
+    <li>左侧依次展开「安全设置」→「本地策略」→ 单击「用户权限分配」，右侧列出几十条权限项</li>
+  </ol>
+  <h4>第二步：添加组时务必选对对象类型</h4>
+  <ol>
+    <li>双击要配的策略项 → 点「添加用户或组」→ 点「对象类型」</li>
+    <li><b>勾上「组」</b>（默认只勾了「用户」，不勾组就搜不到 IT-Admins），确定</li>
+    <li>在「输入对象名称」框里输入组名（如 <code>IT-Admins</code>）→ 点「检查名称」确认带下划线 → 确定</li>
+  </ol>
+  <h4>第三步：按下表逐条配置</h4>
+  <ol>
+    <li><b>允许本地登录</b>：添加 <code>IT-Admins</code>、<code>IT-Users</code>（<b>保留</b>已有的 Administrators、Users，不要删）</li>
+    <li><b>拒绝通过远程桌面服务登录</b>：添加 <code>Finance</code></li>
+    <li><b>关闭系统</b>：先删掉原有的 Users、Backup Operators 等，<b>只留</b> Administrators、IT-Admins 两项</li>
+    <li><b>备份文件和目录</b>：添加 <code>IT-Admins</code></li>
+  </ol>
+  <h4>第四步：让策略立即生效</h4>
+  <ol>
+    <li>以管理员身份打开 PowerShell：</li>
+  </ol>
+<pre>gpupdate /force          # 提示"计算机策略更新成功完成"</pre>
+  <h4>第五步：怎么验证做对了</h4>
+  <ol>
+    <li>命令行核对（导出当前策略看权限行）：</li>
+  </ol>
+<pre>secedit /export /cfg C:\Temp\ur.inf /areas USER_RIGHTS
+notepad C:\Temp\ur.inf     # 查 SeInteractiveLogonRight 应含 IT-Admins
+                            # SeDenyRemoteInteractiveLogonRight 应含 Finance</pre>
+  <div class="tip">下一页会用注销换人实测效果；也可直接运行作业检查脚本 <code>check05.ps1</code> 自动核对。</div>
+</template>
+<template id="pop-l05-07-why">
+  <h3>💡 每项为什么：用户权限分配</h3>
+  <ul>
+    <li><b>为什么权限给组而不是给人？</b>人员变动只需调整组成员，权限规则不用动。这是企业管理的通用做法。</li>
+    <li><b>允许本地登录给 IT-Admins+IT-Users：</b>让这两组能坐在机器前（或 RDP 之外的本地控制台）登录。保留 Administrators 是<b>保命</b>——删了它你自己都登不进来，只能靠快照恢复。</li>
+    <li><b>拒绝远程桌面给 Finance：</b>财务数据敏感，禁止他们远程进来。注意"拒绝远程桌面"<b>不影响本地登录</b>——两个通道互不干扰，charlie 同属 IT-Users（允许本地）和 Finance（拒绝 RDP），本地照样能登。</li>
+    <li><b>"拒绝"优先于"允许"：</b>只要用户落在任一"拒绝"列表里，这条通道就被堵死，不管他在多少个"允许"组里。</li>
+    <li><b>关闭系统只留两组：</b>普通员工不该能关掉服务器（会中断所有人服务）。删 Users 后 charlie 的开始菜单电源键可能只剩"注销"。</li>
+    <li><b>备份文件和目录给 IT-Admins：</b>这个权限能<b>绕过 NTFS 权限</b>读取任意文件做备份——很强，所以只给管理组。第 3 课建的 svc_backup 走的是 Backup Operators 组，同理。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务1 测试 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 1 验证</span><h2>注销、换人、看结果</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:12%">步骤</th><th style="width:44%">操作</th><th>预期结果</th></tr>
+      <tr><td>a</td><td>注销，用 <code>alice</code> 登录（IT-Admins）</td><td class="green">登录成功</td></tr>
+      <tr><td>b</td><td>注销，用 <code>charlie</code> 登录（IT-Users + Finance）</td><td class="green">登录成功</td></tr>
+      <tr><td>c</td><td>以 charlie 身份尝试关机</td><td class="orange">权限不足</td></tr>
+    </table>
+<pre><code class="language-powershell" data-trim>
+# 以 charlie 登录后，可用命令测试关机权限
+shutdown /s /t 300   # 若意外成功，立刻执行 shutdown /a 取消
+whoami /priv
+</code></pre>
+    <div class="callout"><b>whoami /priv</b>：列出当前令牌的特权，charlie 应看不到 SeShutdownPrivilege。</div>
+  </div>
+</div>
+<aside class="notes">步骤 b 说明"拒绝远程桌面"不影响本地登录：两个通道互不影响。步骤 c 中开始菜单的电源按钮可能只剩"注销"，命令行 shutdown 会提示"拒绝访问"。测试完记得切回 Administrator 继续后面的任务。</aside>
+</section>
+
+<!-- 09 任务2 UAC 级别 + 注册表 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 16′ · DC1</span></span><h2>UAC 的 4 个级别与注册表</h2></div>
+  <div class="body">
+    <div class="code-cap">运行 UserAccountControlSettings.exe，拖动滑块观察 4 档</div>
+    <div class="timeline">
+      <div class="seg" style="flex:1"><b>始终通知</b>最严格</div>
+      <div class="seg" style="flex:1"><b>仅更改时通知</b>默认档</div>
+      <div class="seg" style="flex:1"><b>同上（不暗屏）</b>无安全桌面</div>
+      <div class="seg" style="flex:1"><b>从不通知</b>不推荐</div>
+    </div>
+<pre><code class="language-powershell" data-trim>
+$k = "HKLM:\SOFTWARE\Microsoft\Windows\" +
+     "CurrentVersion\Policies\System"
+Get-ItemProperty -Path $k |
+  Select-Object EnableLUA, ConsentPromptBehaviorAdmin,
+                PromptOnSecureDesktop
+</code></pre>
+  </div>
+</div>
+<aside class="notes">原文是一行长命令，这里把路径存进变量 $k，效果完全相同。观察滑块时只看不改，最后保持默认档。EnableLUA=1 表示 UAC 开启；ConsentPromptBehaviorAdmin 默认 5（对非 Windows 程序提示同意）；PromptOnSecureDesktop=1 表示暗屏。</aside>
+</section>
+
+<!-- 10 任务2 组策略 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 16′ · DC1</span></span><h2>通过安全策略锁定 UAC</h2><button class="more" data-pop="pop-l05-10-steps">📋 详细步骤</button><button class="more" data-pop="pop-l05-10-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>secpol.msc</span><i>›</i><span>本地策略</span><i>›</i><span>安全选项</span></div>
+    <table class="tbl">
+      <tr><th style="width:52%">策略（用户账户控制：…）</th><th style="width:16%">设置</th><th>对应注册表值</th></tr>
+      <tr><td>以管理员批准模式运行所有管理员</td><td>已启用</td><td><code>EnableLUA = 1</code></td></tr>
+      <tr><td>提示提升时切换到安全桌面</td><td>已启用</td><td><code>PromptOnSecureDesktop = 1</code></td></tr>
+    </table>
+    <div class="grid2">
+      <div class="callout"><b>策略 vs 滑块：</b>策略写入同一组注册表值，但能统一下发、防止被随意改。</div>
+      <div class="callout warn"><b>修改 EnableLUA</b> 需要重启才能生效。</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">配置完成后重新运行上一页的 Get-ItemProperty，对照表格确认数值。原文策略名写作"管理员批准模式..."，在列表里按名称排序很容易找到。后面学域时，同样的设置可以用 GPO 批量推送。</aside>
+
+<template id="pop-l05-10-steps">
+  <h3>📋 详细步骤：用安全策略锁定 UAC</h3>
+  <div class="tip">上一页用滑块（UserAccountControlSettings.exe）只是临时体验，<b>只看不改</b>。真正要固化配置用安全策略，它写入同一组注册表值，但能统一下发、防止被随手改回。</div>
+  <h4>第一步：打开安全选项</h4>
+  <ol>
+    <li><code>Win + R</code> → <code>secpol.msc</code> → 展开「安全设置」→「本地策略」→ 单击「安全选项」</li>
+    <li>右侧条目很多，按名称排序，找开头是「用户账户控制:」的几条</li>
+  </ol>
+  <h4>第二步：配置两条关键策略</h4>
+  <ol>
+    <li><b>用户账户控制: 以管理员批准模式运行所有管理员</b> → 双击 → 选「已启用」→ 确定（对应 <code>EnableLUA=1</code>）</li>
+    <li><b>用户账户控制: 提示提升时切换到安全桌面</b> → 双击 → 选「已启用」→ 确定（对应 <code>PromptOnSecureDesktop=1</code>）</li>
+  </ol>
+  <h4>第三步：生效（注意要重启）</h4>
+  <ol>
+    <li><code>gpupdate /force</code> 刷新策略</li>
+    <li><b>如果你改动了 EnableLUA（从关到开），必须重启</b>才真正生效——这是 UAC 的特殊之处，其他 UAC 设置改完即时生效</li>
+  </ol>
+  <h4>第四步：验证</h4>
+  <ol>
+    <li>重新运行上一任务的 PowerShell 查注册表：</li>
+  </ol>
+<pre>$k = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+Get-ItemProperty $k | Select EnableLUA, PromptOnSecureDesktop
+# 两个值都应为 1</pre>
+</template>
+<template id="pop-l05-10-why">
+  <h3>💡 每项为什么：UAC</h3>
+  <ul>
+    <li><b>UAC 是什么？</b>即使你用管理员账号登录，日常也只拿一个"普通令牌"办事；需要管理操作时才弹框让你确认，临时升到"完整令牌"。这让提权动作<b>可见、可控</b>。</li>
+    <li><b>EnableLUA=1（管理员批准模式）：</b>这是 UAC 的总开关。只有它开着，才有"过滤令牌"机制，管理员才会被降权到普通令牌。关掉它=管理员永远满权限，等于没有 UAC。</li>
+    <li><b>PromptOnSecureDesktop=1（安全桌面/暗屏）：</b>弹确认框时屏幕变暗、锁定输入，普通程序无法伪造鼠标点击去替你点"是"。这是防恶意程序<b>自动提权</b>的关键。</li>
+    <li><b>为什么用策略而不是滑块？</b>滑块是本机用户随手拖的；安全策略能统一下发、审计、防篡改。学了域之后同样的设置可用 GPO 批量推给所有机器。</li>
+    <li><b>UAC 不是杀毒软件：</b>它不检测病毒，只是让"提权"这件事浮到台面上让你决定。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务3 runas -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>runas：临时换个身份</h2><button class="more" data-pop="pop-l05-11-steps">📋 详细步骤</button><button class="more" data-pop="pop-l05-11-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>① 以其他用户运行</h3>
+<pre><code class="language-powershell" data-trim>
+runas /user:alice cmd
+# 在新窗口中验证
+whoami
+</code></pre>
+        <p class="small muted" style="margin-top:12px">输入 alice 的密码 Lab@2026a</p>
+      </div>
+      <div class="card blue">
+        <h3>② PowerShell 以管理员运行</h3>
+<pre><code class="language-powershell" data-trim>
+Start-Process powershell -Verb RunAs
+</code></pre>
+        <p class="small muted" style="margin-top:12px">会弹出 UAC 确认框 → 这就是概念 2 的第 ③ 步</p>
+      </div>
+    </div>
+    <div class="callout"><b>区别：</b><code>runas</code> 换的是<b>用户</b>；<code>-Verb RunAs</code> 换的是同一用户的<b>完整令牌</b>。</div>
+  </div>
+</div>
+<aside class="notes">whoami 应显示 dc1\alice。runas 输入密码时屏幕不回显，学生常以为没输进去。提问：新窗口的标题栏写了什么？和自己"以管理员身份运行"的窗口有何不同？</aside>
+
+<template id="pop-l05-11-steps">
+  <h3>📋 详细步骤：runas 临时换身份</h3>
+  <div class="tip">runas 让你在<b>不注销</b>当前账号的情况下，用另一个账号开一个程序窗口，常用于临时做某账号专属的操作。</div>
+  <h4>方式①：以其他用户运行（换用户）</h4>
+  <ol>
+    <li>在 CMD 或 PowerShell 里执行：</li>
+  </ol>
+<pre>runas /user:alice cmd</pre>
+  <ol start="2">
+    <li>提示输入 alice 的密码（<code>Lab@2026a</code>）——<b>屏幕不回显</b>，输完直接回车，别以为没输进去</li>
+    <li>弹出的新窗口标题栏会显示"以 ... alice 身份运行"，在<b>新窗口</b>里执行 <code>whoami</code>，应显示 <code>dc1\alice</code></li>
+  </ol>
+  <h4>方式②：同一用户、以管理员运行（换令牌）</h4>
+  <ol>
+    <li>执行：</li>
+  </ol>
+<pre>Start-Process powershell -Verb RunAs</pre>
+  <ol start="2">
+    <li>弹出 UAC 确认框（就是上一任务配的安全桌面暗屏）→ 点「是」</li>
+    <li>新窗口里 <code>whoami /groups</code> 可见 Administrators 组已启用（完整令牌）</li>
+  </ol>
+  <div class="tip">两者区别：<code>runas</code> 换的是<b>用户</b>（另一个人的身份）；<code>-Verb RunAs</code> 换的是<b>同一个你</b>的完整令牌（提权）。</div>
+</template>
+<template id="pop-l05-11-why">
+  <h3>💡 每项为什么：runas</h3>
+  <ul>
+    <li><b>为什么不直接注销换人？</b>注销会关掉你当前所有工作。runas 只开一个窗口用别人身份跑，办完关掉即可，不打断主会话。</li>
+    <li><b>runas /user vs Start-Process -Verb RunAs：</b>前者是"换一个人"（需要那个人的密码）；后者是"还是我，但拿完整管理员令牌"（触发 UAC，不需别人密码）。对应概念里"换用户"和"提权"两件不同的事。</li>
+    <li><b>密码不回显是正常的：</b>所有命令行密码输入都不显示字符，这是安全设计，不是卡住。</li>
+    <li><b>和最小权限的关系：</b>平时用普通令牌干活，真要管理操作时才临时提权——而不是全程用管理员。runas/RunAs 就是实现这一点的工具。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 任务3 服务账户 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>创建受限服务账户 svc_backup</h2><button class="more" data-pop="pop-l05-12-steps">📋 详细步骤</button><button class="more" data-pop="pop-l05-12-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$pw = ConvertTo-SecureString "Svc@2026!" -AsPlainText -Force
+New-LocalUser -Name "svc_backup" -Password $pw `
+  -PasswordNeverExpires -UserMayNotChangePassword `
+  -Description "备份服务账户"
+Add-LocalGroupMember -Group "Backup Operators" `
+  -Member "svc_backup"
+</code></pre>
+    <div class="grid3">
+      <div class="card"><h3>密码永不过期</h3><p class="small">服务不会因过期停摆</p></div>
+      <div class="card"><h3>不允许改密码</h3><p class="small">只能由管理员维护</p></div>
+      <div class="card"><h3>只进备份组</h3><p class="small">能备份，不能管系统</p></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">原文把密码直接写在 New-LocalUser 里，这里先存进 $pw，结果相同。强调不要把 svc_backup 加进 Administrators。可用 Get-LocalGroupMember "Backup Operators" 确认。</aside>
+</section>
+
+<!-- 13 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>常见故障</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:32%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>添加时找不到 IT-Admins</td><td>对象类型没勾"组"</td><td>对象类型 → 勾选"组"</td></tr>
+      <tr><td>alice 登录提示"不允许此登录方式"</td><td>没加入"允许本地登录"</td><td>重新检查策略，<code>gpupdate /force</code></td></tr>
+      <tr><td>charlie 仍能关机</td><td>"关闭系统"里还留有 Users</td><td>删除多余项，只留两项</td></tr>
+      <tr><td>runas 报 1326 错误</td><td>用户名或密码错误</td><td>核对 Lab@2026a</td></tr>
+      <tr><td>New-LocalUser 密码报错</td><td>不满足第 4 课的密码策略</td><td>使用原文密码 Svc@2026!</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">最危险的错误是从"允许本地登录"里删掉 Administrators：此时只能用其他管理员或恢复快照解决，所以动手前务必确认已有第 4 课快照。先让学生猜原因，再翻出这一页。</aside>
+
+<template id="pop-l05-12-steps">
+  <h3>📋 详细步骤：创建受限服务账户 svc_backup</h3>
+  <div class="tip">服务账户是专门给"程序/服务"用的账号，不是给人登录的。原则：权限刚好够用、密码不过期、不让人改。</div>
+  <h4>第一步：以管理员打开 PowerShell，创建账户</h4>
+<pre>$pw = ConvertTo-SecureString "Svc@2026!" -AsPlainText -Force
+New-LocalUser -Name "svc_backup" -Password $pw `
+  -PasswordNeverExpires -UserMayNotChangePassword `
+  -Description "备份服务账户"</pre>
+  <h4>第二步：只加入 Backup Operators 组</h4>
+<pre>Add-LocalGroupMember -Group "Backup Operators" -Member "svc_backup"</pre>
+  <h4>第三步：验证</h4>
+<pre>Get-LocalGroupMember "Backup Operators"     # 应能看到 svc_backup
+Get-LocalGroupMember "Administrators"       # 不应有 svc_backup</pre>
+  <div class="tip"><b>密码踩坑</b>：密码不能包含账户名或全名里的词。本例全名/描述里有"备份/Backup"字样时，密码里<b>别再带 backup/svc 等词</b>（如 <code>Svc@...Backup!</code> 会被策略拒绝），用课件给的 <code>Svc@2026!</code> 这种不含账户名片段的即可。另外密码要满足第 4 课设的复杂度（≥8 位、含大小写数字符号）。</div>
+</template>
+<template id="pop-l05-12-why">
+  <h3>💡 每项为什么：服务账户三原则</h3>
+  <ul>
+    <li><b>密码永不过期（-PasswordNeverExpires）：</b>人改密码没问题，但服务不会自己改。密码一过期，依赖它的服务会突然停摆——所以服务账户设永不过期。</li>
+    <li><b>不允许改密码（-UserMayNotChangePassword）：</b>服务账户只由管理员统一维护，不该被任何人（包括程序本身）随意改密，避免失控。</li>
+    <li><b>只进 Backup Operators，绝不进 Administrators：</b>这是<b>最小权限</b>的核心。Backup Operators 能备份/恢复文件（绕过 NTFS 读文件），足够干备份活；给了管理员权限，一旦这个服务被攻破，攻击者就拿到整机控制权。</li>
+    <li><b>为什么单独建账户而不用管理员跑备份？</b>职责分离——每个服务用自己的最小权限账户，出问题好定位、好吊销，不会一个账号被破全盘皆输。</li>
+  </ul>
+</template>
+</section>
+
+<!-- 14 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>任务 4 · 12′ · 对照清单自查</h2></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>IT-Admins 有"允许本地登录"权限</li>
+        <li>Finance 组在"拒绝远程桌面登录"列表中</li>
+        <li>UAC 已启用（EnableLUA = 1）</li>
+        <li>svc_backup 存在且在 Backup Operators 组中</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照（关键）</h3>
+        <p><code>S2-UserMgmt</code></p>
+        <p class="small muted" style="margin-top:8px">项目 2 用户管理到此完成</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">以 Administrator 身份逐项人工核对左侧清单。S2-UserMgmt 是关键快照，后续项目出问题时可以回滚到这里，务必检查快照名拼写。有未达成项时，对照排障页修改后重新核对；清单逐项达成后，运行 check05.ps1 生成 PDF 报告提交（下载链接见最后一页「作业提交」）。</aside>
+</section>
+
+<!-- 15 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">最小权限：账号被盗时破坏最小</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">secpol 用户权限分配 → UAC 策略 → runas / 服务账户</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">权限授予给组；拒绝优先；EnableLUA = 1</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 6 课：</b>NTFS 权限管理。从"能做什么操作"走向"能访问哪些文件"。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check05.ps1" download>check05.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check05.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 想禁止某组远程登录，改哪条策略？2. 管理员登录后为什么运行某些程序还要点"是"？3. 服务账户为什么不该放进 Administrators？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>
