@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第11课 · IIS 安全加固</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 4 · 网站管理　|　第 11 次课 · 学时 21–22</p>
+  <h1>IIS 安全加固</h1>
+  <p class="muted">HTTPS 加密 · 强制跳转 · IP 限制 · 请求过滤</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM3</span><span class="chip">🔒 安全配置</span></div>
+</div>
+<aside class="notes">开场提问：上节课我们建好的 CompanySite 和 HRPortal 用的是 http，如果有人在同一网段抓包，能看到什么？今天的目标是把"能访问"的网站变成"安全地访问"的网站。本课延续第 10 课的三个站点，务必从 Lesson10-Done 快照开始。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>概念</b>HTTPS · 证书<br>访问控制分层</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 1</b>自签名证书<br>绑定 HTTPS</div>
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>任务 2</b>HTTP → HTTPS</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 3</b>IP 限制<br>请求过滤</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 4</b>验证</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清楚 HTTPS 证书解决了什么问题，自签名证书为什么会被浏览器警告</li>
+        <li>为 CompanySite 绑定 443 端口证书，并把 http 访问重定向到 https</li>
+        <li>用 IP 地址限制和请求过滤收紧 HRPortal、CompanySite 的访问面</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念部分压缩在 10 分钟内，可以从任务 1 的时间里挤。任务 2 最容易出问题（重定向循环），预留排障时间。任务 4 的 20 分钟里包含清单自查和"反向测试"，鼓励学生自己构造访问被拒绝的场景。</aside>
+</section>
+
+<!-- 02b 概念：教材补充 IIS 状态码与日志 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>IIS 状态码与日志</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <table class="tbl">
+        <tr><th>状态码</th><th>含义</th></tr>
+        <tr><td>200</td><td>成功，IIS 已成功处理请求</td></tr>
+        <tr><td>304</td><td>未修改，文档已在缓存中且未变动</td></tr>
+        <tr><td>401.1</td><td>登录失败，用户名或密码无效</td></tr>
+      </table>
+      <div class="card blue">
+        <h3>IIS 日志的作用</h3>
+        <ul class="points">
+          <li>记录每次请求的状态码</li>
+          <li>记录访问者的 IP 来源</li>
+          <li>服务器的运行状况可据此追查</li>
+          <li>是管理员排障与安全分析的依据</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout warn"><b>要点：</b>客户端通过 HTTP/FTP 访问时，IIS 用数字状态码表明请求是否成功及失败原因，并写进日志。</div>
+  </div>
+</div>
+<aside class="notes">这页补充教材必备知识，和今天的安全加固直接相关。先讲状态码：当用户用 HTTP 或 FTP 访问 IIS 服务器时，IIS 会返回一个数字代码表示这次请求的状态，这个代码既会写进日志，也可能显示在浏览器里。状态码能告诉我们请求是否成功，失败时还能看出原因——比如 200 表示成功，IIS 已经正确处理了请求；304 表示未修改，说明浏览器请求的文档已经在它自己的缓存里，而且自上次缓存以来没变过，所以不用重新下载；401.1 表示登录失败，通常是用户名或密码错误。再讲日志：IIS 日志是每个服务器管理员都必须学会看的，服务器的运行状况、谁访问过、访问者的 IP 来源都记录在里面，所以查日志是排障和安全分析最基本的手段。后面任务里收紧访问之后，就要靠日志验证到底是谁被拦了。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · IIS + DNS<br>CompanySite · HRPortal · DevSite</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3 · Win10 客户端<br>DNS → 10.10.10.10</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>课前：</b><code>www.lab.local</code>、<code>hr.lab.local</code> 都只有 http:80</div>
+      <div class="callout"><b>课后：</b>www 走 https:443；HR 只许内网；敏感文件访问不到</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">这里的 lab.local 只是第 2 课在 DNS 里建的区域，还不是 AD 域（第 17 课才有）。开始前在 CLIENT1 上 ping www.lab.local，确认解析到 10.10.10.10，否则后面所有测试都会失败。</aside>
+</section>
+
+<!-- 04 概念：HTTP vs HTTPS -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>HTTP vs HTTPS</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>HTTP（明文）</h3>
+        <ul class="points">
+          <li>内容、表单、Cookie 全部明文传输</li>
+          <li>同网段抓包就能看到账号密码</li>
+          <li>无法确认对方真是 www.lab.local</li>
+          <li>默认端口 80</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>HTTPS（HTTP + TLS）</h3>
+        <ul class="points">
+          <li>传输内容加密，抓包只看到乱码</li>
+          <li>证书证明服务器身份</li>
+          <li>内容被篡改会被发现</li>
+          <li>默认端口 443</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>一句话：</b>证书 = 服务器的"身份证"，里面带着公钥，用来建立加密通道。</div>
+  </div>
+</div>
+<aside class="notes">可以提问：HRPortal 上如果有员工工资信息，用 http 有什么风险？强调 HTTPS 提供三件事：机密性、身份认证、完整性。抓包演示放到后面 Kali 的课程，这里口头说明即可。</aside>
+</section>
+
+<!-- 05 概念：证书信任 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>为什么浏览器会警告自签名证书？</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>① 浏览器连接</b>https://www.lab.local</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 服务器出示证书</b>DnsName = www.lab.local</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>③ 检查签发者</b>是受信任的 CA 吗？</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 建立加密</b>协商会话密钥</div>
+    </div>
+    <table class="tbl">
+      <tr><th>检查项</th><th>自签名证书的结果</th></tr>
+      <tr><td>域名是否匹配</td><td class="green">✓ 证书含 www.lab.local、hr.lab.local</td></tr>
+      <tr><td>是否在有效期内</td><td class="green">✓ NotAfter = 两年后</td></tr>
+      <tr><td>签发者是否可信</td><td class="red">✗ 自己给自己签发，客户端不信任 → 警告</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">自签名证书加密强度和正规证书一样，问题只在"没人担保"。第 3 步失败才会出现警告，所以实验里点"继续"是可以的，但生产环境绝不能教用户习惯点继续。后面学 AD 证书服务（ADCS）时，会用企业 CA 签发证书，客户端就不再警告。</aside>
+</section>
+
+<!-- 06 概念：分层访问控制 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>一个请求要过几道关？</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>客户端请求</b>来自某个 IP</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>IP 地址限制</b>不在允许网段 → 403</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>请求过滤</b>.bak / bin 等 → 404</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>返回页面</b>站点内容</div>
+    </div>
+    <div class="grid2">
+      <div class="card blue"><h3>IP 地址限制</h3><p class="small">管"<b>谁</b>能来"：HRPortal 是内部站点，只允许 10.10.10.0/24</p></div>
+      <div class="card blue"><h3>请求过滤</h3><p class="small">管"<b>什么</b>能看"：备份文件、配置文件、程序目录不该被下载</p></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">这就是"纵深防御"：每一层都只管一件事，任何一层挡住都行。提问：如果开发人员把数据库备份 site.sql 放在网站根目录，没有请求过滤会怎样？请求过滤故意返回 404 而不是 403，是为了不暴露"这个文件其实存在"。</aside>
+</section>
+
+<!-- 07 任务1 证书 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 20′ · DC1</span></span><h2>创建自签名 SSL 证书</h2><button class="more" data-pop="pop-l11-08-steps">📋 详细步骤</button><button class="more" data-pop="pop-l11-08-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 DC1 上，以管理员身份运行 PowerShell</div>
+<pre><code class="language-powershell" data-trim>
+New-SelfSignedCertificate `
+  -DnsName "www.lab.local","hr.lab.local" `
+  -CertStoreLocation cert:\LocalMachine\My `
+  -FriendlyName "Lab SSL Cert" `
+  -NotAfter (Get-Date).AddYears(2)
+</code></pre>
+<pre><code class="language-powershell" data-trim>
+Get-ChildItem cert:\LocalMachine\My |
+  Format-Table Thumbprint, Subject, NotAfter
+</code></pre>
+    <div class="callout"><b>-DnsName</b> 写了两个名字：一张证书同时覆盖 www 和 hr 两个站点；<b>FriendlyName</b> 是稍后在 IIS 下拉框里看到的名字。</div>
+  </div>
+</div>
+<aside class="notes">证书必须放在 LocalMachine\My（计算机的"个人"存储），IIS 只从这里找证书，放到 CurrentUser 下 IIS 是看不到的。Get-ChildItem 输出里 Subject 应为 CN=www.lab.local，记下 Thumbprint，排障时会用到。常见错误：反引号后面多了空格。</aside>
+
+<template id="pop-l11-08-steps">
+<h3>📋 详细步骤：自签名证书</h3>
+<div class="tip">从快照 <b>Lesson10-Done</b> 开始，DC1 上以<b>管理员</b>打开 PowerShell（写 LocalMachine 存储必须是管理员）。</div>
+<h4>第一步：创建</h4>
+<pre>New-SelfSignedCertificate `
+  -DnsName "www.lab.local","hr.lab.local" `
+  -CertStoreLocation cert:\LocalMachine\My `
+  -FriendlyName "Lab SSL Cert" `
+  -NotAfter (Get-Date).AddYears(2)</pre>
+<h4>第二步：确认</h4>
+<pre>Get-ChildItem cert:\LocalMachine\My |
+  Format-Table Thumbprint, Subject, NotAfter</pre>
+<p>实测输出（指纹每人不同）：</p>
+<pre>Thumbprint                               Subject          NotAfter
+4467A859ECC0787DCE6348F8B0252BF35C79BD42 CN=www.lab.local 2028/10/10</pre>
+<h4>图形界面查看</h4>
+<ol>
+  <li>Win+R → <code>certlm.msc</code>（本地计算机证书）→「个人」→「证书」</li>
+  <li>双击 www.lab.local →「详细信息」→「使用者可选名称」里能看到 www 和 hr 两个 DNS 名称</li>
+</ol>
+</template>
+<template id="pop-l11-08-why">
+<h3>💡 每项为什么：证书参数</h3>
+<table class="tbl">
+<tr><th style="width:32%">参数</th><th>作用</th></tr>
+<tr><td><code>-DnsName</code> 两个名字</td><td>第一个成为 Subject（CN=www.lab.local），全部写进"使用者可选名称"；一张证书同时给 www 和 hr 用</td></tr>
+<tr><td><code>cert:\LocalMachine\My</code></td><td>"本地计算机 → 个人"存储。IIS 只从这里找证书，放到 CurrentUser 下 IIS 的下拉框里就看不到</td></tr>
+<tr><td><code>-FriendlyName</code></td><td>IIS 绑定对话框下拉框里显示的名字，不写就只能看指纹认证书</td></tr>
+<tr><td><code>-NotAfter</code></td><td>不写默认有效期 1 年，这里设 2 年</td></tr>
+</table>
+<div class="tip">证书 = 服务器的"身份证"。<b>私钥</b>留在 DC1 上，<b>公钥</b>随证书发给浏览器。自签名意思是"自己给自己盖章"，所以浏览器会警告——但加密强度一点不差。</div>
+</template>
+
+</section>
+
+<!-- 08 任务1 绑定 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 20′ · DC1</span></span><h2>给 CompanySite 绑定 HTTPS</h2><button class="more" data-pop="pop-l11-09-steps">📋 详细步骤</button><button class="more" data-pop="pop-l11-09-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>IIS 管理器</span><i>›</i><span>网站</span><i>›</i><span>CompanySite</span><i>›</i><span>绑定…</span><i>›</i><span>添加</span></div>
+    <table class="tbl">
+      <tr><th>字段</th><th>取值</th></tr>
+      <tr><td>类型</td><td><code>https</code></td></tr>
+      <tr><td>端口</td><td><code>443</code></td></tr>
+      <tr><td>主机名</td><td><code>www.lab.local</code></td></tr>
+      <tr><td>SSL 证书</td><td>Lab SSL Cert</td></tr>
+    </table>
+    <div class="callout"><b>测试：</b>在 CLIENT1 浏览器打开 <code>https://www.lab.local</code>，出现证书警告 → 选择继续，能看到 CompanySite 首页即成功。</div>
+  </div>
+</div>
+<aside class="notes">填写主机名后，对话框会出现"需要服务器名称指示（SNI）"复选框，本课只有一张证书，不勾也能用。原来的 http:80 绑定不要删，任务 2 要靠它做跳转。如果 CLIENT1 打不开 443，检查 DC1 防火墙是否放行了"万维网服务(HTTPS 流量)"。</aside>
+
+<template id="pop-l11-09-steps">
+<h3>📋 详细步骤：添加 https 绑定</h3>
+<ol>
+  <li><code>inetmgr</code> → 选中 <b>CompanySite</b> → 右侧「绑定…」→「添加」</li>
+  <li>类型 <b>https</b>；IP 地址「全部未分配」；端口 <b>443</b></li>
+  <li>主机名 <code>www.lab.local</code>（下面出现"需要服务器名称指示"复选框，<b>不勾</b>）</li>
+  <li>SSL 证书下拉框选 <b>Lab SSL Cert</b> → 确定 → 关闭</li>
+</ol>
+<h4>CLIENT1 上测试</h4>
+<ol>
+  <li>Edge 打开 <code>https://www.lab.local</code> → 出现"你的连接不是专用连接"</li>
+  <li>点「高级」→「继续前往 www.lab.local(不安全)」→ 看到 This is home.html</li>
+</ol>
+<h4>命令行测试（推荐用 curl.exe）</h4>
+<pre>curl.exe -k -s -o NUL -w "%{http_code}" https://www.lab.local/</pre>
+<p>输出 <code>200</code>。<code>-k</code> 表示接受不受信任的证书。</p>
+<div class="tip">为什么不用 Invoke-WebRequest？它在 PowerShell 5.1 里遇到自签名证书直接报"基础连接已经关闭"，就算设了忽略证书的回调也不一定生效（实测 CLIENT1 上失败）。Windows 10/Server 2022 自带 curl.exe，测试 https 更省事。</div>
+</template>
+<template id="pop-l11-09-why">
+<h3>💡 每项为什么：https 绑定</h3>
+<ul>
+  <li><b>为什么 443 不用开防火墙？</b>安装 IIS 时已经自动启用「万维网服务(HTTPS 流量入站)」规则。</li>
+  <li><b>SNI 是什么，为什么不勾？</b>服务器名称指示允许同一个 IP:443 按主机名选不同证书。我们只有一张证书，不勾时这张证书绑定到 <code>0.0.0.0:443</code>（<code>netsh http show sslcert</code> 可见），任何 443 请求都用它。</li>
+  <li><b>原来的 http:80 绑定先别删</b>——任务 2 要把它交给跳转站点。</li>
+  <li><b>为什么只给 CompanySite 加 https？</b>HRPortal 的保护靠任务 3 的 IP 限制；证书里写了 hr.lab.local，是为以后给 HRPortal 加 https 留的。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 09 任务2 重定向 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 12′ · DC1</span></span><h2>HTTP 重定向到 HTTPS</h2><button class="more" data-pop="pop-l11-10-steps">📋 详细步骤</button><button class="more" data-pop="pop-l11-10-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p class="muted">建一个只负责跳转的小站点 <b>WWW-Redirect</b>，把 <code>http:80:www.lab.local</code> 从 CompanySite 移给它：</p>
+    <div class="crumb"><span>CompanySite › 绑定</span><i>›</i><span>删除 http 80 www.lab.local</span><i>›</i><span>添加网站 WWW-Redirect</span><i>›</i><span>HTTP 重定向</span></div>
+    <div class="grid3">
+      <div class="card"><h3>WWW-Redirect</h3>路径 <code>C:\WebSites\Redirect</code><br>http · 80 · <code>www.lab.local</code></div>
+      <div class="card"><h3>HTTP 重定向</h3>勾选「将请求重定向到此目标」<br><code>https://www.lab.local</code></div>
+      <div class="card"><h3>状态代码</h3>永久 (301)</div>
+    </div>
+    <div class="callout warn"><b>别在 CompanySite 上直接开！</b>它同时有 http 和 https 绑定，重定向对 https 也生效 → https 跳 https，浏览器报"重定向次数过多"（真机实测）。</div>
+  </div>
+</div>
+<aside class="notes">原手册是在 CompanySite 上直接开 HTTP 重定向（或写 web.config），真机实测会形成循环：https://www.lab.local 也返回 301 跳到自己。IIS 自带的 HTTP 重定向不能按协议区分，所以把 http 绑定交给一个专门跳转的站点，CompanySite 只留 https，这样每个站点只干一件事。另外，"HTTP 重定向"图标默认不随 IIS 安装，需要先装 Web-Http-Redirect 角色服务。用 URL 重写模块按"HTTPS=off"跳转是生产中常见的做法，但它要另外下载安装。301 会被浏览器缓存，测试用无痕窗口。</aside>
+
+<template id="pop-l11-10-steps">
+<h3>📋 详细步骤：用跳转站点实现 HTTP → HTTPS</h3>
+<h4>第一步：装"HTTP 重定向"功能（第 9 课没装）</h4>
+<pre>Install-WindowsFeature Web-Http-Redirect</pre>
+<p>Success = True、不用重启。装完<b>关掉再重开</b> IIS 管理器，图标才出现。</p>
+<h4>第二步：把 http:80 从 CompanySite 拿掉</h4>
+<ol>
+  <li>选中 CompanySite →「绑定…」→ 选 <code>http  80  www.lab.local</code> →「删除」→ 关闭</li>
+  <li>现在 CompanySite 只剩 <code>https 443 www.lab.local</code></li>
+</ol>
+<h4>第三步：建跳转站点</h4>
+<pre>mkdir C:\WebSites\Redirect</pre>
+<ol>
+  <li>右键「网站」→「添加网站」：名称 <code>WWW-Redirect</code>，路径 <code>C:\WebSites\Redirect</code></li>
+  <li>绑定 http、80、主机名 <code>www.lab.local</code> → 确定</li>
+</ol>
+<h4>第四步：在 WWW-Redirect 上开重定向</h4>
+<ol>
+  <li>选中 <b>WWW-Redirect</b> → 双击「<b>HTTP 重定向</b>」</li>
+  <li>勾「将请求重定向到此目标」→ 填 <code>https://www.lab.local</code></li>
+  <li>「重定向行为」两个复选框都<b>不勾</b>；状态代码选「<b>永久(301)</b>」→ 右侧「应用」</li>
+</ol>
+<h4>第五步：验证（实测结果）</h4>
+<pre>curl.exe -k -s -o NUL -w "%{http_code} %{redirect_url}" http://www.lab.local/docs/
+curl.exe -k -s -o NUL -w "%{http_code}" https://www.lab.local/</pre>
+<p>第一条 <code>301 https://www.lab.local/docs/</code>（路径保留）；第二条 <code>200</code>（不再循环）。</p>
+</template>
+<template id="pop-l11-10-why">
+<h3>💡 每项为什么：为什么要单独一个跳转站点</h3>
+<ul>
+  <li><b>直接在 CompanySite 上开会怎样？</b>真机实测：<code>https://www.lab.local/</code> 也返回 <b>301 → https://www.lab.local/</b>，浏览器反复跳，最后报"重定向次数过多"。IIS 自带的 HTTP 重定向<b>不看协议</b>，对站点的所有绑定都生效。</li>
+  <li><b>跳转站点的思路：</b>http 和 https 交给不同站点，各干一件事——WWW-Redirect 只负责"把人送走"，CompanySite 只提供内容。</li>
+  <li><b>为什么不勾"仅将请求重定向到此目录中的内容"？</b>不勾时 <code>/docs/</code> 跳到 <code>https://…/docs/</code>，保留路径；勾了反而会把所有请求都送到首页。</li>
+  <li><b>为什么 301？</b>告诉浏览器和搜索引擎"永久搬家"，下次直接走 https。代价是浏览器会<b>缓存</b>，配置改错后要用无痕窗口测试。</li>
+  <li><b>生产里常见的另一种做法：</b>安装 URL 重写模块，按条件 <code>{HTTPS} = off</code> 跳转。它需要单独下载，我们的实验环境不装。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 10 任务3 IP 限制 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>HRPortal：只允许内网访问</h2><button class="more" data-pop="pop-l11-11-steps">📋 详细步骤</button><button class="more" data-pop="pop-l11-11-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>IIS 管理器</span><i>›</i><span>HRPortal</span><i>›</i><span>IP 地址和域限制</span></div>
+    <div class="grid2">
+      <div class="card blue">
+        <h3>① 添加允许条目</h3>
+        <ul class="points">
+          <li>IP 地址范围：<code>10.10.10.0</code></li>
+          <li>掩码：<code>255.255.255.0</code>（即 /24 内网）</li>
+        </ul>
+      </div>
+      <div class="card blue">
+        <h3>② 编辑功能设置</h3>
+        <ul class="points">
+          <li>未指定的客户端的访问权：<b class="orange">拒绝</b></li>
+          <li>效果：不在白名单里的 IP → 403</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout warn"><b>找不到这个图标？</b>需先安装角色服务：<code>Install-WindowsFeature Web-IP-Security</code>，然后重开 IIS 管理器。</div>
+  </div>
+</div>
+<aside class="notes">关键是第 ② 步：只加允许条目而不把默认改成"拒绝"，等于什么都没限制。这是"白名单"思路：默认拒绝、按需放行。"IP 地址和域限制"默认不随 IIS 安装（第 9 课我们已经用 Web-IP-Security 装过，图标应该直接在），安装角色服务不需要重启。</aside>
+
+<template id="pop-l11-11-steps">
+<h3>📋 详细步骤：IP 白名单</h3>
+<h4>第一步：添加允许条目</h4>
+<ol>
+  <li><code>inetmgr</code> → 选中 <b>HRPortal</b> → 双击「<b>IP 地址和域限制</b>」</li>
+  <li>右侧「添加允许条目」→ 选「IP 地址范围」</li>
+  <li>IP 地址 <code>10.10.10.0</code>，掩码 <code>255.255.255.0</code> → 确定</li>
+</ol>
+<h4>第二步：默认拒绝（关键）</h4>
+<ol>
+  <li>右侧「编辑功能设置」</li>
+  <li>「未指定的客户端的访问权」选 <b>拒绝</b> →「拒绝操作类型」保持「禁止」→ 确定</li>
+</ol>
+<h4>第三步：验证</h4>
+<ul>
+  <li>CLIENT1（10.10.10.100）：<code>http://hr.lab.local</code> → 正常显示 HR Portal</li>
+  <li>DC1 上用不在白名单的地址测试（反向测试）：</li>
+</ul>
+<pre>curl.exe -s -o NUL -w "%{http_code}" http://hr.lab.local/ `
+  --resolve hr.lab.local:80:127.0.0.1</pre>
+<p>返回 <b>403</b>（源地址 127.0.0.1 不在 10.10.10.0/24 内）。</p>
+</template>
+<template id="pop-l11-11-why">
+<h3>💡 每项为什么：白名单</h3>
+<ul>
+  <li><b>"默认拒绝、按需放行"：</b>只加允许条目、不改功能设置 = 什么都没限制——默认是"允许"，允许条目只是把已经允许的再允许一次。</li>
+  <li><b>为什么 DC1 访问 localhost 会被挡？</b>源 IP 是 127.0.0.1，不在 10.10.10.0/24。真机实测：127.0.0.1 → 403，10.10.10.10 → 200。在 DC1 上自测要用 10.10.10.10 访问。</li>
+  <li><b>日志里怎么区分？</b>IIS 日志记为 <code>403 503</code>（状态码 403、子状态 503 = IP 地址被拒绝）。</li>
+  <li><b>设置存在哪？</b>它写进 applicationHost.config 的 <code>&lt;location path="HRPortal"&gt;</code>，不在站点的 web.config 里——这类安全设置默认锁在服务器级，站点管理员改不了。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 11 任务3 请求过滤 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>CompanySite：请求过滤</h2><button class="more" data-pop="pop-l11-12-steps">📋 详细步骤</button><button class="more" data-pop="pop-l11-12-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>IIS 管理器</span><i>›</i><span>CompanySite</span><i>›</i><span>请求筛选</span></div>
+    <div class="grid2">
+      <div class="card">
+        <h3>「文件扩展名」选项卡</h3>
+        <p>拒绝文件扩展名：</p>
+        <p><span class="obj">.bak</span><span class="obj">.config</span><span class="obj">.sql</span></p>
+      </div>
+      <div class="card">
+        <h3>「隐藏段」选项卡</h3>
+        <p>添加隐藏段：</p>
+        <p><span class="obj">bin</span><span class="obj">App_Data</span></p>
+      </div>
+    </div>
+    <div class="callout"><b>扩展名</b>按文件后缀拦截；<b>隐藏段</b>按 URL 中的目录名拦截，例如 <code>/bin/任何文件</code> 都访问不到。</div>
+  </div>
+</div>
+<aside class="notes">中文界面里叫"请求筛选"，原文写作"请求过滤"，是同一功能。添加 .config 或 bin 时如果提示"已存在"，说明 IIS 默认已经拦截了，这是正常的，正好说明微软默认就认为这些很危险。请求过滤命中时返回 404，日志里的子状态码可以区分：404.7 是扩展名被拒，404.8 是隐藏段。</aside>
+
+<template id="pop-l11-12-steps">
+<h3>📋 详细步骤：请求筛选</h3>
+<h4>第一步：拒绝扩展名</h4>
+<ol>
+  <li>选中 <b>CompanySite</b> → 双击「<b>请求筛选</b>」→「文件扩展名」选项卡</li>
+  <li>右侧「拒绝文件扩展名」→ 输入 <code>.bak</code> → 确定；再添加 <code>.sql</code></li>
+  <li>添加 <code>.config</code> 时提示<b>已存在</b> → 正常，IIS 默认就拒绝它</li>
+</ol>
+<h4>第二步：隐藏段</h4>
+<ol>
+  <li>切到「隐藏段」选项卡 →「隐藏段」→ 输入 <code>bin</code></li>
+  <li>提示<b>已存在</b> → 正常；<code>App_Data</code> 同样已存在</li>
+</ol>
+<h4>默认已拦截的（实测服务器级配置）</h4>
+<ul>
+  <li>扩展名：<code>.config</code> 等十几种</li>
+  <li>隐藏段：web.config、bin、App_code、App_GlobalResources、App_LocalResources、App_WebReferences、App_Data、App_Browsers</li>
+</ul>
+<div class="tip">真正需要你加的只有 <code>.bak</code> 和 <code>.sql</code>——开发人员最常误留在网站目录里的就是备份和数据库导出。</div>
+</template>
+<template id="pop-l11-12-why">
+<h3>💡 每项为什么：请求筛选</h3>
+<ul>
+  <li><b>扩展名 vs 隐藏段：</b>扩展名看 URL 结尾的后缀；隐藏段看 URL 里的<b>目录名</b>，<code>/bin/a.txt</code> 虽然是 .txt 也会被挡。</li>
+  <li><b>为什么返回 404 而不是 403？</b>403 等于告诉攻击者"文件在，只是不给你"；404 什么都不透露。</li>
+  <li><b>日志子状态码（实测）：</b><code>404 7</code> = 扩展名被拒（test.bak、site.sql）；<code>404 8</code> = 隐藏段（/bin/a.txt、/web.config）。查日志就能知道是哪条规则挡住的。</li>
+  <li><b>为什么只加在 CompanySite？</b>请求筛选按站点生效。在 HRPortal 上加，CompanySite 的 .bak 照样能下载——排障页最后一行就是这种情况。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 12 任务3 测试 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 3 测试</span><h2>加固生效了吗？</h2><button class="more" data-pop="pop-l11-13-steps">📋 详细步骤</button></div>
+  <div class="body">
+    <div class="code-cap">在 DC1 上创建一个"误留"的备份文件</div>
+<pre><code class="language-powershell" data-trim>
+"test" | Out-File C:\WebSites\CompanySite\test.bak
+</code></pre>
+    <table class="tbl">
+      <tr><th>在 CLIENT1 上访问</th><th>预期结果</th><th>说明</th></tr>
+      <tr><td><code>http://hr.lab.local</code></td><td class="green">正常显示 HR Portal</td><td>CLIENT1 在 10.10.10.0/24 内</td></tr>
+      <tr><td><code>http://www.lab.local</code></td><td class="green">跳转到 https</td><td>任务 2 的 301 重定向</td></tr>
+      <tr><td><code>http://www.lab.local/test.bak</code></td><td class="red">404</td><td>.bak 被请求过滤拒绝</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">让学生对比：同一个 test.bak 文件明明存在，却返回 404，这就是请求过滤的效果。想看到 IP 限制拒绝的效果，可以临时把允许条目改成 10.10.20.0/24，再访问 hr.lab.local 应得到 403，测试完改回来。也可以在 DC1 上用 Invoke-WebRequest 自测，但注意本机访问的源 IP 可能是 127.0.0.1，不在白名单里。</aside>
+
+<template id="pop-l11-13-steps">
+<h3>📋 详细步骤：逐项测试（实测结果）</h3>
+<h4>DC1：放一个"误留"的备份</h4>
+<pre>"test" | Out-File C:\WebSites\CompanySite\test.bak</pre>
+<h4>CLIENT1：三项测试</h4>
+<pre>curl.exe -k -s -o NUL -w "%{http_code}`n" http://hr.lab.local/
+curl.exe -k -s -o NUL -w "%{http_code} %{redirect_url}`n" http://www.lab.local/
+curl.exe -k -s -o NUL -w "%{http_code}`n" https://www.lab.local/test.bak</pre>
+<table class="tbl">
+<tr><th>请求</th><th>实测</th><th>说明</th></tr>
+<tr><td>http://hr.lab.local</td><td>200</td><td>CLIENT1 = 10.10.10.100，在白名单内</td></tr>
+<tr><td>http://www.lab.local</td><td>301 → https://www.lab.local/</td><td>WWW-Redirect 跳转</td></tr>
+<tr><td>https://www.lab.local/test.bak</td><td>404</td><td>文件存在，但被请求筛选拒绝</td></tr>
+</table>
+<div class="tip">浏览器测试 <code>http://www.lab.local/test.bak</code> 会先 301 跳到 https，再得到 404——两层防护都能看到。</div>
+</template>
+
+</section>
+
+<!-- 13 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>常见故障</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:32%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>绑定时下拉框里没有证书</td><td>证书没放在 LocalMachine\My</td><td>按原命令重新创建，<code>Get-ChildItem</code> 确认</td></tr>
+      <tr><td>https 打不开 / 连接超时</td><td>防火墙未放行 443</td><td>启用"万维网服务(HTTPS 流量)"入站规则</td></tr>
+      <tr><td>"重定向次数过多"</td><td>HTTP 重定向开在了 CompanySite 上，https 也被跳转</td><td>关掉 CompanySite 的重定向，改由 WWW-Redirect 跳转；无痕窗口测试</td></tr>
+      <tr><td>HRPortal 内网也 403</td><td>允许条目掩码写错</td><td>检查 10.10.10.0 / 255.255.255.0</td></tr>
+      <tr><td>test.bak 仍能下载</td><td>规则加到了别的站点</td><td>确认在 CompanySite 上配置请求筛选</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">重定向循环说明：HTTP 重定向写在站点级 web.config 里，对 https:443 绑定的请求同样生效，访问 https 也会被再次跳转，所以访问 https 也会跳到自己，形成循环。处理办法：改用 URL 重写模块按"HTTPS 为 off"条件跳转，或在 SSL 设置里勾选"要求 SSL"代替跳转。301 会被浏览器缓存，修好配置后一定换无痕窗口测试。</aside>
+</section>
+
+<!-- 14 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>任务 4 · 20′ · 对照清单自查</h2><button class="more" data-pop="pop-l11-15-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>HTTPS 绑定存在于 CompanySite</li>
+        <li>SSL 证书已绑定</li>
+        <li>HRPortal 有 IP 限制规则</li>
+        <li>.bak 扩展名被过滤</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>DC1 拍快照<br><code>Lesson11-Done</code></p>
+        <p class="small muted" style="margin-top:8px">下节课 FTP 也会用到这张证书</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上以管理员身份逐项核对清单。自查只确认配置是否存在，不代替任务 3 的访问测试，提交前请学生截图 test.bak 返回 404 的页面。清单达成后运行 check11.ps1 生成 PDF 报告提交（见本页「运行检查脚本」），脚本会自动做 IP 限制的反向测试和重定向循环检测。如果核对发现 SSL 证书未绑定，多半是添加 https 绑定时忘了在下拉框里选证书。</aside>
+
+<template id="pop-l11-15-check">
+<h3>🧪 运行检查脚本 check11.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check11.ps1</pre>
+<h4>脚本检查什么（20 项判定 + 3 项采集）</h4>
+<ul>
+  <li><b>任务 1：</b>Lab SSL Cert 在 LocalMachine\My、含 www/hr、有效期约 2 年；CompanySite 有 https 443 绑定且用的是这张证书；443 防火墙；https 返回 200</li>
+  <li><b>任务 2：</b>http → <b>301</b> 到 https、子路径保留、<b>https 不再被重定向</b>（检测循环）</li>
+  <li><b>任务 3：</b>允许条目 10.10.10.0/24、未指定客户端 = 拒绝、内网来源 200、<b>非内网来源 403</b>（脚本用 DC1 的 NAT 网卡地址真实发请求）；.bak/.config/.sql 被拒、bin/App_Data 隐藏段、<b>现场放一个 .bak 文件实测 404</b></li>
+</ul>
+<div class="tip">"https 返回 200"和"无循环"两项一起 ✘，就是把重定向开在了 CompanySite 上。报告在 <code>C:\LabFiles\Reports\</code>，提交 PDF 后拍快照 <code>Lesson11-Done</code>。</div>
+</template>
+
+</section>
+
+<!-- 15 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">明文 HTTP 可被窃听；内部站点和敏感文件不应对所有人开放</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">证书 → https 绑定 → 301 跳转 → IP 白名单 → 请求筛选</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">默认拒绝、按需放行；自签名证书能加密但不被信任</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 12 课：</b>FTP 服务器配置。在 DC1 上搭建 FTP 站点，实现文件上传与下载。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check11.ps1" download>check11.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check11.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 自签名证书为什么会被浏览器警告？加密是否因此变弱？2. IP 地址限制只加了允许条目、没改默认设置，效果如何？3. 请求过滤为什么返回 404 而不是 403？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第12课 · FTP 服务器配置</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 4 · Windows 服务器网站管理　|　第 12 次课 · 学时 23–24</p>
+  <h1>FTP 服务器配置</h1>
+  <p class="muted">让每个人只看到自己的文件，并且密码不再明文传输</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM3</span></div>
+</div>
+<aside class="notes">开场提问：部门之间要传几百 MB 的设计稿，用共享文件夹不方便跨网段，用网页上传又太慢，企业常用什么？引出 FTP。本课是项目 4 的最后一节，结束时的快照 S4-IISReady 是关键快照，下节课 阶段考核 2 基于它。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>概念</b>双通道 · 隔离<br>明文风险</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 1</b>安装与基础 FTP</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 2</b>FTP 用户隔离</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 3</b>FTPS<br>被动端口</div>
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>任务 4</b>验证</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清楚 FTP 控制通道与数据通道、主动与被动模式的区别</li>
+        <li>在 IIS 中建立 <code>LabFTP</code> 站点，并按用户名目录隔离 alice 和 bob</li>
+        <li>启用 FTPS 并固定被动端口范围，让防火墙只开必要端口</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念部分 10 分钟，可以穿插在任务 1 安装功能的等待时间里讲。任务 2 的测试最容易卡住，多数是目录名或权限问题，要预留时间巡视。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · FTP 服务器<br>IIS + LabFTP</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3 · 测试客户端<br>命令行 ftp</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>沿用：</b>第 3 课的本地用户 alice / bob，第 11 课的证书 <code>Lab SSL Cert</code></div>
+      <div class="callout"><b>课后：</b>DC1 提供隔离的 FTP 服务，并强制 SSL</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">开始前让学生确认：DC1 上 Get-LocalUser alice 存在，证书存储里有 Lab SSL Cert（Get-ChildItem cert:\LocalMachine\My）。若第 11 课没做完证书，任务 3 会没有证书可选，需要先补做。</aside>
+</section>
+
+<!-- 04 概念：双通道 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>FTP 有两条连接</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>① 控制通道</b>客户端 → 21 端口<br>登录、发命令</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 客户端发 PASV</b>"给我一个数据端口"</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>③ 服务器回应</b>端口号<br>如 50023</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 数据通道</b>传文件、列目录</div>
+    </div>
+    <table class="tbl">
+      <tr><th>模式</th><th>数据连接由谁发起</th><th>防火墙影响</th></tr>
+      <tr><td><b>主动 PORT</b></td><td>服务器连回客户端</td><td>客户端防火墙/NAT 常拦截</td></tr>
+      <tr><td><b>被动 PASV</b></td><td>客户端连服务器的高位端口</td><td>服务器要放行一段端口范围</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">这页是任务 1.4 和任务 3.2 的原理：只开 21 端口时，能登录但 ls 会卡住，因为数据通道被拦了。提问：为什么任务 1 先放行 49152-65535，任务 3 又缩小到 50000-50100？答：端口开得越少，攻击面越小。</aside>
+</section>
+
+<!-- 05 概念：用户隔离 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>用户隔离：登录后被"关"在自己的目录</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">站点根 C:\FTPRoot</div>
+        <div class="nest">
+          <div class="lbl">LocalUser（本地账户固定目录名）</div>
+          <div class="grid2" style="gap:14px">
+            <div class="nest"><div class="lbl">alice</div><span class="obj">📄 readme.txt</span></div>
+            <div class="nest"><div class="lbl">bob</div><span class="obj">📄 readme.txt</span></div>
+          </div>
+        </div>
+      </div>
+      <table class="tbl">
+        <tr><th>登录用户</th><th>看到的 "/"</th></tr>
+        <tr><td><b>alice</b></td><td>C:\FTPRoot\LocalUser\alice</td></tr>
+        <tr><td><b>bob</b></td><td>C:\FTPRoot\LocalUser\bob</td></tr>
+        <tr><td>无对应目录</td><td>登录被拒绝</td></tr>
+      </table>
+    </div>
+    <div class="callout warn"><b>LocalUser</b> 这个名字是 IIS 规定的，拼错就隔离失败。</div>
+  </div>
+</div>
+<aside class="notes">IIS 的规则：本地账户映射到 LocalUser\用户名，域账户映射到 域名\用户名（第 17 课之后才有域）。"禁用全局虚拟目录"意味着用户看不到站点级虚拟目录，彻底只剩自己的家目录。可以问学生：不隔离时 alice 能看到 bob 的文件吗？</aside>
+</section>
+
+<!-- 06 概念：明文风险 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>为什么要 FTPS</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>普通 FTP（任务 1–2）</h3>
+        <ul class="points">
+          <li>USER / PASS 命令明文发送</li>
+          <li>同网段抓包可直接看到 Lab@2026a</li>
+          <li>文件内容也是明文</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>FTPS（任务 3）</h3>
+        <ul class="points">
+          <li>用 TLS 加密控制和数据通道</li>
+          <li>复用第 11 课的 Lab SSL Cert</li>
+          <li>"需要 SSL"后拒绝明文登录</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>注意区分：</b>FTPS = FTP + SSL/TLS（IIS 支持）；SFTP 是 SSH 的文件传输，和 IIS 无关。</div>
+  </div>
+</div>
+<aside class="notes">第 26 课会用 Wireshark 抓包，这里先口头说明风险即可。很多学生会把 FTPS 和 SFTP 混为一谈，要点明：IIS FTP 只支持 FTPS，SFTP 需要 OpenSSH 服务器。</aside>
+</section>
+
+<!-- 07 任务1 安装与目录 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 20′ · DC1</span></span><h2>安装 FTP 服务并准备目录</h2><button class="more" data-pop="pop-l12-07-steps">📋 详细步骤</button><button class="more" data-pop="pop-l12-07-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 DC1 上，以管理员身份运行 PowerShell</div>
+<pre><code class="language-powershell" data-trim>
+Install-WindowsFeature Web-Ftp-Server -IncludeAllSubFeature
+mkdir C:\FTPRoot
+mkdir C:\FTPRoot\LocalUser\alice
+mkdir C:\FTPRoot\LocalUser\bob
+"Alice's file" | Out-File `
+  C:\FTPRoot\LocalUser\alice\readme.txt
+"Bob's file" | Out-File C:\FTPRoot\LocalUser\bob\readme.txt
+</code></pre>
+    <div class="callout">目录结构现在就按<b>隔离规则</b>建好（概念 2），任务 2 只需打开开关。</div>
+  </div>
+</div>
+<aside class="notes">-IncludeAllSubFeature 会同时装上 FTP 扩展性组件。装完后在 IIS 管理器里网站右键会出现"添加 FTP 站点"。如果 IIS 管理器已打开，需要关掉重开才能看到新菜单。</aside>
+
+<template id="pop-l12-07-steps">
+<h3>📋 详细步骤：安装 FTP、建目录</h3>
+<div class="tip">从快照 <b>Lesson11-Done</b> 开始。先确认 alice、bob 存在且密码是第 3 课的 <code>Lab@2026a</code> / <code>Lab@2026b</code>。</div>
+<h4>第一步：安装（约 1 分钟）</h4>
+<pre>Install-WindowsFeature Web-Ftp-Server -IncludeAllSubFeature</pre>
+<p>输出 Success = True，最后一列显示 {FTP 扩展, FTP 服务器, FTP 服务}。</p>
+<h4>第二步：目录和文件</h4>
+<pre>mkdir C:\FTPRoot
+mkdir C:\FTPRoot\LocalUser\alice
+mkdir C:\FTPRoot\LocalUser\bob
+"Alice's file" | Out-File `
+  C:\FTPRoot\LocalUser\alice\readme.txt
+"Bob's file" | Out-File C:\FTPRoot\LocalUser\bob\readme.txt</pre>
+<p>第二条 mkdir 会顺带把 <code>LocalUser</code> 也建出来，不用单独建。</p>
+<div class="tip">IIS 管理器若已打开，<b>关掉重开</b>后右键「网站」才会出现「添加 FTP 站点」。</div>
+</template>
+<template id="pop-l12-07-why">
+<h3>💡 每项为什么：安装与目录</h3>
+<ul>
+  <li><b>-IncludeAllSubFeature：</b>FTP 服务 + FTP 扩展性，一次装齐。</li>
+  <li><b>安装时会自动建防火墙规则：</b>实测会出现「FTP 服务器(FTP 流量入站)」21、「FTP 服务器安全(FTP SSL 流量入站)」990，以及「<b>FTP 服务器被动(FTP 被动流量入站)</b>」1024-65535，而且全部是<b>启用</b>状态。最后这条任务 3 要处理。</li>
+  <li><b>为什么现在就建 LocalUser\用户名？</b>任务 2 开隔离时 IIS 按这个名字找家目录。先把结构建好，开关一开就生效。</li>
+  <li><b>readme.txt 编码：</b>Out-File 默认 UTF-16，下载后用记事本打开正常；用 type 看可能字母之间有空格。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 08 任务1 建站点 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 20′ · DC1</span></span><h2>创建 FTP 站点 LabFTP</h2><button class="more" data-pop="pop-l12-08-steps">📋 详细步骤</button><button class="more" data-pop="pop-l12-08-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>IIS 管理器</span><i>›</i><span>网站</span><i>›</i><span>右键</span><i>›</i><span>添加 FTP 站点</span></div>
+    <table class="tbl">
+      <tr><th>向导页</th><th>本课取值</th></tr>
+      <tr><td><b>站点信息</b></td><td>名称 <code>LabFTP</code>，路径 <code>C:\FTPRoot</code></td></tr>
+      <tr><td><b>绑定和 SSL</b></td><td>IP = 全部未分配（*），端口 21，SSL 选"无"</td></tr>
+      <tr><td><b>身份验证</b></td><td>勾选"基本"</td></tr>
+      <tr><td><b>授权</b></td><td>指定用户 <code>alice, bob</code>，权限：读取 + 写入</td></tr>
+    </table>
+    <div class="callout warn"><b>先不开 SSL：</b>先确认基础功能可用，任务 3 再加密，便于分步排错。</div>
+  </div>
+</div>
+<aside class="notes">"基本"身份验证就是用户名密码登录，这正是明文风险的来源，呼应概念 3。授权里多个用户用英文逗号分隔。不要勾"匿名"，否则任何人都能连上。</aside>
+
+<template id="pop-l12-08-steps">
+<h3>📋 详细步骤：添加 FTP 站点向导</h3>
+<ol>
+  <li><code>inetmgr</code> → 右键「网站」→「<b>添加 FTP 站点</b>」</li>
+  <li><b>站点信息：</b>FTP 站点名称 <code>LabFTP</code>，物理路径 <code>C:\FTPRoot</code> → 下一步</li>
+  <li><b>绑定和 SSL 设置：</b>IP「全部未分配」、端口 21；勾「自动启动 FTP 站点」；SSL 选「<b>无 SSL</b>」→ 下一步</li>
+  <li><b>身份验证和授权信息：</b>
+    <ul>
+      <li>身份验证：只勾「<b>基本</b>」（不勾匿名）</li>
+      <li>允许访问：选「<b>指定用户</b>」，填 <code>alice,bob</code></li>
+      <li>权限：勾「读取」和「写入」→ 完成</li>
+    </ul>
+  </li>
+</ol>
+<h4>确认</h4>
+<pre>Get-Website LabFTP | Format-Table Name, State, PhysicalPath
+Get-Service ftpsvc</pre>
+<p>LabFTP = Started，ftpsvc = Running。</p>
+</template>
+<template id="pop-l12-08-why">
+<h3>💡 每项为什么：向导选项</h3>
+<table class="tbl">
+<tr><th style="width:28%">选项</th><th>为什么</th></tr>
+<tr><td>SSL = 无</td><td>先确认基础功能。若一开始就要求 SSL，Windows 自带的 ftp 连登录都做不了，出问题分不清是哪一层</td></tr>
+<tr><td>只勾「基本」</td><td>用本机账户（alice/bob）的用户名密码登录；匿名意味着任何人都能连</td></tr>
+<tr><td>指定用户 alice,bob</td><td>授权是 FTP 的第一道门；其他本地账户（如 charlie）能通过身份验证，但会被授权挡住</td></tr>
+<tr><td>读取 + 写入</td><td>能下载也能上传。真正"能写到哪"还要看第二道门 NTFS（任务 2）</td></tr>
+</table>
+<div class="tip">"基本"身份验证的密码是<b>明文</b>发送的——这就是任务 3 要上 FTPS 的原因。</div>
+</template>
+
+</section>
+
+<!-- 09 任务1 防火墙 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 20′ · DC1</span></span><h2>放行控制端口和被动端口</h2><button class="more" data-pop="pop-l12-09-steps">📋 详细步骤</button><button class="more" data-pop="pop-l12-09-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+New-NetFirewallRule -DisplayName "Allow FTP" `
+  -Direction Inbound -Protocol TCP `
+  -LocalPort 21 -Action Allow
+New-NetFirewallRule -DisplayName "Allow FTP Passive" `
+  -Direction Inbound -Protocol TCP `
+  -LocalPort 49152-65535 -Action Allow
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>Allow FTP：</b>控制通道 21，用于登录和命令</div>
+      <div class="callout"><b>Allow FTP Passive：</b>数据通道，范围先放宽，任务 3 收窄</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">规则名要和原文完全一致，任务 3 的 Set-NetFirewallRule 按 DisplayName 找这条规则。49152-65535 是 Windows 默认的动态端口范围。可用 Get-NetFirewallRule -DisplayName "Allow FTP*" 确认两条都在。</aside>
+
+<template id="pop-l12-09-steps">
+<h3>📋 详细步骤：两条防火墙规则</h3>
+<pre>New-NetFirewallRule -DisplayName "Allow FTP" `
+  -Direction Inbound -Protocol TCP `
+  -LocalPort 21 -Action Allow
+New-NetFirewallRule -DisplayName "Allow FTP Passive" `
+  -Direction Inbound -Protocol TCP `
+  -LocalPort 49152-65535 -Action Allow</pre>
+<h4>确认</h4>
+<pre>Get-NetFirewallRule -DisplayName "Allow FTP*" |
+  Format-Table DisplayName, Enabled, Action</pre>
+<div class="tip">规则名必须和课件<b>一字不差</b>：任务 3 的 Set-NetFirewallRule、检查脚本都按 DisplayName 找它。</div>
+</template>
+<template id="pop-l12-09-why">
+<h3>💡 每项为什么：两条通道两条规则</h3>
+<ul>
+  <li><b>21 = 控制通道：</b>登录、发命令都走它。只开 21 时能登录，但 ls 会卡住。</li>
+  <li><b>被动端口 = 数据通道：</b>客户端用被动模式时，会去连服务器给的一个高位端口传数据。</li>
+  <li><b>Windows 自带的 ftp 命令用的是主动模式：</b>反过来是服务器从 20 端口连回客户端，所以下一页 CLIENT1 会弹防火墙提示。被动端口这条规则是给 FileZilla、curl 这类被动模式客户端准备的。</li>
+  <li><b>为什么先开这么大？</b>49152-65535 是 Windows 默认的动态端口范围，IIS 没配置范围时会从这里随便挑；任务 3 再收窄。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 10 任务2 隔离与权限 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 20′ · DC1</span></span><h2>开启用户隔离并设置目录权限</h2><button class="more" data-pop="pop-l12-10-steps">📋 详细步骤</button><button class="more" data-pop="pop-l12-10-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>IIS 管理器</span><i>›</i><span>LabFTP</span><i>›</i><span>FTP 用户隔离</span><i>›</i><span>用户名目录(禁用全局虚拟目录)</span><i>›</i><span>应用</span></div>
+<pre><code class="language-powershell" data-trim>
+icacls C:\FTPRoot\LocalUser\alice /grant "alice:(OI)(CI)M"
+icacls C:\FTPRoot\LocalUser\bob /grant "bob:(OI)(CI)M"
+</code></pre>
+    <table class="tbl">
+      <tr><th>参数</th><th>含义</th></tr>
+      <tr><td><code>(OI)(CI)</code></td><td>对子文件和子文件夹继承（第 6 课）</td></tr>
+      <tr><td><code>M</code></td><td>修改：可读、写、删除自己的文件</td></tr>
+    </table>
+    <div class="callout warn">FTP 授权规则 + NTFS 权限<b>都允许</b>才能写入，两层缺一不可。</div>
+  </div>
+</div>
+<aside class="notes">回顾第 7 课"共享权限与 NTFS 取交集"，FTP 也是同样的两层模型：IIS 授权规则是第一层，NTFS 是第二层。改完隔离设置一定要点右侧"应用"，这是最常见的遗漏。</aside>
+
+<template id="pop-l12-10-steps">
+<h3>📋 详细步骤：用户隔离 + NTFS</h3>
+<h4>第一步：开隔离（别忘了"应用"）</h4>
+<ol>
+  <li><code>inetmgr</code> → 选中 <b>LabFTP</b> → 双击「<b>FTP 用户隔离</b>」</li>
+  <li>选「隔离用户 → <b>用户名目录(禁用全局虚拟目录)</b>」</li>
+  <li>右侧点「<b>应用</b>」→ 顶部提示"已成功保存更改"</li>
+</ol>
+<h4>第二步：NTFS 权限（PowerShell 里要加引号）</h4>
+<pre>icacls C:\FTPRoot\LocalUser\alice /grant "alice:(OI)(CI)M"
+icacls C:\FTPRoot\LocalUser\bob /grant "bob:(OI)(CI)M"</pre>
+<p>每条都显示「已成功处理 1 个文件」。</p>
+<div class="tip">不加引号直接写 <code>alice:(OI)(CI)M</code>，PowerShell 会把括号当成表达式，报"<b>无法将 OI 项识别为 cmdlet</b>"（真机实测）。在 cmd 里可以不加引号。第 6 课也是同样的写法。</div>
+</template>
+<template id="pop-l12-10-why">
+<h3>💡 每项为什么：两层都得允许</h3>
+<ul>
+  <li><b>隔离前登录会怎样？</b>真机实测：alice 登录后看到的根是 C:\FTPRoot，能 <code>cd LocalUser\bob</code> 看到 bob 的文件，put 的文件也落在根目录。</li>
+  <li><b>隔离后：</b>alice 的 "/" 就是 LocalUser\alice，<code>cd ..</code> 仍停在 "/"，<code>cd /bob</code> 返回 550。</li>
+  <li><b>为什么还要 icacls？</b>FTP 授权（读+写）是第一道门，NTFS 是第二道门，和第 7 课"共享权限 ∩ NTFS"一个道理。</li>
+  <li><b>实测补充：</b>新建目录继承了 C:\ 的 <code>Users</code> 权限（读取 + 新建文件），所以不加 icacls 也能上传；但想<b>覆盖或删除</b>自己的文件需要"修改"(M)。显式给用户 M 权限，权限就不依赖继承，意图也一目了然。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 11 任务2 测试 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 20′ · CLIENT1</span></span><h2>从客户端测试隔离效果</h2><button class="more" data-pop="pop-l12-11-steps">📋 详细步骤</button><button class="more" data-pop="pop-l12-11-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 CLIENT1（VM3）的命令提示符中，用户 alice，密码 Lab@2026a</div>
+<pre><code class="language-powershell" data-trim>
+echo hello > test.txt
+ftp 10.10.10.10
+ftp> ls
+ftp> put test.txt
+ftp> get readme.txt
+ftp> bye
+</code></pre>
+    <table class="tbl">
+      <tr><th>命令</th><th>预期结果</th></tr>
+      <tr><td><code>ls</code></td><td>只看到 readme.txt，看不到 bob 的目录</td></tr>
+      <tr><td><code>put</code> / <code>get</code></td><td>显示 226 Transfer complete</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">第一行 echo 是补充步骤：原文直接 put test.txt，本地没有这个文件会报错。Windows 自带 ftp 只会主动模式（服务器连回客户端），第一次 ls 时 CLIENT1 会弹出"Windows 安全中心警报"，必须点"允许访问"，否则 ls 卡在"150 Opening ASCII mode data connection"。get 下载的 readme.txt 内容应是 "Alice's file"。再用 bob 登录一次，对比两人看到的内容，让学生体会隔离。提问：在 alice 会话中执行 cd .. 会怎样？</aside>
+
+<template id="pop-l12-11-steps">
+<h3>📋 详细步骤：CLIENT1 上测试</h3>
+<h4>第一步：准备上传文件，连接</h4>
+<pre>cd %TEMP%
+echo hello > test.txt
+ftp 10.10.10.10</pre>
+<p>提示 <code>用户(10.10.10.10:(none)):</code> 输入 <code>alice</code>，再输入密码 <code>Lab@2026a</code>（不回显）→ <code>230 User logged in.</code></p>
+<h4>第二步：第一次 ls 会弹防火墙提示</h4>
+<p>屏幕弹出"Windows 安全中心警报：已阻止文件传输程序的某些功能" → 点「<b>允许访问</b>」。不点的话 ls 会一直卡在 <code>150 Opening ASCII mode data connection.</code></p>
+<h4>第三步：命令和实测输出</h4>
+<pre>ftp&gt; ls            → readme.txt
+ftp&gt; put test.txt  → 226 Transfer complete.
+ftp&gt; get readme.txt → 226 Transfer complete.
+ftp&gt; cd ..         → 250，pwd 仍是 "/"
+ftp&gt; cd /bob       → 550 The system cannot find the file specified.
+ftp&gt; bye</pre>
+<p><code>type readme.txt</code> 显示 Alice's file。再用 <code>bob</code> / <code>Lab@2026b</code> 登录一次，只看到 Bob's file。</p>
+<div class="tip">530 登录失败？先在 DC1 上确认密码：<code>net user alice Lab@2026a</code> 重设一次。</div>
+</template>
+<template id="pop-l12-11-why">
+<h3>💡 每项为什么：主动模式与防火墙提示</h3>
+<ul>
+  <li><b>为什么会弹提示？</b>Windows 自带 ftp 只支持<b>主动模式</b>：客户端发 <code>PORT 10,10,10,100,…</code> 告诉服务器"连我这个端口"，服务器从 20 端口连回来。这是一个<b>外来</b>连接，CLIENT1 的防火墙要拦。</li>
+  <li><b>点"允许访问"做了什么？</b>给 ftp.exe 建了一条入站允许规则，之后不再提示。</li>
+  <li><b>cd .. 为什么没报错？</b>在隔离模式下 "/" 就是家目录，上面没有东西了，所以 cd .. 原地不动。</li>
+  <li><b>FTP 日志：</b><code>C:\inetpub\logs\LogFiles\FTPSVC*\</code>，用户名记为 <code>DC-01\alice</code>，能看到每条 STOR、RETR 和 CWD 的返回码（日志约 1 分钟后写入）。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 12 任务3 SSL -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>启用 FTPS：强制 SSL 连接</h2><button class="more" data-pop="pop-l12-12-steps">📋 详细步骤</button><button class="more" data-pop="pop-l12-12-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>IIS 管理器</span><i>›</i><span>LabFTP</span><i>›</i><span>FTP SSL 设置</span></div>
+    <div class="grid2">
+      <div class="card blue"><h3>SSL 证书</h3><p>选择第 11 课创建的 <code>Lab SSL Cert</code></p></div>
+      <div class="card blue"><h3>SSL 策略</h3><p>选择"需要 SSL 连接"，点右侧"应用"</p></div>
+    </div>
+    <div class="callout warn"><b>预期现象：</b>Windows 自带的 <code>ftp</code> 命令不支持 SSL，此后再用它登录会被拒绝（提示策略要求 SSL）。这恰好证明明文登录已被禁止。</div>
+  </div>
+</div>
+<aside class="notes">下拉框里看不到 Lab SSL Cert，说明第 11 课证书没建或建在了别的存储位置。要测试 FTPS 登录，需要支持 FTPS 的客户端（如 FileZilla，选"要求显式 FTP over TLS"），自签名证书会弹出信任提示。若机房没有此类客户端，以"明文被拒"作为验证即可。</aside>
+
+<template id="pop-l12-12-steps">
+<h3>📋 详细步骤：FTP SSL 设置</h3>
+<ol>
+  <li><code>inetmgr</code> → 选中 <b>LabFTP</b> → 双击「<b>FTP SSL 设置</b>」</li>
+  <li>SSL 证书下拉框选 <b>Lab SSL Cert</b>（第 11 课创建）</li>
+  <li>SSL 策略选「<b>需要 SSL 连接</b>」→ 右侧「应用」</li>
+</ol>
+<h4>验证：明文被拒绝（CLIENT1）</h4>
+<pre>ftp 10.10.10.10
+用户: alice
+534 Policy requires SSL.</pre>
+<h4>验证：FTPS 能用（CLIENT1，用自带的 curl.exe）</h4>
+<pre>curl.exe -k --ssl-reqd --user alice:Lab@2026a ftp://10.10.10.10/</pre>
+<p>列出 readme.txt、test.txt。<code>--ssl-reqd</code> = 要求加密，<code>-k</code> = 接受自签名证书。</p>
+<div class="tip">也可以用 FileZilla：协议选"FTP"、加密选"要求显式的 FTP over TLS"，第一次连接会提示证书不受信任，勾选信任即可。</div>
+</template>
+<template id="pop-l12-12-why">
+<h3>💡 每项为什么：FTPS</h3>
+<ul>
+  <li><b>534 是好消息：</b>说明服务器连用户名都不接受明文——密码根本没机会被发出去。</li>
+  <li><b>"需要 SSL"管两条通道：</b>控制通道（密码、命令）和数据通道（文件内容）都要求加密。</li>
+  <li><b>为什么能复用第 11 课的证书？</b>同一台服务器、同一个 LocalMachine\My 存储，IIS 的 Web 和 FTP 都能选。证书的名字是 www.lab.local，所以客户端按 IP 连时证书名不匹配，这也是 curl 要加 <code>-k</code> 的原因之一。</li>
+  <li><b>FTPS ≠ SFTP：</b>FTPS 是 FTP + TLS，IIS 支持；SFTP 走 SSH 22 端口，需要 OpenSSH 服务器，和 IIS 无关。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 13 任务3 被动端口 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>固定被动端口范围并收窄防火墙</h2><button class="more" data-pop="pop-l12-13-steps">📋 详细步骤</button><button class="more" data-pop="pop-l12-13-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>IIS 管理器</span><i>›</i><span>服务器级别（DC1）</span><i>›</i><span>FTP 防火墙支持</span><i>›</i><span>数据通道端口范围 50000-50100</span></div>
+<pre><code class="language-powershell" data-trim>
+Set-NetFirewallRule -DisplayName "Allow FTP Passive" `
+  -LocalPort @(50000..50100)
+# IIS 自带的被动规则放行 1024-65535，必须禁用
+Disable-NetFirewallRule `
+  -DisplayName "FTP 服务器被动(FTP 被动流量入站)"
+Restart-Service ftpsvc
+</code></pre>
+    <div class="callout"><b>为什么要固定：</b>启用 SSL 后数据通道被加密，防火墙看不到 PASV 回应里的端口号，只能按预先约定的范围放行。</div>
+  </div>
+</div>
+<aside class="notes">必须在服务器节点（不是 LabFTP 站点节点）设置端口范围，原文写"服务器级别"。Restart-Service ftpsvc 是补充步骤，服务器级端口范围通常需要重启 FTP 服务才生效，只影响 FTP 服务、不影响其他网站。端口从约 1.6 万个缩小到 101 个，这就是"最小开放"原则。真机实测：安装 FTP 时 IIS 会自动建并启用"FTP 服务器被动(FTP 被动流量入站)"规则，它对 FTP 服务放行 1024-65535，不禁用它，Allow FTP Passive 收得再窄也没用——这正好是讲"防火墙规则是叠加的、任一条允许就放行"的好例子。</aside>
+
+<template id="pop-l12-13-steps">
+<h3>📋 详细步骤：50000-50100</h3>
+<h4>第一步：在<b>服务器节点</b>设范围</h4>
+<ol>
+  <li><code>inetmgr</code> 左侧选中最上面的<b>服务器</b>（DC-01，不是 LabFTP）</li>
+  <li>双击「<b>FTP 防火墙支持</b>」→ 数据通道端口范围填 <code>50000-50100</code> → 右侧「应用」</li>
+  <li>弹出提示"防火墙也要相应设置"→ 确定</li>
+</ol>
+<h4>第二步：收窄规则 + 禁用 IIS 自带的宽规则</h4>
+<pre>Set-NetFirewallRule -DisplayName "Allow FTP Passive" `
+  -LocalPort @(50000..50100)
+Disable-NetFirewallRule `
+  -DisplayName "FTP 服务器被动(FTP 被动流量入站)"
+Restart-Service ftpsvc</pre>
+<h4>第三步：验证（CLIENT1）</h4>
+<pre>curl.exe -v -k --ssl-reqd --user alice:Lab@2026a ftp://10.10.10.10/</pre>
+<p>输出里找这一行：<code>229 Entering Extended Passive Mode (|||50006|)</code>——端口落在 50000-50100 内。</p>
+</template>
+<template id="pop-l12-13-why">
+<h3>💡 每项为什么：为什么要禁用自带规则</h3>
+<ul>
+  <li><b>防火墙规则是叠加的：</b>任意一条允许就放行。安装 FTP 时 IIS 自动建了「FTP 服务器被动(FTP 被动流量入站)」，对 FTP 服务放行 <b>1024-65535</b>。</li>
+  <li><b>真机实测：</b>只改 Allow FTP Passive 时，自带规则还开着，被动端口实际上仍是 1024-65535 全开。禁用它之后，在 DC1 的 55555 端口开一个监听，CLIENT1 连不上；FTPS 仍能用 50006、50007 传数据。</li>
+  <li><b>为什么必须固定范围？</b>SSL 加密后防火墙读不到 PASV 回应里的端口号，没法"临时开门"，只能预先约定一段。</li>
+  <li><b>为什么设在服务器节点？</b>被动端口范围是 FTP 服务全局的设置，站点节点上的"FTP 防火墙支持"只管对外 IP；重启 ftpsvc 才生效。</li>
+  <li><b>最小开放：</b>从约 6.4 万个端口缩小到 101 个。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 14 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>FTP 连不上？按这个顺序查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>连接超时</td><td>21 端口未放行或服务未启动</td><td>查 Allow FTP 规则，<code>Get-Service ftpsvc</code></td></tr>
+      <tr><td>能登录，<code>ls</code> 卡住</td><td>数据通道端口被拦</td><td>核对被动端口范围与防火墙一致</td></tr>
+      <tr><td>530 登录失败</td><td>未开基本验证或无隔离目录</td><td>检查验证方式和 LocalUser\用户名</td></tr>
+      <tr><td>550 / put 被拒</td><td>授权或 NTFS 无写权限</td><td>授权规则加写入，重做 icacls</td></tr>
+      <tr><td>534 要求 SSL</td><td>客户端不支持 FTPS</td><td>属正常现象，换支持 TLS 的客户端</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">先让学生看 FTP 返回码再猜原因：5xx 是服务器拒绝，超时是网络/防火墙。控制通道和数据通道分开排查是本课最重要的排障思路。</aside>
+</section>
+
+<!-- 15 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 4 · 验证与提交</span><h2>任务 4 · 12′ · 对照清单自查</h2><button class="more" data-pop="pop-l12-15-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>FTP 服务安装且运行中</li>
+        <li>LabFTP 站点存在</li>
+        <li>用户隔离已配置</li>
+        <li>SSL 已启用</li>
+        <li>被动端口范围已配置</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照（关键）</h3>
+        <p><code>S4-IISReady</code></p>
+        <p class="small muted" style="margin-top:8px">下节课 阶段考核 2 的考核快照基于它制作</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对清单。任何一项不通过都要当堂修好再拍快照，因为教师要基于 S4-IISReady 制作考核起始快照 CR2-Start。清单达成后运行 check12.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。快照前确认第 9–11 课的网站和 HTTPS 绑定也都正常。</aside>
+
+<template id="pop-l12-15-check">
+<h3>🧪 运行检查脚本 check12.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check12.ps1</pre>
+<h4>脚本检查什么（23 项判定 + 2 项采集）</h4>
+<ul>
+  <li><b>任务 1：</b>FTP 已装、ftpsvc 运行、LabFTP 路径/绑定 *:21/已启动、基本验证开/匿名关、授权 alice,bob 读+写、Allow FTP 21</li>
+  <li><b>任务 2：</b>两个 readme.txt、隔离模式、alice/bob 各自 (OI)(CI)M、<b>FTP 日志里有成功的 put/get</b>（所以先做完 CLIENT1 测试再跑）、根目录无散落文件</li>
+  <li><b>任务 3：</b>证书 = Lab SSL Cert、需要 SSL、<b>现场发明文 USER 应得 534</b>、服务器级 50000-50100、Allow FTP Passive 恰好 101 个端口、<b>IIS 自带 1024-65535 被动规则已禁用</b></li>
+</ul>
+<div class="tip">提交 PDF 后拍快照 <code>S4-IISReady</code>（老师机上对应 Lesson12-Done）——下节课阶段考核 2 基于它。</div>
+</template>
+
+</section>
+
+<!-- 16 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">FTP 传大文件方便，但默认不隔离、明文传密码</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">装功能 → 建 LabFTP → 用户隔离 + icacls → SSL + 被动端口</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">两条通道都要放行；目录名 LocalUser\用户名</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 13 课：</b>阶段考核 2 进阶模块A考核（80 分钟）：Web 站点、FTP 隔离与 SSL、IIS 安全配置。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check12.ps1" download>check12.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check12.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 能登录但 ls 卡住，问题出在哪条通道？2. 本地用户 bob 的隔离目录应该叫什么？3. 为什么启用 SSL 后必须固定被动端口范围？提醒复习第 9–12 课，阶段考核 2 有 ExamFTP 题目。</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>
