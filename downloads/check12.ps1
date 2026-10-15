@@ -48,9 +48,11 @@ foreach($u in "alice","bob"){
 }
 if($site){
   $mode = Get-ItemProperty IIS:\Sites\LabFTP -Name ftpServer.userIsolation.mode
-  if($mode -eq "IsolateRootDirectoryOnly"){ Add-Item "隔离模式 = 用户名目录(禁用全局虚拟目录)" "PASS" "IsolateRootDirectoryOnly" $mode }
-  elseif($mode -eq "IsolateAllDirectories"){ Add-Item "隔离模式 = 用户名目录(禁用全局虚拟目录)" "WARN" "IsolateRootDirectoryOnly" $mode "选成了「用户名目录(启用全局虚拟目录)」，隔离仍有效" }
-  else { Add-Item "隔离模式 = 用户名目录(禁用全局虚拟目录)" "FAIL" "IsolateRootDirectoryOnly" $mode "选好后要点右侧「应用」" }
+  # 真机实测纠偏: IIS 里"用户名目录(禁用全局虚拟目录)"实际落的是 IsolateAllDirectories,
+  # "用户名目录(启用全局虚拟目录)"实际落的是 IsolateRootDirectoryOnly —— 和直觉命名正好相反, 别被名字骗了。
+  if($mode -eq "IsolateAllDirectories"){ Add-Item "隔离模式 = 用户名目录(禁用全局虚拟目录)" "PASS" "IsolateAllDirectories" $mode }
+  elseif($mode -eq "IsolateRootDirectoryOnly"){ Add-Item "隔离模式 = 用户名目录(禁用全局虚拟目录)" "WARN" "IsolateAllDirectories" $mode "选成了「用户名目录(启用全局虚拟目录)」，隔离仍有效" }
+  else { Add-Item "隔离模式 = 用户名目录(禁用全局虚拟目录)" "FAIL" "IsolateAllDirectories" $mode "选好后要点右侧「应用」" }
 }
 foreach($u in "alice","bob"){
   $acl = Get-Acl "$root\LocalUser\$u" -EA SilentlyContinue
