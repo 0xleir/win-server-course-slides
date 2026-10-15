@@ -340,7 +340,7 @@ mkdir C:\CompanyData\IT\Confidential</pre>
 <!-- 10 任务3 查看与缩写 -->
 <section>
 <div class="frame">
-  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>icacls：查看权限、读懂缩写</h2></div>
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>icacls：查看权限、读懂缩写</h2><button class="more" data-pop="pop-l06-09-steps">📋 详细步骤</button><button class="more" data-pop="pop-l06-09-why">💡 每项为什么</button></div>
   <div class="body">
     <div class="split">
       <div>
@@ -364,6 +364,35 @@ icacls C:\CompanyData\IT\Confidential
   </div>
 </div>
 <aside class="notes">对照任务 2 的设计表核对 icacls 输出，这是检查图形界面操作是否正确的最快方法。输出中带 (I) 的条目表示继承来的；禁用继承后应该看不到 (I)。提问：一个条目只有 (CI) 没有 (OI)，文件会得到这个权限吗？</aside>
+<template id="pop-l06-09-steps">
+  <h3>📋 详细步骤：icacls 查看权限、读懂缩写</h3>
+  <h4>第一步：以管理员身份打开 PowerShell</h4>
+  <h4>第二步：逐个查看四层文件夹的权限</h4>
+<pre>icacls C:\CompanyData
+icacls C:\CompanyData\IT
+icacls C:\CompanyData\Finance
+icacls C:\CompanyData\IT\Confidential</pre>
+  <p>每行输出格式是 <code>域\用户或组:(继承标志)(权限缩写)</code>，比如 <code>LAB\IT-Users:(OI)(CI)(M)</code> 表示 IT-Users 组有"修改"权限，并且会传给子文件夹和子文件。</p>
+  <h4>第三步：核对继承状态</h4>
+  <ol>
+    <li>如果某一行末尾带 <code>(I)</code>，说明这条权限是从父文件夹继承来的</li>
+    <li>任务 2 禁用继承之后，这几个部门文件夹应该<b>看不到</b> <code>(I)</code> 标记——如果还看到，说明继承没有真正禁用，回任务 2 重新操作</li>
+  </ol>
+  <h4>第四步：和设计表逐条核对</h4>
+  <p>把 icacls 输出的每一条权限，和任务 2 的"部门权限设计表"逐条对照，确认组名、权限级别都对得上。</p>
+</template>
+<template id="pop-l06-09-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">缩写/标记</th><th>意义</th></tr>
+    <tr><td><code>F</code> / <code>M</code></td><td><b>F</b>=完全控制（能改权限、删除文件夹本身）；<b>M</b>=修改（能读写删文件内容，但不能改权限）。部门成员通常给 M 就够，F 留给管理员组。</td></tr>
+    <tr><td><code>RX</code></td><td>读取和执行，适合"只能看、能运行脚本但不能改"的场景。</td></tr>
+    <tr><td><code>(OI)</code> 对象继承</td><td>这条权限会向下传给<b>文件</b>（不含子文件夹本身的权限，但文件夹里新建的文件会继承到）。</td></tr>
+    <tr><td><code>(CI)</code> 容器继承</td><td>这条权限会向下传给<b>子文件夹</b>。只有 CI 没有 OI：子文件夹能继承到，但子文件夹<b>里的文件</b>不会继承到——这是本页思考题的答案。</td></tr>
+    <tr><td><code>(I)</code> 继承标记</td><td>表示这条权限不是在当前文件夹上直接设置的，而是从上层目录继承下来的。任务2禁用继承后，部门文件夹上应该全部是显式设置（无 (I)），这样修改上层目录权限就不会意外影响到这些已经"锁死"的部门权限。</td></tr>
+    <tr><td>为什么要对照设计表核对</td><td>图形界面点来点去容易漏勾选项或选错继承范围，icacls 的文本输出是最终"落地效果"的权威依据——比图形界面的权限对话框更可靠、更适合截图留证据。</td></tr>
+  </table>
+</template>
 </section>
 
 <!-- 11 任务3 授予与备份 -->

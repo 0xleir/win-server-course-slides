@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第10课 · IIS 多站点与虚拟目录</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 4 · 网站管理　|　第 10 次课 · 学时 19–20</p>
+  <h1>IIS 多站点与虚拟目录</h1>
+  <p class="muted">一台服务器、一个 IP，同时跑好几个网站</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM3</span></div>
+</div>
+<aside class="notes">开场提问：学校官网、教务系统、图书馆系统，真的需要三台服务器吗？今天在 DC1 一个 IP 上同时跑三个站点。本课以第 9 课的 CompanySite 为基础，请确认学生已从 Lesson09-Done 快照开始。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>概念</b>绑定三要素<br>虚拟目录</div>
+      <div class="seg" style="flex:24"><span class="t">24′</span><b>任务 1</b>基于主机头的多站点</div>
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>任务 2</b>基于端口的多站点</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 3</b>虚拟目录<br>PowerShell 管理</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 4</b>验证</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清楚 IIS 如何用"IP + 端口 + 主机名"区分不同网站</li>
+        <li>配置基于主机头（hr/www.lab.local）和端口（8080）的多站点</li>
+        <li>创建虚拟目录，并用 PowerShell 查看站点与绑定</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念部分压缩到 10 分钟，重点讲"绑定"这一个概念，后面三个任务都是它的应用。任务 1 最容易出错（DNS 与绑定要同时对），留足时间。</aside>
+</section>
+
+<!-- 02b 概念：教材补充 Web 服务器 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>Web 服务器（WWW）是什么</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>定义</h3>
+        <ul class="points">
+          <li>Web 服务器又称 <b>WWW（World Wide Web）服务器</b></li>
+          <li>本质是一个<b>向浏览器提供文档的程序</b></li>
+          <li>浏览器发出请求，服务器把网页文档回送给它</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>作用</h3>
+        <ul class="points">
+          <li>主要提供网上信息浏览服务</li>
+          <li>WWW 是 Internet 上使用最广、发展最快的服务之一</li>
+          <li>IIS 就是 Windows 上的一种 Web 服务器实现</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>联系本课：</b>今天在同一台 IIS 上跑多个站点，就是让一个 Web 服务器"同时提供多份文档"。</div>
+  </div>
+</div>
+<aside class="notes">这页补充教材的必备知识。Web 服务器也叫 WWW 服务器，WWW 是 World Wide Web 万维网的缩写。说得通俗一点，Web 服务器就是一个"向发出请求的浏览器提供文档的程序"：你在浏览器里敲网址回车，就是向 Web 服务器发请求，服务器把对应的网页文档回送给浏览器显示出来。它的主要功能就是提供网上信息浏览服务，WWW 也是 Internet 上发展最快、用得最广的服务，正是因为有了它互联网才迅速普及。我们学的 IIS 就是 Windows 平台上的一种 Web 服务器。理解了这个，今天"在一台 IIS 上建多个站点"就好懂了——无非是让这个程序同时对外提供好几份不同的文档。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · IIS + DNS<br>3 个站点都在这里</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3 · Win10 客户端<br>DNS → 10.10.10.10</div></div>
+    </div>
+    <table class="tbl">
+      <tr><th>站点</th><th>物理路径</th><th>访问方式</th></tr>
+      <tr><td>CompanySite</td><td>C:\WebSites\CompanySite</td><td>http://www.lab.local</td></tr>
+      <tr><td>HRPortal</td><td>C:\WebSites\HRPortal</td><td>http://hr.lab.local</td></tr>
+      <tr><td>DevSite</td><td>C:\WebSites\DevSite</td><td>http://10.10.10.10:8080</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">lab.local 此时只是第 2 课在 DC1 上建的 DNS 区域，还不是 AD 域（AD 域在第 17 课才建）。CLIENT1 通过第 2 课的 DHCP 作用域拿到 DNS 10.10.10.10，课前让学生 ipconfig /all 确认一下。</aside>
+</section>
+
+<!-- 04 概念：绑定 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>绑定：IIS 靠三要素认网站</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>IP 地址</b>10.10.10.10 或 *</div>
+      <div class="arrow">+</div>
+      <div class="node"><b>端口</b>80 / 8080</div>
+      <div class="arrow">+</div>
+      <div class="node"><b>主机名</b>www / hr.lab.local</div>
+      <div class="arrow">=</div>
+      <div class="node hl"><b>唯一的站点</b>三者组合不能重复</div>
+    </div>
+    <table class="tbl">
+      <tr><th>方式</th><th>区分依据</th><th>本课例子</th></tr>
+      <tr><td><b>主机头</b></td><td>同 IP 同端口，不同域名</td><td>www / hr.lab.local :80</td></tr>
+      <tr><td><b>端口</b></td><td>同 IP，不同端口</td><td>DevSite :8080</td></tr>
+      <tr><td><b>IP</b></td><td>服务器有多个 IP</td><td>本课不做（只有一个 IP）</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">第 9 课 CompanySite 绑定的是 *:80 且主机名为空，它是 80 端口的"兜底"站点。IIS 优先匹配带主机名的绑定，匹配不上的请求才交给主机名为空的站点。提问：如果两个站点都绑 *:80 且主机名为空，会怎样？（第二个站点无法启动，提示绑定冲突）</aside>
+</section>
+
+<!-- 05 概念：主机头工作过程 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>主机头：同一个 IP，怎么分出两个站？</h2></div>
+  <div class="body">
+    <p class="muted">CLIENT1 访问 http://hr.lab.local 时：</p>
+    <div class="flow">
+      <div class="node"><b>① 问 DNS</b>hr.lab.local<br>→ 10.10.10.10</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 连接</b>10.10.10.10:80</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>③ 请求头</b><code>Host: hr.lab.local</code></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ IIS 匹配</b>交给 HRPortal</div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>DNS 负责</b>"去哪台服务器"——两个名字指向同一个 IP</div>
+      <div class="callout"><b>Host 头负责</b>"要哪个网站"——IIS 按名字分发</div>
+    </div>
+    <div class="callout warn">用 IP 访问时 Host 头是 IP，只有<b>主机名为空</b>的绑定能接住这个请求。</div>
+  </div>
+</div>
+<aside class="notes">这页是本课排障的核心。DNS 和绑定缺一不可：DNS 错了浏览器连不到服务器；绑定错了能连上，但打开的是别的站。可以让学生在浏览器 F12 网络面板里亲眼看到请求头中的 Host 字段。</aside>
+</section>
+
+<!-- 06 概念：虚拟目录 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>虚拟目录：URL 路径 ≠ 磁盘路径</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">站点 CompanySite · C:\WebSites\CompanySite</div>
+        <span class="obj">📄 /index.html</span><span class="obj">📁 /docs（子文件夹）</span>
+        <div class="nest"><div class="lbl">虚拟目录 /shared</div><span class="obj">📁 → C:\SharedDocs</span></div>
+      </div>
+      <table class="tbl">
+        <tr><th>类型</th><th>特点</th></tr>
+        <tr><td><b>子文件夹</b></td><td>就在站点目录里，自动可访问</td></tr>
+        <tr><td><b>虚拟目录</b></td><td>别名映射到站点外的任意路径</td></tr>
+        <tr><td><b>应用程序</b></td><td>虚拟目录 + 独立应用程序池，可单独运行代码</td></tr>
+      </table>
+    </div>
+    <div class="callout"><b>用途：</b>不复制文件，就能把共享资料、上传目录挂进网站。</div>
+  </div>
+</div>
+<aside class="notes">访问 /shared/shared.txt 时，IIS 把别名 shared 换成 C:\SharedDocs，再读取 shared.txt。应用程序与虚拟目录的区别：应用程序有自己的应用程序池和 web.config 作用域，常用于在同一站点下部署独立的 ASP.NET 程序；本课实操只做虚拟目录。</aside>
+</section>
+
+<!-- 07 任务1 内容与DNS -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 24′ · DC1</span></span><h2>准备 HRPortal 内容和 DNS 记录</h2><button class="more" data-pop="pop-l10-08-steps">📋 详细步骤</button><button class="more" data-pop="pop-l10-08-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">① 创建第二个网站的目录和首页</div>
+<pre><code class="language-powershell" data-trim>
+mkdir C:\WebSites\HRPortal
+@"
+&lt;html&gt;&lt;body&gt;&lt;h1&gt;HR Portal&lt;/h1&gt;
+&lt;p&gt;Human Resources Internal Site&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;
+"@ | Out-File C:\WebSites\HRPortal\index.html `
+  -Encoding UTF8
+</code></pre>
+    <div class="code-cap">② 在 lab.local 区域添加两条 A 记录</div>
+<pre><code class="language-powershell" data-trim>
+Add-DnsServerResourceRecordA -ZoneName "lab.local" `
+  -Name "www" -IPv4Address "10.10.10.10"
+Add-DnsServerResourceRecordA -ZoneName "lab.local" `
+  -Name "hr" -IPv4Address "10.10.10.10"
+</code></pre>
+  </div>
+</div>
+<aside class="notes">@" 和 "@ 必须各自独占一行、顶格写，否则 here-string 报错。两条 A 记录指向同一个 IP，这正是概念 2 的前提。若提示记录已存在，说明之前做过，可直接继续；可用 Resolve-DnsName hr.lab.local 立即验证。</aside>
+
+<template id="pop-l10-08-steps">
+<h3>📋 详细步骤：HRPortal 内容 + DNS 记录</h3>
+<div class="tip">从快照 <b>Lesson09-Done</b> 开始，DC1 上以管理员打开 PowerShell。</div>
+<h4>第一步：HRPortal 目录和首页</h4>
+<pre>mkdir C:\WebSites\HRPortal
+@"
+&lt;html&gt;&lt;body&gt;&lt;h1&gt;HR Portal&lt;/h1&gt;
+&lt;p&gt;Human Resources Internal Site&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;
+"@ | Out-File C:\WebSites\HRPortal\index.html `
+  -Encoding UTF8</pre>
+<h4>第二步：两条 A 记录</h4>
+<pre>Add-DnsServerResourceRecordA -ZoneName "lab.local" `
+  -Name "www" -IPv4Address "10.10.10.10"
+Add-DnsServerResourceRecordA -ZoneName "lab.local" `
+  -Name "hr" -IPv4Address "10.10.10.10"</pre>
+<p>成功时<b>没有任何输出</b>。马上验证：</p>
+<pre>Resolve-DnsName hr.lab.local     # IPAddress 应为 10.10.10.10</pre>
+<h4>图形界面做法（可选）</h4>
+<ol>
+  <li>服务器管理器 →「工具」→「DNS」→ 展开 DC1 →「正向查找区域」→ <b>lab.local</b></li>
+  <li>右键 →「新建主机(A 或 AAAA)」→ 名称 <code>www</code>、IP <code>10.10.10.10</code> →「添加主机」；再建一条 <code>hr</code></li>
+</ol>
+<div class="tip">提示"记录已存在"说明之前建过，用 <code>Get-DnsServerResourceRecord -ZoneName lab.local -Name hr</code> 看一下 IP 对不对即可。</div>
+</template>
+<template id="pop-l10-08-why">
+<h3>💡 每项为什么：DNS 先行</h3>
+<ul>
+  <li><b>为什么两个名字指向同一个 IP？</b>DNS 只负责"去哪台服务器"。www 和 hr 都落到 10.10.10.10，区分站点的工作交给 IIS 的主机名绑定。</li>
+  <li><b>为什么先做 DNS 再做 IIS？</b>建完 DNS 就能用 <code>Resolve-DnsName</code> 独立验证这一层；后面打不开时可以确定问题在 IIS 不在 DNS。</li>
+  <li><b>lab.local 还不是 AD 域：</b>它只是第 2 课在 DC1 上建的 DNS 区域，第 17 课才升级为域控。</li>
+  <li><b>DC1 自己也能解析：</b>DC1 的 Lab 网卡 DNS 指向 127.0.0.1（自己），所以在 DC1 上也能用名字访问站点。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 08 任务1 IIS 绑定 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 24′ · DC1</span></span><h2>添加 HRPortal，并给 CompanySite 加主机名</h2><button class="more" data-pop="pop-l10-09-steps">📋 详细步骤</button><button class="more" data-pop="pop-l10-09-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>IIS 管理器 inetmgr</span><i>›</i><span>网站</span><i>›</i><span>右键 · 添加网站</span></div>
+    <table class="tbl">
+      <tr><th>站点</th><th>物理路径</th><th>类型 / 端口</th><th>主机名</th></tr>
+      <tr><td><b>HRPortal</b>（新建）</td><td>C:\WebSites\HRPortal</td><td>http / 80</td><td>hr.lab.local</td></tr>
+      <tr><td><b>CompanySite</b>（修改）</td><td>不变</td><td>http / 80</td><td>www.lab.local</td></tr>
+    </table>
+    <div class="crumb"><span>CompanySite</span><i>›</i><span>右侧 · 绑定…</span><i>›</i><span>http 80 · 编辑 / 添加</span><i>›</i><span>主机名 www.lab.local</span></div>
+    <div class="callout"><b>检查：</b>两个站点状态都应为"已启动"，没有绑定冲突提示。</div>
+  </div>
+</div>
+<aside class="notes">主机名必须完整填写 hr.lab.local，不要带 http:// 或末尾斜杠。原文写的是"添加主机名"：如果在原 *:80 绑定上直接编辑，用 IP 访问 80 端口将不再打开 CompanySite；如果是新增一条绑定，则 IP 访问仍落到 CompanySite。两种都能通过检查，可让学生对比结果。</aside>
+
+<template id="pop-l10-09-steps">
+<h3>📋 详细步骤：两个站点共用 80 端口</h3>
+<h4>第一步：新建 HRPortal</h4>
+<ol>
+  <li><code>inetmgr</code> → 左侧右键「网站」→「添加网站」</li>
+  <li>网站名称 <code>HRPortal</code>；物理路径 <code>C:\WebSites\HRPortal</code></li>
+  <li>绑定：http、全部未分配、80、主机名 <code>hr.lab.local</code> → 确定</li>
+</ol>
+<h4>第二步：给 CompanySite 填主机名</h4>
+<ol>
+  <li>左侧选中 <b>CompanySite</b> → 右侧「操作」→「<b>绑定…</b>」</li>
+  <li>选中 <code>http  80  *</code> 那一行 →「编辑」→ 主机名填 <code>www.lab.local</code> → 确定 → 关闭</li>
+</ol>
+<h4>第三步：确认</h4>
+<pre>Import-Module WebAdministration
+Get-WebBinding | Format-Table protocol, bindingInformation</pre>
+<p>应看到 <code>*:80:www.lab.local</code> 和 <code>*:80:hr.lab.local</code>。第一行 <code>*:80:</code> 是已停止的 Default Web Site，不影响。</p>
+<div class="tip">主机名只写 <code>hr.lab.local</code>，<b>不要</b>带 <code>http://</code> 或末尾 <code>/</code>，否则对话框报"主机名无效"。</div>
+</template>
+<template id="pop-l10-09-why">
+<h3>💡 每项为什么："编辑" 还是 "添加"？（实测）</h3>
+<table class="tbl">
+<tr><th style="width:30%">做法</th><th>CompanySite 绑定</th><th>用 IP 访问 http://10.10.10.10</th></tr>
+<tr><td>编辑原绑定（本页步骤）</td><td><code>*:80:www.lab.local</code></td><td><b>404</b>——没有站点接住 Host=IP 的请求</td></tr>
+<tr><td>再添加一条</td><td><code>*:80:</code> + <code>*:80:www.lab.local</code></td><td>仍打开 CompanySite（它是"兜底"站点）</td></tr>
+</table>
+<ul>
+  <li>两种做法检查脚本都认可。编辑后 IP 访问返回 404，正好演示概念 2：<b>Host 头决定去哪个站</b>。</li>
+  <li><b>为什么不会冲突？</b>三个绑定 IP 和端口相同，但主机名不同，组合依然唯一。</li>
+  <li><b>IIS 匹配顺序：</b>先找主机名完全匹配的绑定，找不到才用主机名为空的绑定，都没有就返回 404。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 09 任务1 测试 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 1 验证</span><h2>在 CLIENT1 上按名字访问</h2><button class="more" data-pop="pop-l10-10-steps">📋 详细步骤</button></div>
+  <div class="body">
+    <div class="code-cap">在 CLIENT1（VM3）上，先确认 DNS 指向 10.10.10.10</div>
+<pre><code class="language-powershell" data-trim>
+Resolve-DnsName www.lab.local
+Resolve-DnsName hr.lab.local
+</code></pre>
+    <table class="tbl">
+      <tr><th>浏览器访问</th><th>看到这个说明成功</th></tr>
+      <tr><td>http://www.lab.local</td><td>CompanySite 的首页</td></tr>
+      <tr><td>http://hr.lab.local</td><td>标题 "HR Portal"</td></tr>
+    </table>
+    <div class="callout warn">解析不对时，原文允许改 hosts 临时代替，但<b>优先修 DNS</b>。</div>
+  </div>
+</div>
+<aside class="notes">两条 Resolve-DnsName 都应返回 10.10.10.10。如果返回失败，先 ipconfig /all 看 DNS 服务器，再 ipconfig /flushdns。浏览器可能缓存旧页面，用 Ctrl+F5 强制刷新。CompanySite 首页可能显示第 9 课设置的 home.html，这是默认文档顺序导致的，属正常。</aside>
+
+<template id="pop-l10-10-steps">
+<h3>📋 详细步骤：CLIENT1 验证</h3>
+<h4>第一步：确认 DNS 指向 DC1</h4>
+<pre>ipconfig /all          # Lab 网卡的 "DNS 服务器" 应为 10.10.10.10
+ipconfig /flushdns     # 清掉之前可能缓存的"查无此名"
+Resolve-DnsName www.lab.local
+Resolve-DnsName hr.lab.local</pre>
+<p>两条都返回 <code>10.10.10.10</code>。</p>
+<h4>第二步：浏览器访问</h4>
+<ul>
+  <li><code>http://www.lab.local</code> → 显示 <b>This is home.html</b>（第 9 课设置的默认文档，正常）</li>
+  <li><code>http://hr.lab.local</code> → 标题 <b>HR Portal</b></li>
+  <li>对比：<code>http://10.10.10.10</code> → <b>404</b>（见上一页"为什么"）</li>
+</ul>
+<div class="tip">命令行也能测：<code>(Invoke-WebRequest http://hr.lab.local -UseBasicParsing).Content</code>，输出开头的 <code>???</code> 是 UTF-8 BOM，无害。<br>浏览器 F12 → 网络 → 点请求 → 请求标头里能看到 <code>Host: hr.lab.local</code>。</div>
+</template>
+
+</section>
+
+<!-- 10 任务2 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 12′ · DC1</span></span><h2>基于端口的第三个站点 DevSite</h2><button class="more" data-pop="pop-l10-11-steps">📋 详细步骤</button><button class="more" data-pop="pop-l10-11-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+mkdir C:\WebSites\DevSite
+"&lt;html&gt;&lt;body&gt;&lt;h1&gt;Dev Environment&lt;/h1&gt;&lt;/body&gt;&lt;/html&gt;" |
+  Out-File C:\WebSites\DevSite\index.html -Encoding UTF8
+</code></pre>
+    <div class="crumb"><span>网站</span><i>›</i><span>添加网站</span><i>›</i><span>名称 DevSite · 端口 8080 · 主机名留空</span></div>
+<pre><code class="language-powershell" data-trim>
+New-NetFirewallRule -DisplayName "Allow HTTP 8080" `
+  -Direction Inbound -Protocol TCP `
+  -LocalPort 8080 -Action Allow
+</code></pre>
+    <div class="callout"><b>测试：</b>CLIENT1 浏览器访问 <code>http://10.10.10.10:8080</code> → "Dev Environment"</div>
+  </div>
+</div>
+<aside class="notes">IIS 安装时只自动放行 80/443，自定义端口必须手动开防火墙，否则本机 localhost:8080 能打开、CLIENT1 打不开——这是本任务最典型的现象。提问：端口方式和主机头方式各有什么缺点？（端口方式要记端口号、要开防火墙；主机头方式依赖 DNS）</aside>
+
+<template id="pop-l10-11-steps">
+<h3>📋 详细步骤：DevSite :8080</h3>
+<h4>第一步：内容</h4>
+<pre>mkdir C:\WebSites\DevSite
+"&lt;html&gt;&lt;body&gt;&lt;h1&gt;Dev Environment&lt;/h1&gt;&lt;/body&gt;&lt;/html&gt;" |
+  Out-File C:\WebSites\DevSite\index.html -Encoding UTF8</pre>
+<h4>第二步：添加站点</h4>
+<ol>
+  <li><code>inetmgr</code> → 右键「网站」→「添加网站」</li>
+  <li>名称 <code>DevSite</code>、路径 <code>C:\WebSites\DevSite</code>、端口 <b>8080</b>、主机名<b>留空</b> → 确定</li>
+</ol>
+<h4>第三步：先别开防火墙，对比一下</h4>
+<ul>
+  <li>DC1 上：<code>(Invoke-WebRequest http://localhost:8080 -UseBasicParsing).StatusCode</code> → 200</li>
+  <li>CLIENT1 上：<code>Test-NetConnection 10.10.10.10 -Port 8080</code> → <b>False</b>（被防火墙挡）</li>
+</ul>
+<h4>第四步：放行 8080，再测</h4>
+<pre>New-NetFirewallRule -DisplayName "Allow HTTP 8080" `
+  -Direction Inbound -Protocol TCP `
+  -LocalPort 8080 -Action Allow</pre>
+<p>CLIENT1 浏览器 <code>http://10.10.10.10:8080</code> → <b>Dev Environment</b>。</p>
+</template>
+<template id="pop-l10-11-why">
+<h3>💡 每项为什么：端口与防火墙</h3>
+<ul>
+  <li><b>为什么 80 不用开、8080 要开？</b>安装 IIS 时自动建了「万维网服务(HTTP 流量入站)」和「(HTTPS 流量入站)」两条规则，只管 80 和 443。</li>
+  <li><b>为什么本机能开、客户端打不开？</b>防火墙只过滤<b>外来</b>连接，本机访问 localhost 不经过入站规则。这是排障时判断"是不是防火墙"的最快办法。</li>
+  <li><b>DevSite 主机名为什么留空？</b>8080 端口上只有它一个站点，不需要靠名字区分；用 IP 或任何名字加 :8080 都能打开。</li>
+  <li><b>端口方式的缺点：</b>用户要记端口号；每加一个端口就要多开一个防火墙口子。所以对外服务优先用主机头。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 11 任务3 虚拟目录 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>给 CompanySite 挂上虚拟目录 /shared</h2><button class="more" data-pop="pop-l10-12-steps">📋 详细步骤</button><button class="more" data-pop="pop-l10-12-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+mkdir C:\SharedDocs
+"Shared Document" | Out-File C:\SharedDocs\shared.txt
+</code></pre>
+    <div class="crumb"><span>IIS 管理器</span><i>›</i><span>CompanySite</span><i>›</i><span>右键 · 添加虚拟目录</span></div>
+    <div class="grid2">
+      <div class="card"><h3>别名</h3><code>shared</code></div>
+      <div class="card"><h3>物理路径</h3><code>C:\SharedDocs</code></div>
+    </div>
+    <div class="callout"><b>测试：</b><code>http://www.lab.local/shared/shared.txt</code> → 显示 "Shared Document"</div>
+  </div>
+</div>
+<aside class="notes">注意 C:\SharedDocs 在站点目录之外，这正是虚拟目录的意义。若访问报 401 或 500，多半是 IIS_IUSRS 对该文件夹没有读取权限，可以联系第 6 课的 NTFS 权限知识排查。添加后在管理器左侧树中 CompanySite 下会出现带快捷方式图标的 shared。</aside>
+
+<template id="pop-l10-12-steps">
+<h3>📋 详细步骤：虚拟目录 /shared</h3>
+<h4>第一步：站点外的目录</h4>
+<pre>mkdir C:\SharedDocs
+"Shared Document" | Out-File C:\SharedDocs\shared.txt</pre>
+<h4>第二步：添加虚拟目录</h4>
+<ol>
+  <li><code>inetmgr</code> → 左侧右键 <b>CompanySite</b> →「<b>添加虚拟目录</b>」（不是"添加应用程序"）</li>
+  <li>别名 <code>shared</code>；物理路径 <code>C:\SharedDocs</code> → 确定</li>
+  <li>左侧 CompanySite 下出现带快捷方式箭头的 <b>shared</b></li>
+</ol>
+<h4>第三步：访问</h4>
+<p>CLIENT1 浏览器 <code>http://www.lab.local/shared/shared.txt</code> → <b>Shared Document</b>。</p>
+<pre>Get-WebVirtualDirectory -Site CompanySite   # 命令行确认</pre>
+<div class="tip">试试 <code>http://hr.lab.local/shared/shared.txt</code> → <b>404</b>：虚拟目录只属于 CompanySite，HRPortal 里没有。</div>
+</template>
+<template id="pop-l10-12-why">
+<h3>💡 每项为什么：虚拟目录</h3>
+<ul>
+  <li><b>为什么不需要另外授权？</b>C:\SharedDocs 继承了 C:\ 的权限，其中 <code>BUILTIN\Users:(RX)</code> 已包含 IIS 匿名访问用的账户，所以直接能读。若你把它的继承禁用了、或放到受限目录下，才会出现 401/500，这时给 <code>IIS_IUSRS</code> 读取权限。</li>
+  <li><b>shared.txt 显示正常吗？</b>Out-File 没写 -Encoding，文件是 UTF-16。浏览器靠 BOM 识别，显示正常；但用命令行抓取会看到字母之间有空格——这就是编码的区别。</li>
+  <li><b>虚拟目录 vs 应用程序：</b>应用程序会多一个独立的应用程序池，适合部署独立的程序；只是挂文件夹用虚拟目录就够了。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 12 任务3 PowerShell -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 20′ · DC1</span></span><h2>用 PowerShell 查看站点与绑定</h2><button class="more" data-pop="pop-l10-13-steps">📋 详细步骤</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Import-Module WebAdministration
+Get-Website | Format-Table Name, ID, State, PhysicalPath
+Get-WebBinding | Format-Table
+</code></pre>
+    <table class="tbl">
+      <tr><th>站点</th><th>State</th><th>绑定 bindingInformation</th></tr>
+      <tr><td>CompanySite</td><td>Started</td><td>*:80:www.lab.local</td></tr>
+      <tr><td>HRPortal</td><td>Started</td><td>*:80:hr.lab.local</td></tr>
+      <tr><td>DevSite</td><td>Started</td><td>*:8080:</td></tr>
+    </table>
+    <div class="callout">绑定格式就是概念 1 的三要素：<code>IP:端口:主机名</code></div>
+  </div>
+</div>
+<aside class="notes">表格是预期结果示意；Default Web Site 在第 9 课已停止，会显示 Stopped。若 CompanySite 还保留了 *:80: 绑定，也会一并列出。可以补充只读命令 Get-WebVirtualDirectory -Site CompanySite 查看 /shared。</aside>
+
+<template id="pop-l10-13-steps">
+<h3>📋 详细步骤：PowerShell 查看（实测输出）</h3>
+<pre>Import-Module WebAdministration
+Get-Website | Format-Table Name, ID, State, PhysicalPath
+Get-WebBinding | Format-Table</pre>
+<h4>Get-Website 应看到</h4>
+<pre>name             id state   physicalPath
+Default Web Site  1 Stopped %SystemDrive%\inetpub\wwwroot
+CompanySite       2 Started C:\WebSites\CompanySite
+HRPortal          3 Started C:\WebSites\HRPortal
+DevSite           4 Started C:\WebSites\DevSite</pre>
+<h4>Get-WebBinding 应看到</h4>
+<pre>protocol bindingInformation
+http     *:80:                ← Default Web Site（已停止）
+http     *:80:www.lab.local
+http     *:80:hr.lab.local
+http     *:8080:</pre>
+<div class="tip">Get-WebBinding 的输出<b>不显示站点名</b>，按 ID 顺序排列。想看是哪个站的：<code>Get-WebBinding -Name HRPortal</code>。</div>
+</template>
+
+</section>
+
+<!-- 13 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>站点打不开？按这个顺序查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>浏览器"找不到服务器"</td><td>CLIENT1 解析不到名字</td><td>DNS 指向 10.10.10.10，<code>ipconfig /flushdns</code></td></tr>
+      <tr><td>hr.lab.local 打开的是公司首页</td><td>HRPortal 主机名没填对</td><td>检查绑定是否为 hr.lab.local</td></tr>
+      <tr><td>站点启动失败，提示端口被占用</td><td>两个站点同为 *:80 且无主机名</td><td>先给 CompanySite 加主机名</td></tr>
+      <tr><td>本机 8080 能开，CLIENT1 不能</td><td>防火墙没放行</td><td>检查 "Allow HTTP 8080" 规则</td></tr>
+      <tr><td>/shared 报 401 / 500</td><td>IIS 无权读 C:\SharedDocs</td><td>给 IIS_IUSRS 读取权限</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">先让学生判断故障在哪一层：名字解析、网络连通、IIS 绑定、文件权限。"打开的是别的站"一定是绑定问题，不是 DNS 问题，这一点要反复强调。</aside>
+</section>
+
+<!-- 14 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>任务 4 · 16′ · 对照清单自查</h2><button class="more" data-pop="pop-l10-15-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>3 个站点运行中（CompanySite、HRPortal、DevSite）</li>
+        <li>www.lab.local 解析正确</li>
+        <li>hr.lab.local 解析正确</li>
+        <li>端口 8080 站点可访问</li>
+        <li>/shared 虚拟目录存在</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>DC1 拍快照<br><code>Lesson10-Done</code></p>
+        <p class="small muted" style="margin-top:8px">下节课 HTTPS 从这里开始</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对清单。任一项不达成就回到排障表对照。清单达成后运行 check10.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。第 11 课要给 www 和 hr 两个主机名签证书、给 HRPortal 加 IP 限制，所以三个站点和两条 DNS 记录必须保留。</aside>
+
+<template id="pop-l10-15-check">
+<h3>🧪 运行检查脚本 check10.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check10.ps1</pre>
+<h4>脚本检查什么（15 项判定 + 2 项采集）</h4>
+<ul>
+  <li><b>任务 1：</b>www / hr 两条 A 记录、HRPortal 路径与绑定 hr.lab.local、CompanySite 绑定 www.lab.local、按名字访问两个站点分别得到正确内容</li>
+  <li><b>任务 2：</b>DevSite 绑定 *:8080、防火墙规则 Allow HTTP 8080、10.10.10.10:8080 返回 Dev Environment</li>
+  <li><b>任务 3：</b>/shared 是<b>虚拟目录</b>且指向 C:\SharedDocs（建成"应用程序"会提示需关注）、/shared/shared.txt 可访问</li>
+  <li><b>汇总：</b>三个站点都是 Started</li>
+</ul>
+<div class="tip">脚本在 DC1 上直接带 Host 头访问 10.10.10.10，等于模拟 CLIENT1 的请求。报告在 <code>C:\LabFiles\Reports\</code>，提交 PDF 后拍快照 <code>Lesson10-Done</code>。</div>
+</template>
+
+</section>
+
+<!-- 15 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">一台服务器、一个 IP 承载多个网站，节省资源</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">主机头 / 端口区分站点；虚拟目录映射外部路径</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">绑定 = <code>IP:端口:主机名</code>；主机头还依赖 DNS</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 11 课：</b>IIS 安全加固。给 www/hr.lab.local 配 HTTPS 证书、HTTP 跳转、IP 限制与请求过滤。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check10.ps1" download>check10.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check10.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. hr.lab.local 打开了公司首页，查 DNS 还是查绑定？2. 8080 站点只有本机能打开，原因是什么？3. 虚拟目录和普通子文件夹有什么区别？</aside>
+</section>
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

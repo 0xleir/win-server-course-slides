@@ -262,7 +262,7 @@ whoami /priv
 <!-- 09 任务2 UAC 级别 + 注册表 -->
 <section>
 <div class="frame">
-  <div class="head"><span class="chip lab">任务 2 <span class="t">· 16′ · DC1</span></span><h2>UAC 的 4 个级别与注册表</h2></div>
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 16′ · DC1</span></span><h2>UAC 的 4 个级别与注册表</h2><button class="more" data-pop="pop-l05-09-steps">📋 详细步骤</button><button class="more" data-pop="pop-l05-09-why">💡 每项为什么</button></div>
   <div class="body">
     <div class="code-cap">运行 UserAccountControlSettings.exe，拖动滑块观察 4 档</div>
     <div class="timeline">
@@ -281,6 +281,40 @@ Get-ItemProperty -Path $k |
   </div>
 </div>
 <aside class="notes">原文是一行长命令，这里把路径存进变量 $k，效果完全相同。观察滑块时只看不改，最后保持默认档。EnableLUA=1 表示 UAC 开启；ConsentPromptBehaviorAdmin 默认 5（对非 Windows 程序提示同意）；PromptOnSecureDesktop=1 表示暗屏。</aside>
+<template id="pop-l05-09-steps">
+  <h3>📋 详细步骤：UAC 的 4 个级别与注册表</h3>
+  <h4>第一步：打开 UAC 滑块面板</h4>
+  <ol>
+    <li>按 <code>Win+R</code>，输入 <code>UserAccountControlSettings.exe</code>，回车</li>
+    <li>看到一个竖直滑块，从上到下共 4 档：始终通知 / 仅更改时通知（默认）/ 同上但不暗屏 / 从不通知</li>
+  </ol>
+  <div class="tip">这一步只是<b>观察</b>，拖动滑块看看说明文字就行，<b>最后把滑块放回默认档</b>（第二档），不要真的改动，点"取消"退出面板。</div>
+  <h4>第二步：用 PowerShell 读对应的注册表值</h4>
+<pre>$k = "HKLM:\SOFTWARE\Microsoft\Windows\" +
+     "CurrentVersion\Policies\System"
+Get-ItemProperty -Path $k |
+  Select-Object EnableLUA, ConsentPromptBehaviorAdmin,
+                PromptOnSecureDesktop</pre>
+  <p>默认档应显示：<code>EnableLUA=1</code>、<code>ConsentPromptBehaviorAdmin=5</code>、<code>PromptOnSecureDesktop=1</code>。</p>
+  <h4>第三步：把滑块档位和注册表值对应起来</h4>
+  <table>
+    <tr><th>滑块档位</th><th>ConsentPromptBehaviorAdmin</th><th>PromptOnSecureDesktop</th></tr>
+    <tr><td>始终通知</td><td>2</td><td>1</td></tr>
+    <tr><td>仅更改时通知（默认）</td><td>5</td><td>1</td></tr>
+    <tr><td>同上，不暗屏</td><td>5</td><td>0</td></tr>
+    <tr><td>从不通知</td><td>0</td><td>0</td></tr>
+  </table>
+</template>
+<template id="pop-l05-09-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">配置项</th><th>意义</th></tr>
+    <tr><td><code>EnableLUA</code></td><td>UAC 总开关，<code>1</code>=启用。关掉后管理员执行任何操作都不再提权确认，等于回到 Windows XP 时代"永久以管理员身份运行"，安全性大幅下降，不建议关闭。</td></tr>
+    <tr><td><code>ConsentPromptBehaviorAdmin</code></td><td>管理员账户触发提权时的提示方式。<code>5</code>=默认档（非 Windows 自带程序才提示，Windows 自己的管理工具不打断）；<code>2</code>=始终提示（最严格）；<code>0</code>=不提示直接提权（最危险）。</td></tr>
+    <tr><td><code>PromptOnSecureDesktop</code></td><td>提权确认框是否在"安全桌面"（屏幕变暗、独立于普通窗口）里弹出。<code>1</code>=是，能防止恶意程序模拟点击"确定"；<code>0</code>=否，提权框和普通窗口一样，理论上更容易被恶意脚本干扰。</td></tr>
+    <tr><td>为什么保持默认档</td><td>默认档是微软在"安全"和"不过度打扰"之间权衡的结果——完全关闭通知会让任何恶意程序都能静默获得管理员权限；始终通知又会让日常操作（比如 Windows 自带的"磁盘清理"）也频繁弹窗，用户容易"看都不看就点确定"而失去警觉。</td></tr>
+  </table>
+</template>
 </section>
 
 <!-- 10 任务2 组策略 -->

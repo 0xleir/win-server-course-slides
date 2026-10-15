@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第9课 · IIS 安装与静态网站</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 4 · 网站管理　|　第 9 次课 · 学时 17–18</p>
+  <h1>IIS 安装与静态网站</h1>
+  <p class="muted">把 DC1 变成一台能对外提供网页的 Web 服务器</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM3</span></div>
+</div>
+<aside class="notes">开场提问：你在浏览器输入一个网址，到页面显示出来，中间是谁在"回答"你？今天我们自己搭这个"回答者"——IIS。本课是项目 4 网站管理的第一课，后面的多站点、HTTPS、Web 安全都建立在今天的站点之上。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>概念</b>Web 请求过程<br>IIS 架构</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 1</b>安装 IIS</div>
+      <div class="seg" style="flex:24"><span class="t">24′</span><b>任务 2</b>部署 CompanySite</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 3</b>目录浏览<br>默认文档</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 4</b>验证</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清楚一次 HTTP 请求在 IIS 中经过了哪些环节</li>
+        <li>用 PowerShell 安装 IIS，并在 IIS 管理器中新建站点</li>
+        <li>配置目录浏览和默认文档，并能解释页面"为什么显示这个"</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念讲解控制在 10 分钟内。任务 2 最耗时，主要卡在用 here-string 生成 HTML 文件和 IIS 管理器的添加网站对话框。提醒学生：本课还没有域，访问一律用 IP 10.10.10.10。</aside>
+</section>
+
+<!-- 02b 概念：教材补充 IIS 功能与版本 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>IIS 是什么 · 版本与 Windows 的对应</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>IIS 的功能</h3>
+        <ul class="points">
+          <li>Windows 自带的互联网信息服务（Internet Information Services）</li>
+          <li>提供 Web（HTTP/HTTPS）、FTP 等网络发布服务</li>
+          <li>通过"服务器管理器 → 添加角色"安装"Web 服务器(IIS)"</li>
+          <li>用 IIS 管理器统一配置站点、绑定与权限</li>
+        </ul>
+      </div>
+      <table class="tbl">
+        <tr><th>IIS 版本</th><th>对应 Windows</th></tr>
+        <tr><td>IIS 7.0</td><td>Windows Server 2008 / Vista / 7</td></tr>
+        <tr><td>IIS 8.0</td><td>Windows Server 2012</td></tr>
+        <tr><td>IIS 10</td><td>Windows Server 2016 / 2019 / 2022</td></tr>
+      </table>
+    </div>
+    <div class="callout"><b>本课环境：</b>Windows Server 2022 自带 <b>IIS 10</b>（教材截图是 2019，界面基本一致）。</div>
+  </div>
+</div>
+<aside class="notes">这页补充教材里的"必备知识"：IIS 全称 Internet Information Services，是 Windows 自带的互联网信息服务，主要用来对外发布网站和 FTP 服务，安装方式是在服务器管理器里添加"Web 服务器(IIS)"这个角色，装好后用 IIS 管理器来配置站点和参数。IIS 的版本和 Windows 版本是绑定的：Windows Server 2008 对应 IIS 7，2012 对应 IIS 8，2016 和 2019 都用 IIS 10。只要记住"换系统就换 IIS 版本、功能越新越强"即可。我们今天用的 Windows Server 2022 自带的同样是 IIS 10（教材用 2019，界面几乎一样）。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · Web 服务器<br>IIS · 站点 CompanySite</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3 · Win10 客户端<br>浏览器访问 http://10.10.10.10</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>服务端：</b>DC1 监听 TCP 80 端口，网站文件在 <code>C:\WebSites\CompanySite</code></div>
+      <div class="callout"><b>客户端：</b>CLIENT1 只需要浏览器，能 ping 通 10.10.10.10 即可</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">本课只用 VM1 和 VM3，SVR2 可以不开机以节省资源。开始前让学生在 CLIENT1 上 ping 10.10.10.10，确认网络通，否则任务 2 的远程访问一定失败。</aside>
+</section>
+
+<!-- 04 概念：一次 Web 请求 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>浏览器打开网页时发生了什么</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>① 浏览器</b>输入<br><code>http://10.10.10.10</code></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② TCP 连接</b>目标端口 80</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>③ IIS 匹配绑定</b>IP + 端口 + 主机名<br>→ 找到站点</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 读取文件</b>物理路径下的<br>index.html</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>⑤ 返回响应</b>状态码 200<br>+ 页面内容</div>
+    </div>
+    <table class="tbl">
+      <tr><th>状态码</th><th>含义</th><th>本课何时会遇到</th></tr>
+      <tr><td><b>200</b></td><td>成功</td><td>页面正常显示</td></tr>
+      <tr><td><b>403</b></td><td>禁止访问</td><td>目录里没有默认文档，且未开目录浏览</td></tr>
+      <tr><td><b>404</b></td><td>找不到</td><td>URL 写错，或文件不在物理路径下</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">重点是第 ③ 步：IIS 靠"绑定"决定把请求交给哪个站点，这是下节课多站点的基础。状态码表后面排障会反复用到，可以提问：如果页面显示 403，你第一反应查什么？</aside>
+</section>
+
+<!-- 05 概念：IIS 结构 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>IIS 的层级结构</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">IIS 服务器（W3SVC 服务）</div>
+        <div class="nest">
+          <div class="lbl">站点 CompanySite · 绑定 *:80</div>
+          <span class="obj">📄 index.html</span><span class="obj">📄 home.html</span>
+          <div class="nest"><div class="lbl">目录 /docs</div><span class="obj">📄 file1.txt</span><span class="obj">📄 file2.txt</span></div>
+        </div>
+        <div class="nest"><div class="lbl">站点 Default Web Site（今天停用）</div></div>
+      </div>
+      <table class="tbl">
+        <tr><th>名词</th><th>含义</th></tr>
+        <tr><td><b>W3SVC</b></td><td>IIS 的 Web 发布服务，停了所有站点都不可用</td></tr>
+        <tr><td><b>站点</b></td><td>一个独立网站，有名称、物理路径、绑定</td></tr>
+        <tr><td><b>物理路径</b></td><td>站点根目录在磁盘上的位置</td></tr>
+        <tr><td><b>绑定</b></td><td>协议 + IP + 端口 + 主机名，决定"谁来接请求"</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+<aside class="notes">强调：两个站点不能使用完全相同的绑定，所以今天要先停用 Default Web Site，再让 CompanySite 占用 80 端口。应用程序池、虚拟目录下节课再讲，这里只提一句它们存在。</aside>
+</section>
+
+<!-- 06 概念：访问 / 时返回什么 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>只输入目录时，IIS 返回什么？</h2></div>
+  <div class="body">
+    <p class="muted">请求 <code>http://10.10.10.10/</code> 或 <code>/docs/</code>，没有指定文件名：</p>
+    <div class="flow">
+      <div class="node"><b>① 查默认文档</b>按列表顺序找<br>home.html、index.html…</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 找到第一个</b>就返回它<br>（200）</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>③ 都没有？</b>看目录浏览<br>是否启用</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>④ 启用</b>返回文件列表<br><b>未启用</b>返回 403</div>
+    </div>
+    <div class="grid2">
+      <div class="card good"><h3>默认文档</h3><p class="small">决定"首页是哪个文件"，顺序很重要</p></div>
+      <div class="card bad"><h3>目录浏览</h3><p class="small">方便下载文件，但会暴露目录内容，生产环境慎用</p></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">这页直接对应任务 3。提问：如果 index.html 和 home.html 都存在，显示哪个？答案取决于默认文档列表的顺序。目录浏览会泄露文件名，项目 7 讲 Web 安全时会再提到信息泄露问题。</aside>
+</section>
+
+<!-- 07 任务1 安装 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 16′ · DC1</span></span><h2>安装 IIS（含常用子功能）</h2><button class="more" data-pop="pop-l09-08-steps">📋 详细步骤</button><button class="more" data-pop="pop-l09-08-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 DC1 上，以管理员身份运行 PowerShell</div>
+<pre><code class="language-powershell" data-trim>
+Install-WindowsFeature Web-Server -IncludeManagementTools
+
+Install-WindowsFeature Web-Asp-Net45, Web-CGI, `
+  Web-ISAPI-Ext, Web-ISAPI-Filter, Web-Basic-Auth, `
+  Web-Windows-Auth, Web-Filtering, Web-IP-Security, `
+  Web-Stat-Compression, Web-Log-Libraries
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>Web-Server</b> 是 IIS 本体；<b>-IncludeManagementTools</b> 带上 IIS 管理器 inetmgr。</div>
+      <div class="callout warn"><b>反引号 ` 是续行符</b>，后面不能有空格；子功能名用逗号分隔。</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">第二条命令装的是后续课程要用的组件：身份验证（第 11 课左右）、IP 限制、请求筛选、压缩、日志。今天的静态网站其实只需要第一条，但一次装齐避免后面反复安装。安装约 2–3 分钟，一般不需要重启，留意输出中的 Restart Needed 列。</aside>
+
+<template id="pop-l09-08-steps">
+<h3>📋 详细步骤：安装 IIS</h3>
+<div class="tip">在 <b>DC1</b> 上：开始菜单右键 →「Windows PowerShell(管理员)」。两条命令依次执行，各约 1–2 分钟。</div>
+<h4>第一步：装 IIS 本体 + 管理器</h4>
+<pre>Install-WindowsFeature Web-Server -IncludeManagementTools</pre>
+<p>输出表格里 <code>Success</code> 列为 <b>True</b>、<code>Restart Needed</code> 列为 <b>No</b> 即成功，不用重启。</p>
+<h4>第二步：装常用子功能（后面几课要用）</h4>
+<pre>Install-WindowsFeature Web-Asp-Net45, Web-CGI, `
+  Web-ISAPI-Ext, Web-ISAPI-Filter, Web-Basic-Auth, `
+  Web-Windows-Auth, Web-Filtering, Web-IP-Security, `
+  Web-Stat-Compression, Web-Log-Libraries</pre>
+<p>同样看 Success = True。输出最后一列中文会显示 ASP.NET 4.8、基本身份验证 等。</p>
+<h4>也可以用图形界面（效果相同）</h4>
+<ol>
+  <li>服务器管理器 →「管理」→「添加角色和功能」→ 一路下一步到「服务器角色」</li>
+  <li>勾选「<b>Web 服务器(IIS)</b>」→ 弹窗点「添加功能」（这一步就是 -IncludeManagementTools）</li>
+  <li>到「角色服务」页，再勾上：ASP.NET 4.8、CGI、ISAPI 扩展/筛选器、基本身份验证、Windows 身份验证、请求筛选、IP 和域限制、静态内容压缩、日志记录工具 → 安装</li>
+</ol>
+<div class="tip">安装 IIS 时会<b>自动创建并启用</b>防火墙入站规则「万维网服务(HTTP 流量入站)」，所以后面 CLIENT1 通常直接能访问。</div>
+</template>
+<template id="pop-l09-08-why">
+<h3>💡 每项为什么：安装选项</h3>
+<table class="tbl">
+<tr><th style="width:34%">组件</th><th>为什么要装</th></tr>
+<tr><td><code>Web-Server</code></td><td>IIS 本体：W3SVC 服务、静态内容、默认文档、目录浏览、HTTP 日志（今天全用到）</td></tr>
+<tr><td><code>-IncludeManagementTools</code></td><td>带上 IIS 管理器 <code>inetmgr</code>；不加的话只有命令行，任务 2 的图形操作做不了</td></tr>
+<tr><td><code>Web-Filtering</code> / <code>Web-IP-Security</code></td><td>请求筛选、IP 地址限制——第 11 课加固用</td></tr>
+<tr><td><code>Web-Basic-Auth</code> / <code>Web-Windows-Auth</code></td><td>基本 / Windows 身份验证——FTP 和受保护站点用</td></tr>
+<tr><td><code>Web-Asp-Net45</code> / CGI / ISAPI</td><td>运行动态网页的能力；静态站不需要，但后面 Web 安全课会讲到</td></tr>
+<tr><td><code>Web-Log-Libraries</code></td><td>额外的日志工具，排障和审计看访问记录</td></tr>
+</table>
+<div class="tip">一次装齐的好处：后面每课都不用再等安装。<b>坏处</b>也要知道：装的组件越多、攻击面越大——生产服务器"用什么装什么"。</div>
+</template>
+
+</section>
+
+<!-- 08 任务1 验证 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 1 验证</span><h2>IIS 装好了吗？</h2><button class="more" data-pop="pop-l09-09-steps">📋 详细步骤</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Get-WindowsFeature Web-* | Where-Object {$_.Installed}
+Get-Service W3SVC | Format-Table Name, Status
+</code></pre>
+    <table class="tbl">
+      <tr><th>检查</th><th>看到这个说明成功</th></tr>
+      <tr><td><code>Get-WindowsFeature</code></td><td>列出 Web-Server 及刚装的子功能，前面是 [X]</td></tr>
+      <tr><td><code>Get-Service W3SVC</code></td><td>Status = <b>Running</b></td></tr>
+      <tr><td>DC1 浏览器打开 <code>http://localhost</code></td><td>出现 IIS 默认欢迎页（蓝色 IIS 图标）</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">W3SVC 是"万维网发布服务"，IIS 站点都靠它运行。看到欢迎页说明 Default Web Site 已经在 80 端口工作——这正是任务 2 要先把它停掉的原因。服务器版 IE 增强安全配置可能弹出提示，localhost 一般可直接访问。</aside>
+
+<template id="pop-l09-09-steps">
+<h3>📋 详细步骤：确认 IIS 已安装</h3>
+<h4>命令行检查</h4>
+<pre>Get-WindowsFeature Web-* | Where-Object {$_.Installed}
+Get-Service W3SVC | Format-Table Name, Status</pre>
+<ul>
+  <li>第一条：列表里有 Web-Server、Web-Mgmt-Console 以及刚装的子功能，最前面是 <b>[X]</b></li>
+  <li>第二条：<code>W3SVC  Running</code></li>
+</ul>
+<h4>浏览器检查</h4>
+<ol>
+  <li>DC1 上打开 Edge → 地址栏输入 <code>http://localhost</code></li>
+  <li>看到蓝色的 IIS 欢迎页 = 默认站点 Default Web Site 在 80 端口工作</li>
+</ol>
+<div class="tip">首次打开 Edge 会出欢迎向导，点「跳过/不登录」即可。也可以不用浏览器：<code>(Invoke-WebRequest http://localhost -UseBasicParsing).StatusCode</code> 返回 200 一样说明成功。</div>
+</template>
+
+</section>
+
+<!-- 09 任务2 网站文件 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 24′ · DC1</span></span><h2>准备网站文件</h2><button class="more" data-pop="pop-l09-10-steps">📋 详细步骤</button><button class="more" data-pop="pop-l09-10-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">先建目录：<code>mkdir C:\WebSites\CompanySite</code>，再生成首页</div>
+<pre><code class="language-powershell" data-trim>
+$html = @"
+&lt;!DOCTYPE html&gt;&lt;html&gt;&lt;head&gt;&lt;title&gt;Lab Company&lt;/title&gt;&lt;/head&gt;
+&lt;body&gt;&lt;h1&gt;Welcome to Lab Company&lt;/h1&gt;
+&lt;p&gt;Server: DC1 | IP: 10.10.10.10&lt;/p&gt;
+&lt;p&gt;Current Time: &lt;span id="time"&gt;&lt;/span&gt;&lt;/p&gt;
+&lt;script&gt;document.getElementById('time').textContent =
+  new Date().toLocaleString();&lt;/script&gt;&lt;/body&gt;&lt;/html&gt;
+"@
+</code></pre>
+<pre><code class="language-powershell" data-trim>
+$html | Out-File -FilePath `
+  C:\WebSites\CompanySite\index.html -Encoding UTF8
+</code></pre>
+  </div>
+</div>
+<aside class="notes">@" 和 "@ 之间是 here-string，可以写多行文本；结尾的 "@ 必须顶格写在行首。这里先存进变量 $html 再写文件，效果与手册里直接管道写入相同。可以让学生用记事本打开 index.html 确认内容。</aside>
+
+<template id="pop-l09-10-steps">
+<h3>📋 详细步骤：生成首页 index.html</h3>
+<h4>第一步：建目录</h4>
+<pre>mkdir C:\WebSites\CompanySite</pre>
+<h4>第二步：把整段 here-string 粘贴进 PowerShell</h4>
+<pre>$html = @"
+&lt;!DOCTYPE html&gt;&lt;html&gt;&lt;head&gt;&lt;title&gt;Lab Company&lt;/title&gt;&lt;/head&gt;
+&lt;body&gt;&lt;h1&gt;Welcome to Lab Company&lt;/h1&gt;
+&lt;p&gt;Server: DC1 | IP: 10.10.10.10&lt;/p&gt;
+&lt;p&gt;Current Time: &lt;span id="time"&gt;&lt;/span&gt;&lt;/p&gt;
+&lt;script&gt;document.getElementById('time').textContent =
+  new Date().toLocaleString();&lt;/script&gt;&lt;/body&gt;&lt;/html&gt;
+"@</pre>
+<p>粘贴后提示符会变成 <code>&gt;&gt;</code> 等你继续输入，直到最后一行 <code>"@</code> 回车才结束——这是正常的。</p>
+<h4>第三步：写入文件并确认</h4>
+<pre>$html | Out-File -FilePath `
+  C:\WebSites\CompanySite\index.html -Encoding UTF8
+notepad C:\WebSites\CompanySite\index.html</pre>
+<div class="tip">结尾的 <code>"@</code> 必须在<b>行首</b>（前面不能有空格），否则 PowerShell 一直等你输入。卡住了按 <b>Ctrl+C</b> 取消重来。</div>
+</template>
+<template id="pop-l09-10-why">
+<h3>💡 每项为什么：网站文件</h3>
+<ul>
+  <li><b>为什么放在 C:\WebSites 而不是默认的 C:\inetpub\wwwroot？</b>每个站点一个独立目录，权限、备份、迁移互不影响；默认目录留给 Default Web Site。</li>
+  <li><b>here-string <code>@" … "@</code>：</b>多行文本原样保留，HTML 里的引号不用转义。</li>
+  <li><b><code>-Encoding UTF8</code>：</b>PowerShell 5.1 的 Out-File 默认是 UTF-16，浏览器能显示但文件大一倍；指定 UTF8 后若页面里有中文也不会乱码。</li>
+  <li><b>Current Time 是谁的时间？</b><code>&lt;script&gt;</code> 在<b>浏览器</b>里运行——显示的是客户端时间，IIS 只负责把文件原样发出去（这就是"静态网站"）。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 10 任务2 添加网站 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 24′ · DC1</span></span><h2>在 IIS 管理器中添加网站</h2><button class="more" data-pop="pop-l09-11-steps">📋 详细步骤</button><button class="more" data-pop="pop-l09-11-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>Win+R 输入 inetmgr</span><i>›</i><span>DC1</span><i>›</i><span>网站</span><i>›</i><span>Default Web Site</span><i>›</i><span>停止</span></div>
+    <div class="crumb"><span>右键"网站"</span><i>›</i><span>添加网站</span><i>›</i><span>填写下表</span><i>›</i><span>确定并启动</span></div>
+    <table class="tbl">
+      <tr><th>字段</th><th>本课取值</th><th>说明</th></tr>
+      <tr><td>网站名称</td><td><code>CompanySite</code></td><td>自查清单按此名称核对</td></tr>
+      <tr><td>物理路径</td><td><code>C:\WebSites\CompanySite</code></td><td>站点根目录</td></tr>
+      <tr><td>绑定</td><td>http · IP = 全部未分配(*) · 端口 80</td><td>监听本机所有 IP</td></tr>
+      <tr><td>主机名</td><td>（留空）</td><td>不按域名区分站点</td></tr>
+    </table>
+    <div class="callout warn"><b>先停 Default Web Site！</b>它也占用 *:80，不停会提示绑定冲突，新站点无法启动。</div>
+  </div>
+</div>
+<aside class="notes">让学生对照概念 2 的层级图理解：名称、物理路径、绑定就是一个站点的三要素。主机名留空意味着任何访问 80 端口的请求都交给它，下节课会用主机名区分 www 和 hr 两个站点。</aside>
+
+<template id="pop-l09-11-steps">
+<h3>📋 详细步骤：添加 CompanySite</h3>
+<h4>第一步：停掉默认站点</h4>
+<ol>
+  <li><b>Win+R</b> → 输入 <code>inetmgr</code> → 回车（首次打开问"是否连接 Microsoft Web 平台"，点「否」）</li>
+  <li>左侧连接树展开 <b>DC1</b>（显示为计算机名，如 DC-01）→ <b>网站</b> → 选中 <b>Default Web Site</b></li>
+  <li>右侧「管理网站」→ 点 <b>停止</b>，图标出现停止标记</li>
+</ol>
+<h4>第二步：添加网站</h4>
+<ol>
+  <li>右键「网站」→「添加网站」</li>
+  <li>网站名称：<code>CompanySite</code>（应用程序池会自动填同名，不用改）</li>
+  <li>物理路径：点「…」选 <code>C:\WebSites\CompanySite</code></li>
+  <li>绑定：类型 <b>http</b>、IP 地址「<b>全部未分配</b>」、端口 <b>80</b>、主机名<b>留空</b></li>
+  <li>勾选「立即启动网站」→ 确定</li>
+</ol>
+<h4>第三步：确认</h4>
+<pre>Import-Module WebAdministration
+Get-Website | Format-Table Name, State, PhysicalPath</pre>
+<p>应看到 Default Web Site = <b>Stopped</b>、CompanySite = <b>Started</b>。</p>
+<div class="tip">如果忘了先停默认站点，点确定时会提示"绑定已被另一网站使用"——点「是」也能建，但 CompanySite 处于<b>停止</b>状态。回去停掉 Default Web Site，再选中 CompanySite 点「启动」即可。</div>
+</template>
+<template id="pop-l09-11-why">
+<h3>💡 每项为什么：站点三要素</h3>
+<table class="tbl">
+<tr><th style="width:26%">字段</th><th>为什么这样填</th></tr>
+<tr><td>网站名称</td><td>只在 IIS 内部识别站点，检查脚本按 <code>CompanySite</code> 核对，大小写和拼写要一致</td></tr>
+<tr><td>物理路径</td><td>决定 URL <code>/</code> 对应磁盘哪个目录；<code>/docs/file1.txt</code> 就是 <code>物理路径\docs\file1.txt</code></td></tr>
+<tr><td>IP = 全部未分配</td><td>监听本机所有 IP（NAT 网卡和 Lab 网卡都能访问）；填具体 IP 则只有那个地址生效</td></tr>
+<tr><td>端口 80</td><td>HTTP 默认端口，浏览器不用写 <code>:80</code></td></tr>
+<tr><td>主机名留空</td><td>不按域名区分——任何打到 80 端口的请求都给它。下节课多站点才填主机名</td></tr>
+</table>
+<div class="tip">为什么不直接删 Default Web Site？停止就够了，保留它方便对比和恢复；生产环境通常会删掉，减少暴露的默认页面。</div>
+</template>
+
+</section>
+
+<!-- 11 任务2 测试 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 2 验证</span><h2>从服务器和客户端访问</h2><button class="more" data-pop="pop-l09-12-steps">📋 详细步骤</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>① DC1 本机</h3>
+        <p>浏览器访问 <code>http://10.10.10.10</code></p>
+        <p class="small muted" style="margin-top:8px">或用命令查看状态码：</p>
+<pre><code class="language-powershell" data-trim>
+(Invoke-WebRequest http://10.10.10.10 `
+  -UseBasicParsing).StatusCode
+</code></pre>
+      </div>
+      <div class="card blue">
+        <h3>② CLIENT1（VM3）</h3>
+        <p>浏览器访问 <code>http://10.10.10.10</code></p>
+        <ul class="points check" style="margin-top:8px">
+          <li>标题 Welcome to Lab Company</li>
+          <li>显示当前时间</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>本机能开、客户端打不开？</b>多半是 DC1 防火墙未放行 80 端口，见排障页。</div>
+  </div>
+</div>
+<aside class="notes">Invoke-WebRequest 返回 200 即成功，这是补充的命令行验证方法，人工核对清单时也可用它快速确认。时间是客户端浏览器里的 JavaScript 算出来的，可以提问：显示的是服务器时间还是客户端时间？答案是客户端。</aside>
+
+<template id="pop-l09-12-steps">
+<h3>📋 详细步骤：两端访问</h3>
+<h4>① DC1 本机</h4>
+<pre>(Invoke-WebRequest http://10.10.10.10 `
+  -UseBasicParsing).StatusCode      # 应返回 200</pre>
+<p>或用 Edge 打开 <code>http://10.10.10.10</code>，看到 Welcome to Lab Company。</p>
+<h4>② CLIENT1</h4>
+<ol>
+  <li>登录 CLIENT1，先确认网络：<code>Test-NetConnection 10.10.10.10 -Port 80</code> → <code>TcpTestSucceeded : True</code></li>
+  <li>Edge 打开 <code>http://10.10.10.10</code> → 标题 Welcome to Lab Company，下面显示当前时间</li>
+</ol>
+<div class="tip"><code>-UseBasicParsing</code> 必须带：服务器上 IE 引擎未初始化，不带会报"Internet Explorer 引擎不可用"。<br>CLIENT1 连接超时：在 DC1 上检查 <code>Get-NetFirewallRule -Name IIS-WebServerRole-HTTP-In-TCP</code> 的 Enabled 是否为 True。</div>
+</template>
+
+</section>
+
+<!-- 12 任务3 目录浏览 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 16′ · DC1</span></span><h2>启用 /docs 的目录浏览</h2><button class="more" data-pop="pop-l09-13-steps">📋 详细步骤</button><button class="more" data-pop="pop-l09-13-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+mkdir C:\WebSites\CompanySite\docs
+$d = "C:\WebSites\CompanySite\docs"
+"Document 1" | Out-File $d\file1.txt
+"Document 2" | Out-File $d\file2.txt
+</code></pre>
+    <div class="crumb"><span>IIS 管理器</span><i>›</i><span>CompanySite</span><i>›</i><span>docs</span><i>›</i><span>目录浏览</span><i>›</i><span>右侧"启用"</span></div>
+    <div class="grid2">
+      <div class="callout"><b>访问</b> <code>http://10.10.10.10/docs/</code> → 看到 file1.txt、file2.txt 列表</div>
+      <div class="callout warn"><b>注意选中 docs 再设置</b>，不要在站点根上启用，否则整站目录都可被浏览。</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">$d 只是保存路径的变量，写出的文件与手册完全相同。docs 是站点下的普通子目录，IIS 管理器会自动显示它，不需要另建虚拟目录（虚拟目录下节课讲）。启用前先访问一次 /docs/，让学生看到 403 错误，再启用对比，正好呼应概念 3 的流程。</aside>
+
+<template id="pop-l09-13-steps">
+<h3>📋 详细步骤：/docs 目录浏览</h3>
+<h4>第一步：建目录和两个文件</h4>
+<pre>mkdir C:\WebSites\CompanySite\docs
+$d = "C:\WebSites\CompanySite\docs"
+"Document 1" | Out-File $d\file1.txt
+"Document 2" | Out-File $d\file2.txt</pre>
+<h4>第二步：启用前先访问一次（预期 403）</h4>
+<p>浏览器打开 <code>http://10.10.10.10/docs/</code> → 显示 <b>403 - 禁止访问</b>（docs 下没有默认文档，目录浏览也没开）。</p>
+<h4>第三步：只在 docs 上启用</h4>
+<ol>
+  <li>IIS 管理器左侧：CompanySite 展开 → <b>选中 docs</b>（看准是 docs，不是 CompanySite）</li>
+  <li>中间双击「<b>目录浏览</b>」图标 → 右侧「操作」点 <b>启用</b></li>
+</ol>
+<h4>第四步：再次访问</h4>
+<p>刷新 <code>http://10.10.10.10/docs/</code> → 出现文件列表 file1.txt、file2.txt，<b>还会多一个 web.config</b>（见右侧"为什么"）。</p>
+</template>
+<template id="pop-l09-13-why">
+<h3>💡 每项为什么：目录浏览</h3>
+<ul>
+  <li><b>列表里为什么多了 web.config？</b>你在 docs 上点"启用"，IIS 就把这条设置写进 <code>docs\web.config</code>（<code>&lt;directoryBrowse enabled="true"/&gt;</code>）。IIS 的配置可以"跟着目录走"。</li>
+  <li><b>web.config 能被下载吗？</b>不能——点它返回 <b>404</b>。请求筛选默认禁止下载 .config 文件，这是 IIS 自带的保护（第 11 课还会加更多扩展名）。</li>
+  <li><b>为什么只在 docs 上开？</b>目录浏览会暴露文件名，攻击者据此找备份文件、配置文件。只在确实需要"给人下载"的目录开。</li>
+  <li><b>file1.txt 打开为什么正常？</b>Out-File 默认写 UTF-16（带 BOM），浏览器能识别 BOM，所以英文内容显示正常。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 13 任务3 默认文档 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 16′ · DC1</span></span><h2>配置默认文档</h2><button class="more" data-pop="pop-l09-14-steps">📋 详细步骤</button><button class="more" data-pop="pop-l09-14-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+"This is home.html" |
+  Out-File C:\WebSites\CompanySite\home.html -Encoding UTF8
+</code></pre>
+    <div class="crumb"><span>IIS 管理器</span><i>›</i><span>CompanySite</span><i>›</i><span>默认文档</span><i>›</i><span>添加 home.html</span><i>›</i><span>上移到顶部</span></div>
+    <div class="flow">
+      <div class="node hl"><b>1. home.html</b>存在 → 返回</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>2. Default.htm…</b>不再检查</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>… index.html</b>不再检查</div>
+    </div>
+    <div class="callout">再次访问 <code>http://10.10.10.10</code> → 显示 <b>This is home.html</b>。</div>
+  </div>
+</div>
+<aside class="notes">在 IIS 管理器中"添加"的条目默认就放在列表顶部，如不在顶部用右侧"上移"。浏览器有缓存，看到的还是旧页面时按 Ctrl+F5 强制刷新。提问：想恢复显示 index.html，有哪两种办法？（调整顺序或删除 home.html）</aside>
+
+<template id="pop-l09-14-steps">
+<h3>📋 详细步骤：默认文档</h3>
+<h4>第一步：生成 home.html</h4>
+<pre>"This is home.html" |
+  Out-File C:\WebSites\CompanySite\home.html -Encoding UTF8</pre>
+<h4>第二步：加到默认文档列表顶部</h4>
+<ol>
+  <li>IIS 管理器左侧<b>选中 CompanySite</b>（站点本身）→ 中间双击「<b>默认文档</b>」</li>
+  <li>右侧「添加」→ 名称填 <code>home.html</code> → 确定</li>
+  <li>确认它在列表<b>第一行</b>；不在就选中它点右侧「上移」直到顶部</li>
+</ol>
+<h4>第三步：验证</h4>
+<p>浏览器访问 <code>http://10.10.10.10</code>，按 <b>Ctrl+F5</b> 强制刷新 → 显示 <b>This is home.html</b>。</p>
+<pre>(Invoke-WebRequest http://10.10.10.10 -UseBasicParsing).Content</pre>
+<div class="tip">命令行输出开头可能有几个乱码字符（如 <code>???</code>），那是 UTF-8 的 BOM 标记，浏览器里不会显示，不影响结果。</div>
+</template>
+<template id="pop-l09-14-why">
+<h3>💡 每项为什么：默认文档顺序</h3>
+<ul>
+  <li><b>列表从上往下找，找到第一个存在的文件就停。</b>实测顺序：home.html → Default.htm → Default.asp → index.htm → index.html → iisstart.htm → default.aspx。</li>
+  <li><b>index.html 还在，为什么不显示？</b>home.html 排在前面且存在，IIS 根本不再往下找。</li>
+  <li><b>设置存在哪？</b>和目录浏览一样，写进了站点根目录的 <code>web.config</code>（<code>&lt;defaultDocument&gt;&lt;files&gt;&lt;add value="home.html"/&gt;</code>）。</li>
+  <li><b>恢复显示 index.html 的两种办法：</b>把 home.html 从列表删掉 / 下移到 index.html 之后；或者删除 home.html 文件。</li>
+</ul>
+</template>
+
+</section>
+
+<!-- 14 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>网页打不开？按这个顺序查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:32%">现象</th><th style="width:32%">原因</th><th>处理</th></tr>
+      <tr><td>CompanySite 无法启动</td><td>Default Web Site 仍占用 *:80</td><td>先停止 Default Web Site 再启动</td></tr>
+      <tr><td>仍显示 IIS 欢迎页</td><td>访问到的是默认站点或浏览器缓存</td><td>确认站点状态，Ctrl+F5 刷新</td></tr>
+      <tr><td>CLIENT1 连接超时</td><td>防火墙未放行 80 或网络不通</td><td>启用"万维网服务(HTTP 流量入站)"规则，ping 测试</td></tr>
+      <tr><td>/docs/ 返回 403</td><td>目录浏览未启用</td><td>在 docs 节点启用目录浏览</td></tr>
+      <tr><td>页面中文乱码</td><td>文件编码与页面声明不一致</td><td>保持 <code>-Encoding UTF8</code></td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">防火墙规则在"高级安全 Windows Defender 防火墙 → 入站规则"中，安装 IIS 时通常会自动创建并启用，但如果之前改过防火墙配置可能被关掉。可以用 Test-NetConnection 10.10.10.10 -Port 80 在 CLIENT1 上测试端口。先让学生自己猜原因再揭示答案。</aside>
+</section>
+
+<!-- 15 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>任务 4 · 16′ · 对照清单自查</h2><button class="more" data-pop="pop-l09-16-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>IIS (W3SVC) 服务运行中</li>
+        <li>CompanySite 站点存在且运行</li>
+        <li>http://localhost 返回 200</li>
+        <li>目录浏览在 /docs 下已启用</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>DC1 拍快照<br><code>Lesson09-Done</code></p>
+        <p class="small muted" style="margin-top:8px">下节课在此基础上做多站点</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上以管理员身份逐项核对清单。"localhost 返回 200"要求 CompanySite 正在运行且有默认文档，如果某一项不达成先回看排障页。清单逐项达成后，运行 check09.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。快照务必拍，第 10 课会在 CompanySite 基础上继续添加站点。</aside>
+
+<template id="pop-l09-16-check">
+<h3>🧪 运行检查脚本 check09.ps1</h3>
+<div class="tip">清单全部达成后在 <b>DC1</b> 上运行。脚本由老师下发，放到 <code>C:\LabFiles\checks\</code>（需与 checklib.ps1 在同一目录）。</div>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check09.ps1</pre>
+<h4>脚本检查什么（共 19 项判定 + 2 项采集）</h4>
+<ul>
+  <li><b>任务 1：</b>IIS 本体、IIS 管理器、10 个子功能、W3SVC 运行</li>
+  <li><b>任务 2：</b>CompanySite 存在/路径/已启动/绑定 *:80、Default Web Site 已停、index.html 内容、防火墙 80、localhost 与 10.10.10.10 均返回 200</li>
+  <li><b>任务 3：</b>docs 两个文件、/docs 开了目录浏览而<b>站点根没开</b>、/docs/ 能列出文件、默认文档首位 home.html、根目录显示 home.html</li>
+</ul>
+<h4>提交</h4>
+<p>结束时显示「达成 N / 需关注 N / 未完成 N」，报告在 <code>C:\LabFiles\Reports\Lesson09_计算机名_时间.pdf</code>，提交这个 PDF。</p>
+<div class="tip">有 ✘（未完成）就回到对应任务修好再跑一遍；⚠（需关注）不扣分但要能说出原因。最后再拍快照 <code>Lesson09-Done</code>。</div>
+</template>
+
+</section>
+
+<!-- 16 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">IIS 让 Windows 服务器通过 HTTP 对外发布网页</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small"><code>Install-WindowsFeature</code> → 建目录和首页 → inetmgr 添加站点</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">站点 = 名称 + 物理路径 + 绑定；首页由默认文档顺序决定</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 10 课：</b>IIS 多站点与虚拟目录。用主机头和端口在同一台服务器上运行多个网站。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check09.ps1" download>check09.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check09.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 为什么要先停 Default Web Site？2. 访问 /docs/ 返回 403，说明什么？3. 默认文档列表里 home.html 在 index.html 前面，访问根目录显示哪个？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

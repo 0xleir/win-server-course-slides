@@ -19,7 +19,7 @@
   <p class="muted">项目 3 · 共享管理　|　第 7 次课 · 学时 13–14</p>
   <h1>共享文件夹与网络访问</h1>
   <p class="muted">把 DC1 上的部门文件夹，安全地开放给网络上的同事</p>
-  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑🧑 结对操作</span><span class="chip lab">VM1 + VM3</span></div>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM3</span></div>
 </div>
 <aside class="notes">开场提问：上节课我们给 C:\CompanyData 配好了 NTFS 权限，但同事坐在自己电脑前，怎么才能打开这些文件？今天就是把文件夹"搬上网络"。本课结束的快照 S3-ShareReady 是关键快照，下节课 阶段考核 1 考核就基于它。</aside>
 </section>
@@ -99,7 +99,7 @@
     </div>
   </div>
 </div>
-<aside class="notes">结对分工：A 同学在 DC1 上建共享，B 同学在 CLIENT1 上测试访问，任务 3 交换。现在还是工作组环境，alice、bob、charlie 都是 DC1 上的本地账号，客户端访问时要输入 DC1 上的账号密码。</aside>
+<aside class="notes">操作顺序：先在 DC1 上建共享，再切到 CLIENT1 上测试访问。现在还是工作组环境，alice、bob、charlie 都是 DC1 上的本地账号，客户端访问时要输入 DC1 上的账号密码。</aside>
 </section>
 
 <!-- 04 概念：共享与 UNC -->

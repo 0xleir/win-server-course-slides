@@ -11,8 +11,9 @@ GROUPS = [
     ("基础模块", "项目 1 · 走进 Windows 服务器", [1, 2]),
     ("基础模块", "项目 2 · Windows 服务器用户管理", [3, 4, 5]),
     ("基础模块", "项目 3 · Windows 服务器共享管理", [6, 7]),
+    ("进阶模块", "项目 4 · Windows 服务器网站管理", [9, 10]),
 ]
-MOD_COLOR = {"基础模块": "var(--accent)"}
+MOD_COLOR = {"基础模块": "var(--accent)", "进阶模块": "var(--green)"}
 
 
 def text(s):
@@ -117,7 +118,7 @@ def main():
   <header>
     <div class="bar"></div>
     <h1>Windows 服务器配置与安全管理</h1>
-    <p>Windows Server 2022 · 红蓝对抗防御　|　已上完 第 1–7 次课（持续更新中）</p>
+    <p>Windows Server 2022 · 红蓝对抗防御　|　已上完 第 1–7、9–10 次课（持续更新中）</p>
     <div class="stats">
       <span><b>{total_pages}</b> 页幻灯片</span><span><b>{n_pop}</b> 课有详细步骤弹窗</span><span><b>{n_chk}</b> 课有检查脚本</span>
     </div>
