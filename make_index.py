@@ -11,11 +11,18 @@ GROUPS = [
     ("基础模块", "项目 1 · 走进 Windows 服务器", [1, 2]),
     ("基础模块", "项目 2 · Windows 服务器用户管理", [3, 4, 5]),
     ("基础模块", "项目 3 · Windows 服务器共享管理", [6, 7]),
+    ("阶段考核", "阶段考核 1 · 基础模块", [8]),
     ("进阶模块", "项目 4 · Windows 服务器网站管理", [9, 10, 11, 12]),
     ("阶段考核", "阶段考核 2 · 进阶模块 A", [13]),
     ("进阶模块", "项目 5 · Windows 服务器远程管理", [14]),
 ]
 MOD_COLOR = {"基础模块": "var(--accent)", "进阶模块": "var(--green)", "阶段考核": "var(--red)"}
+
+# 考核课次不发课件(内容=现场挑战赛), 只在目录里占位展示, 不链接到任何 lessonNN.html
+EXAM_META = {
+    8:  ("阶段考核 1 · 基础模块挑战赛", "现场限时挑战赛，配合 arena 线上比赛系统进行，不提供可下载课件"),
+    13: ("阶段考核 2 · 网站管理挑战赛", "现场限时挑战赛，配合 arena 线上比赛系统进行，不提供可下载课件"),
+}
 
 
 def text(s):
@@ -54,6 +61,16 @@ def main():
             last_mod = mod
         items = []
         for n in lessons:
+            if n in EXAM_META:
+                title, sub = EXAM_META[n]
+                hours = f"{2*n-1}–{2*n}"
+                items.append(f'''
+      <div class="lesson exam locked">
+        <span class="no">{n:02d}</span>
+        <span class="main"><span class="t">{html.escape(title)}</span><span class="s">{html.escape(sub)}</span></span>
+        <span class="side"><span class="h">学时 {hours}</span><span class="bs"><span class="ix-b ix-lock" title="现场考核，不发课件">🔒 现场考核</span></span></span>
+      </div>''')
+                continue
             i = lesson_info(n)
             total_pages += i["pages"]
             badges = []
@@ -64,7 +81,7 @@ def main():
                 n_chk += 1
                 badges.append(f'<span class="ix-b ix-chk" title="downloads/check{n:02d}.ps1">🧪 check{n:02d}</span>')
             items.append(f'''
-      <a class="lesson{' exam' if is_exam else ''}" href="{i["file"]}">
+      <a class="lesson" href="{i["file"]}">
         <span class="no">{n:02d}</span>
         <span class="main"><span class="t">{html.escape(i["title"])}</span><span class="s">{html.escape(i["sub"])}</span></span>
         <span class="side"><span class="h">学时 {i["hours"]} · {i["pages"]} 页</span><span class="bs">{"".join(badges)}</span></span>
@@ -108,7 +125,9 @@ def main():
  .side .h{{font-size:13px;color:var(--muted)}}
  .bs{{display:flex;gap:6px}}
  .ix-b{{font-size:12px;padding:2px 9px;border-radius:999px;background:var(--surface2);white-space:nowrap}}
- .ix-pop{{color:var(--accent)}} .ix-chk{{color:var(--green)}}
+ .ix-pop{{color:var(--accent)}} .ix-chk{{color:var(--green)}} .ix-lock{{color:var(--red)}}
+ .lesson.locked{{display:flex;align-items:center;gap:18px;padding:10px 12px;border-radius:10px;border-top:1px solid var(--line);opacity:.72;cursor:default}}
+ .lesson.locked:first-of-type{{border-top:none}}
  footer{{margin-top:40px;color:var(--muted);font-size:14px;border-top:1px solid var(--line);padding-top:14px}}
  @media print{{
    html,body{{background:#fff;color:#111}} .wrap{{padding:10mm 8mm}}
@@ -122,7 +141,7 @@ def main():
   <header>
     <div class="bar"></div>
     <h1>Windows 服务器配置与安全管理</h1>
-    <p>Windows Server 2022 · 红蓝对抗防御　|　已上完 第 1–7、9–14 次课（持续更新中）</p>
+    <p>Windows Server 2022 · 红蓝对抗防御　|　已上完 第 1–14 次课（阶段考核不提供课件，持续更新中）</p>
     <div class="stats">
       <span><b>{total_pages}</b> 页幻灯片</span><span><b>{n_pop}</b> 课有详细步骤弹窗</span><span><b>{n_chk}</b> 课有检查脚本</span>
     </div>
