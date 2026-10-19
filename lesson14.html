@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第14课 · 远程桌面服务（RDS）</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 5 · 远程管理　|　第 14 次课 · 学时 27–28</p>
+  <h1>远程桌面服务（RDS）</h1>
+  <p class="muted">不进机房，也能安全地"坐到"服务器前面</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM3</span></div>
+</div>
+<aside class="notes">从本课开始，所有实验都是你一个人在自己的 PC 上完成：先在 DC1 上配置服务端，再切到 CLIENT1 测试连接，两台 VM 都由你依次操作。开场提问：服务器都在机房里，管理员每次改配置都要跑一趟机房吗？</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>概念</b>RDP · NLA<br>端口暴露</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 1</b>启用远程桌面<br>授权用户</div>
+      <div class="seg" style="flex:24"><span class="t">24′</span><b>任务 2</b>会话限制 · 加密<br>改端口 3390</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 3</b>RD Gateway<br>概念 + 安装</div>
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>任务 4</b>验证提交</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清楚 RDP 协议的工作方式，以及 NLA 为什么更安全</li>
+        <li>用 GUI 和 PowerShell 启用远程桌面，并控制谁能远程登录</li>
+        <li>完成会话限制、加密级别、改端口等加固，并能从客户端验证</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念部分 10 分钟讲完，重点放在 NLA 和"为什么不把 3389 暴露到公网"。任务 2 最容易出问题：改端口并重启服务后，旧端口会立即失效，提醒自己改用新端口重新连接。</aside>
+</section>
+
+<!-- 02b 概念：教材补充 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>远程桌面：Windows 自带 vs 第三方工具</h2></div>
+  <div class="body">
+    <div class="card blue">
+      <h3>Windows 远程桌面服务</h3>
+      <p class="small">一种远程操作电脑的模式，可视化访问远程计算机的桌面环境；常用于管理员在客户机上对远程服务器进行管理。系统自带、无需额外安装，基于 RDP 协议。</p>
+    </div>
+    <div class="grid3">
+      <div class="card">
+        <h3>TeamViewer</h3>
+        <ul class="points">
+          <li>最流行的第三方远程桌面之一</li>
+          <li>灵活、支持无人值守、高级安全规则</li>
+          <li>全平台：Win/Mac/Linux/移动端</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Chrome 远程桌面</h3>
+        <ul class="points">
+          <li>Google 基于 Chrome 的方案</li>
+          <li>设置简单、完全免费</li>
+          <li>仅满足基本需求，无文件传输/远程打印</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>VNC</h3>
+        <ul class="points">
+          <li>开源远程桌面方案</li>
+          <li>协议免费、客户端选择多</li>
+          <li>跨平台通用</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">教材补充：Windows 远程桌面连接是一种远程操作电脑的模式，可以可视化访问远程计算机的桌面环境，主要用于管理员在客户机上对远程服务器进行管理。除了系统自带的方案，还有常见的第三方工具：TeamViewer 是最受欢迎的产品之一，灵活性强，运行一次即可长期使用，支持无人值守和高级安全规则，覆盖 Windows、Mac、Linux、Chrome OS 以及 Android、iOS 等移动端；Chrome 远程桌面是 Google 推出的方案，设置非常简单且完全免费，但只能满足基本远程需求，不支持文件传输和远程打印这类高级功能；VNC 是开源方案，协议免费提供给任何人使用，很容易找到优秀的客户端。本课重点学系统自带的 RDS，第三方工具了解即可。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · 服务端<br>RDP 服务端</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3 · 客户端（你用来测试的机器）<br>mstsc 客户端</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>第一步（DC1）：</b>启用 RDP、授权用户、改策略和端口、装 RD Gateway</div>
+      <div class="callout"><b>第二步（CLIENT1）：</b>每完成一步就用 <code>mstsc</code> 从 CLIENT1 测试并记录结果</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">本课只用 DC1 和 CLIENT1，SVR2 可以不开以节省资源。此时还没有域，alice、charlie、IT-Admins 都是 DC1 上第 3 课建的本地账号和组。开始前先在 CLIENT1 上 ping 10.10.10.10 确认网络连通。</aside>
+</section>
+
+<!-- 04 概念：RDP -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>RDP：把"屏幕"搬过网络</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>CLIENT1</b>mstsc 客户端</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>TCP 3389</b>默认端口</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>DC1</b>TermService 服务</div>
+    </div>
+    <table class="tbl">
+      <tr><th>方向</th><th>传输内容</th></tr>
+      <tr><td>服务器 → 客户端</td><td>屏幕画面（压缩后的图形更新）</td></tr>
+      <tr><td>客户端 → 服务器</td><td>键盘、鼠标输入，剪贴板、驱动器重定向</td></tr>
+    </table>
+    <div class="callout"><b>开关在哪：</b>注册表 <code>fDenyTSConnections</code> = 0 表示<b>允许</b>连接（名字是"拒绝"，0 即不拒绝）。</div>
+  </div>
+</div>
+<aside class="notes">强调程序都在服务器上运行，网络里只传画面和输入，所以带宽低也能用。fDenyTSConnections 是双重否定，学生容易设反，可以提问：值为 1 是什么意思？服务名 TermService 在任务 2 重启时会用到。</aside>
+</section>
+
+<!-- 05 概念：NLA -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>NLA：先验明身份，再给桌面</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>不启用 NLA</h3>
+        <ul class="points">
+          <li>先建立完整会话，再显示登录界面</li>
+          <li>任何人都能让服务器分配资源</li>
+          <li>易被耗尽资源（DoS）和暴力破解</li>
+          <li>未认证就暴露更多攻击面</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>启用 NLA</h3>
+        <ul class="points">
+          <li>客户端在连接时先提交凭据（CredSSP）</li>
+          <li>认证通过后服务器才创建会话</li>
+          <li>未认证者拿不到登录桌面</li>
+          <li>Win10 客户端默认支持</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>所以：</b>任务 1 必须勾选"仅允许使用网络级别身份验证的远程桌面连接"。</div>
+  </div>
+</div>
+<aside class="notes">NLA 全称 Network Level Authentication。类比：没有 NLA 是先请人进门再查证件，有 NLA 是在门口查证件。可补充：BlueKeep（CVE-2019-0708）等 RDP 漏洞在启用 NLA 时，攻击者需先有合法凭据才能利用。</aside>
+</section>
+
+<!-- 06 概念：暴露面 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>谁能连？从哪连？连多久？</h2></div>
+  <div class="body">
+    <div class="nest">
+      <div class="lbl">第 1 层 · 网络：防火墙放行哪个端口（3389 / 3390），公网走 RD Gateway 443</div>
+      <div class="nest">
+        <div class="lbl">第 2 层 · 认证：NLA + 用户必须在 Remote Desktop Users 组</div>
+        <div class="nest">
+          <div class="lbl">第 3 层 · 会话：加密级别"高"、活动 2 小时、断开 30 分钟</div>
+        </div>
+      </div>
+    </div>
+    <div class="callout warn"><b>注意：</b>改端口只能挡住"扫默认端口"的自动化攻击，扫全端口仍能发现。它是辅助手段，不能替代 NLA 和强密码。</div>
+  </div>
+</div>
+<aside class="notes">这页是今天所有配置的地图：任务 1 对应第 2 层，任务 2 对应第 1、3 层，任务 3 对应公网场景。提问：只改端口、不开 NLA，安全吗？引导学生理解"安全靠叠加"。</aside>
+</section>
+
+<!-- 07 任务1 启用 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 20′ · DC1</span></span><h2>启用远程桌面：两种方式</h2><button class="more" data-pop="pop-l14-t1a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l14-t1a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">方式一 · GUI（勾选 NLA）</div>
+    <div class="crumb"><span>服务器管理器</span><i>›</i><span>本地服务器</span><i>›</i><span>远程桌面</span><i>›</i><span>启用</span></div>
+    <div class="code-cap" style="margin-top:14px">方式二 · PowerShell（管理员）</div>
+<pre><code class="language-powershell" data-trim>
+$ts = "HKLM:\System\CurrentControlSet\Control" +
+      "\Terminal Server"
+Set-ItemProperty -Path $ts `
+  -Name "fDenyTSConnections" -Value 0
+Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+</code></pre>
+    <div class="callout"><b>两步缺一不可：</b>注册表打开服务，防火墙规则放行 3389，只做一步客户端仍然连不上。</div>
+  </div>
+</div>
+<aside class="notes">任选一种方式，建议先用 GUI 看清 NLA 复选框，再用 PowerShell 理解背后改了什么。原文命令很长，这里用变量 $ts 保存路径，效果相同。中文系统里防火墙显示组名可能是"远程桌面"，若报找不到组，改用 -DisplayGroup "远程桌面"。</aside>
+
+<template id="pop-l14-t1a-steps">
+  <h3>📋 详细步骤：启用远程桌面</h3>
+  <h4>第一步：方式一 · GUI（看清 NLA 复选框）</h4>
+  <ol>
+    <li>打开「服务器管理器」→「本地服务器」→找到「远程桌面」一行，点"已禁用"</li>
+    <li>在弹出的「系统属性」里选"允许远程连接到此计算机"</li>
+    <li>勾选"仅允许使用网络级别身份验证的远程桌面连接"（这就是开 NLA）</li>
+  </ol>
+  <h4>第二步：方式二 · PowerShell（管理员）</h4>
+<pre>$ts = "HKLM:\System\CurrentControlSet\Control" +
+      "\Terminal Server"
+Set-ItemProperty -Path $ts `
+  -Name "fDenyTSConnections" -Value 0
+Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+</pre>
+  <p>第一条命令打开注册表开关（允许远程桌面连接），第二条放行防火墙组。两步都做才能真正连通。</p>
+  <div class="tip">中文系统 <code>-DisplayGroup "Remote Desktop"</code> 有时找不到，改成 <code>-DisplayGroup "远程桌面"</code> 再试。</div>
+  <h4>第三步：确认</h4>
+  <ol>
+    <li><code>Get-ItemProperty -Path $ts -Name fDenyTSConnections</code> 应返回 0</li>
+    <li>打开「服务器管理器」看"远程桌面"状态是否变为"已启用"</li>
+  </ol>
+</template>
+<template id="pop-l14-t1a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>fDenyTSConnections = 0</code></td><td>这个名字是"拒绝"远程连接的开关，双重否定：0 表示<b>不拒绝</b>，即允许。注册表路径 <code>HKLM:\...\Terminal Server</code>。</td></tr>
+    <tr><td>勾选"仅允许使用网络级别身份验证"</td><td>就是开启 NLA（Network Level Authentication）。对应注册表 <code>UserAuthentication=1</code>（任务 2 的 check 脚本会读这个值），要求客户端先交凭据再建会话，减少未认证攻击面。</td></tr>
+    <tr><td><code>Enable-NetFirewallRule -DisplayGroup "Remote Desktop"</code></td><td>只开注册表开关，Windows 防火墙默认仍挡住 3389 入站，必须额外放行这组规则，否则客户端"网络不通"。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>只改了注册表没放防火墙：客户端报错发生得很快（连接阶段就失败）</li>
+    <li>只放了防火墙没开注册表：会提示"远程桌面服务未运行"或连接被拒绝</li>
+    <li><code>Get-ItemProperty $ts fDenyTSConnections</code> 不是 0：说明方式一的勾选没生效，重新检查系统属性</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务1 授权与测试 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 20′ · DC1 → CLIENT1</span></span><h2>授权用户并从客户端测试</h2><button class="more" data-pop="pop-l14-t1b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l14-t1b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>① DC1：把 IT-Admins 加入 RD 用户组</h3>
+        <div class="crumb"><span>系统属性</span><i>›</i><span>远程</span><i>›</i><span>选择用户</span><i>›</i><span>添加</span></div>
+<pre><code class="language-powershell" data-trim>
+Add-LocalGroupMember `
+  -Group "Remote Desktop Users" `
+  -Member "IT-Admins"
+</code></pre>
+      </div>
+      <div class="card blue">
+        <h3>② CLIENT1：发起连接</h3>
+<pre><code class="language-powershell" data-trim>
+mstsc /v:10.10.10.10
+</code></pre>
+        <table class="tbl" style="margin-top:12px">
+          <tr><th>账号</th><th>预期</th></tr>
+          <tr><td>alice</td><td class="green">成功</td></tr>
+          <tr><td>charlie</td><td class="orange">被拒绝</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在凭据框里写 DC-01\alice（密码 Lab@2026a），因为此时还没有域，是 DC1 的本地账号。charlie 只在 IT-Users 和 Finance，不在 Remote Desktop Users，所以被拒绝，提示"未授予远程登录权限"。提问：Administrator 不在这个组里为什么也能连？因为 Administrators 组默认就有远程登录权限。</aside>
+
+<template id="pop-l14-t1b-steps">
+  <h3>📋 详细步骤：授权用户并从客户端测试</h3>
+  <h4>第一步：DC1 把 IT-Admins 加入 Remote Desktop Users 组</h4>
+<pre>Add-LocalGroupMember `
+  -Group "Remote Desktop Users" `
+  -Member "IT-Admins"
+</pre>
+  <p>也可以走 GUI：「系统属性」→「远程」→「选择用户」→「添加」，输入 IT-Admins。</p>
+  <h4>第二步：CLIENT1 发起连接</h4>
+<pre>mstsc /v:10.10.10.10
+</pre>
+  <ol>
+    <li>用户名写 <code>DC-01\alice</code>，密码 <code>Lab@2026a</code> → 预期<b>成功</b>（alice 在 IT-Admins 组）<span class="small muted">（DC-01 换成你自己的 DC 计算机名，即第 1 课的 DC-学号）</span></li>
+    <li>换成 <code>DC-01\charlie</code> → 预期<b>被拒绝</b>（charlie 只在 IT-Users/Finance，不在 Remote Desktop Users）</li>
+  </ol>
+  <div class="tip">凭据框里一定要写"计算机名\用户名"，此时没有域，只写 alice 会被当成本机账号找不到。</div>
+</template>
+<template id="pop-l14-t1b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Add-LocalGroupMember "Remote Desktop Users" "IT-Admins"</code></td><td>只有在这个本地组里的用户（或 Administrators 组成员）才被允许远程登录，这是"谁能连"这一层的授权控制。check 脚本用 <code>Get-LocalGroupMember</code> 读该组成员核实 IT-Admins 是否已加入。</td></tr>
+    <tr><td><code>DC-01\alice</code> 前缀</td><td>工作组环境没有域控验证身份，必须显式指明账号所在的计算机，否则 CLIENT1 会把 alice 当成自己本机的账号去找，报"用户名或密码不正确"。</td></tr>
+    <tr><td>charlie 被拒绝是预期行为</td><td>验证的是最小权限原则：只有明确授权的用户/组才能远程登录，charlie 没被加入任何有远程登录权限的组，所以必须被拒绝。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>alice 也连不上：先确认任务 1 第一步的 fDenyTSConnections 和防火墙是否都已生效，再检查 IT-Admins 是否真的加入了组</li>
+    <li>报"用户名或密码不正确"：检查是否漏写了 <code>DC1\</code> 前缀</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 组策略 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 24′ · DC1</span></span><h2>会话限制与安全层（gpedit.msc）</h2><button class="more" data-pop="pop-l14-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l14-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>计算机配置</span><i>›</i><span>管理模板</span><i>›</i><span>Windows 组件</span><i>›</i><span>远程桌面服务</span></div>
+    <table class="tbl">
+      <tr><th>策略位置</th><th>策略</th><th>本课取值</th></tr>
+      <tr><td>会话时间限制</td><td>设置活动会话的时间限制</td><td>2 小时</td></tr>
+      <tr><td>会话时间限制</td><td>设置断开连接会话的时间限制</td><td>30 分钟</td></tr>
+      <tr><td>安全</td><td>要求使用特定安全层</td><td>SSL (TLS 1.0)</td></tr>
+      <tr><td>安全</td><td>设置客户端连接加密级别</td><td>高</td></tr>
+    </table>
+    <div class="callout">策略在新连接时生效，改完可运行 <code>gpupdate /force</code> 立即刷新。</div>
+  </div>
+</div>
+<aside class="notes">完整路径在"远程桌面服务"下还要展开"远程桌面会话主机"，再找"会话时间限制"和"安全"两个文件夹。"断开连接"不等于"注销"：断开后程序仍在运行占资源，30 分钟后会被自动结束。SSL 选项实际会协商系统支持的 TLS 版本。</aside>
+
+<template id="pop-l14-t2a-steps">
+  <h3>📋 详细步骤：会话限制与安全层</h3>
+  <h4>第一步：打开本地组策略编辑器</h4>
+  <ol>
+    <li>运行 <code>gpedit.msc</code></li>
+    <li>展开「计算机配置」›「管理模板」›「Windows 组件」›「远程桌面服务」›「远程桌面会话主机」</li>
+  </ol>
+  <h4>第二步：配置会话时间限制（展开"会话时间限制"文件夹）</h4>
+  <ol>
+    <li>"设置活动会话的时间限制" → 启用，选 2 小时</li>
+    <li>"设置断开连接会话的时间限制" → 启用，选 30 分钟</li>
+  </ol>
+  <h4>第三步：配置安全层（展开"安全"文件夹）</h4>
+  <ol>
+    <li>"要求使用特定安全层" → 启用，选 SSL (TLS 1.0)</li>
+    <li>"设置客户端连接加密级别" → 启用，选"高"</li>
+  </ol>
+  <h4>第四步：立即生效</h4>
+<pre>gpupdate /force
+</pre>
+  <p>策略默认只在新建立的连接上生效，刷新后无需重启也能让已改的策略对新会话起作用。</p>
+</template>
+<template id="pop-l14-t2a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>活动会话限制 2 小时</td><td>防止一个会话长期占用服务器资源不释放，到点后无论是否操作都会强制结束。</td></tr>
+    <tr><td>断开连接会话限制 30 分钟</td><td>"断开"≠"注销"：用户直接关掉 mstsc 窗口，进程和会话仍挂在服务器上，30 分钟无人恢复就自动清理，避免资源泄漏。</td></tr>
+    <tr><td>安全层 SSL (TLS 1.0)</td><td>要求连接协商时用 TLS 做底层加密通道（实际会用系统支持的最新 TLS 版本），比默认的 RDP 自身安全层更标准、更能抗中间人。</td></tr>
+    <tr><td>加密级别"高"</td><td>控制 RDP 协议数据本身的加密强度，"高"表示服务器到客户端、客户端到服务器双向都用最强加密，而不是只加密一个方向。</td></tr>
+    <tr><td><code>gpupdate /force</code></td><td>本地组策略默认按刷新周期生效，强制刷新能让当前会话之后新建的连接立刻应用新策略，便于当堂验证。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>策略设置了但没生效：先 <code>gpupdate /force</code>，必要时重新建立一次 RDP 连接（已建立的旧连接不受影响）</li>
+    <li>找不到对应策略项：确认展开到了"远程桌面服务 › 远程桌面会话主机"这一级，不要停在上一级目录</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 改端口 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 24′ · DC1 → CLIENT1</span></span><h2>把端口改为 3390</h2><button class="more" data-pop="pop-l14-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l14-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">DC1 · 先放行新端口，再改注册表，最后重启服务</div>
+<pre><code class="language-powershell" data-trim>
+New-NetFirewallRule -DisplayName "Allow RDP 3390" `
+  -Direction Inbound -Protocol TCP `
+  -LocalPort 3390 -Action Allow
+$k = "HKLM:\System\CurrentControlSet\Control" +
+     "\Terminal Server\WinStations\RDP-Tcp"
+Set-ItemProperty -Path $k -Name "PortNumber" -Value 3390
+Restart-Service TermService -Force
+</code></pre>
+    <div class="code-cap">CLIENT1 · 用新端口连接</div>
+<pre><code class="language-powershell" data-trim>
+mstsc /v:10.10.10.10:3390
+</code></pre>
+  </div>
+</div>
+<aside class="notes">这里把原文的顺序调整为先建防火墙规则再改端口，避免远程操作时把自己锁在外面（生产环境里这是血的教训）。Restart-Service 会断开当前所有 RDP 会话，所以必须在 DC1 控制台上操作改端口这一步。改完后切回 CLIENT1 窗口，再用不带端口的 mstsc 应该连不上，这正好证明改端口生效，然后用新端口重连验证。</aside>
+
+<template id="pop-l14-t2b-steps">
+  <h3>📋 详细步骤：把 RDP 端口改为 3390</h3>
+  <h4>第一步：DC1 上先放行新端口（一定要先做这一步！）</h4>
+<pre>New-NetFirewallRule -DisplayName "Allow RDP 3390" `
+  -Direction Inbound -Protocol TCP `
+  -LocalPort 3390 -Action Allow
+</pre>
+  <div class="tip">顺序很关键：如果先改端口再放防火墙，中间那段时间新端口没放行、旧端口也已经失效，远程操作就会把自己锁在外面。</div>
+  <h4>第二步：改注册表端口号</h4>
+<pre>$k = "HKLM:\System\CurrentControlSet\Control" +
+     "\Terminal Server\WinStations\RDP-Tcp"
+Set-ItemProperty -Path $k -Name "PortNumber" -Value 3390
+</pre>
+  <h4>第三步：重启服务让端口生效</h4>
+<pre>Restart-Service TermService -Force
+</pre>
+  <div class="tip">这会立即断开当前所有 RDP 会话，必须在 DC1 本机控制台（不是远程）执行。</div>
+  <h4>第四步：CLIENT1 用新端口连接</h4>
+<pre>mstsc /v:10.10.10.10:3390
+</pre>
+  <p>不带端口的 <code>mstsc /v:10.10.10.10</code> 此时应该连不上，这恰好证明旧端口 3389 已失效、改端口生效了。</p>
+</template>
+<template id="pop-l14-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>New-NetFirewallRule ... -LocalPort 3390</code></td><td>先放行新端口，确保改完端口之后新端口立刻可达，不会出现"旧端口已失效、新端口还没放行"的空窗期。</td></tr>
+    <tr><td><code>PortNumber</code>（注册表 <code>...\WinStations\RDP-Tcp</code>）</td><td>RDP 监听器实际监听的端口号就存在这个注册表值里，改它等效于改"门牌号"，让自动化扫描工具扫不到默认的 3389。</td></tr>
+    <tr><td><code>Restart-Service TermService -Force</code></td><td>TermService 是远程桌面服务的进程名，端口改动只在服务重启后才会真正生效（重新绑定监听端口）。</td></tr>
+    <tr><td>改端口只是"辅助手段"</td><td>概念页强调过：改端口挡不住扫全端口的攻击者，必须叠加 NLA（任务 1）和强密码，不能单独依赖它。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>重启服务后彻底连不上任何端口：检查注册表 PortNumber 是否真的写成了 3390（拼写错误会导致监听失败）</li>
+    <li>3390 连接超时：先确认防火墙规则是否真的放行了（新建规则名字、端口、协议要对）</li>
+    <li>旧端口 3389 仍能连：说明注册表没改成功或服务没重启，重新执行第二、三步</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务2 验证 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 2 验证</span><h2>端口真的改了吗？</h2></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Get-ItemProperty -Path $k -Name PortNumber
+Get-NetTCPConnection -LocalPort 3390 -State Listen
+Test-NetConnection 10.10.10.10 -Port 3390
+</code></pre>
+    <table class="tbl">
+      <tr><th>命令（在哪运行）</th><th>看到这个说明成功</th></tr>
+      <tr><td><code>Get-ItemProperty</code>（DC1）</td><td>PortNumber : 3390</td></tr>
+      <tr><td><code>Get-NetTCPConnection</code>（DC1）</td><td>有 LocalPort 3390、State Listen 的记录</td></tr>
+      <tr><td><code>Test-NetConnection</code>（CLIENT1）</td><td>TcpTestSucceeded : True</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">这三条是补充的只读检查命令，按"配置 → 监听 → 网络可达"三个层次排查。$k 是上一页定义的变量，如果新开了 PowerShell 窗口需要重新定义。Test-NetConnection 失败而前两条成功，说明问题在防火墙。</aside>
+</section>
+
+<!-- 12 任务3 RD Gateway -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 16′ · DC1</span></span><h2>远程桌面网关（RD Gateway）</h2><button class="more" data-pop="pop-l14-t3-steps">📋 详细步骤</button><button class="more" data-pop="pop-l14-t3-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>公网用户</b>mstsc</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>RD Gateway</b>HTTPS 443<br>CAP + RAP 检查</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>内网服务器</b>RDP 3389 / 3390<br>不暴露公网</div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h3>CAP 连接授权策略</h3><p class="small"><b>谁</b>可以通过网关连接</p></div>
+      <div class="card"><h3>RAP 资源授权策略</h3><p class="small">可以连到<b>哪些</b>内网计算机</p></div>
+    </div>
+<pre><code class="language-powershell" data-trim>
+Install-WindowsFeature RDS-Gateway -IncludeManagementTools
+</code></pre>
+  </div>
+</div>
+<aside class="notes">本任务只安装不完整配置，教学环境没有公网暴露的场景。讲清楚：RDP 流量被封装在 HTTPS 隧道里，防火墙只需开 443。安装期间可以提问：和直接把 3390 映射到公网相比，网关多了哪两道检查？答案是 CAP 和 RAP。</aside>
+
+<template id="pop-l14-t3-steps">
+  <h3>📋 详细步骤：安装 RD Gateway 角色</h3>
+  <h4>第一步：理解它解决什么问题</h4>
+  <p>如果把 3390 直接映射到公网，等于把 RDP 服务直接暴露给所有人。RD Gateway 的做法是：公网用户只连 HTTPS 443 到网关，网关验证通过后再把流量转发到内网的真实服务器，内网服务器完全不暴露公网。</p>
+  <h4>第二步：安装角色</h4>
+<pre>Install-WindowsFeature RDS-Gateway -IncludeManagementTools
+</pre>
+  <p>本课只做安装，不做完整的 CAP/RAP 配置（教学环境没有真实公网暴露场景）。</p>
+  <h4>第三步：确认安装成功</h4>
+<pre>Get-WindowsFeature RDS-Gateway
+</pre>
+  <p>Installed 列应为 True。</p>
+</template>
+<template id="pop-l14-t3-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Install-WindowsFeature RDS-Gateway</code></td><td>安装远程桌面网关角色服务。check 脚本用 <code>Get-WindowsFeature RDS-Gateway</code> 判定该角色是否已安装（<code>.Installed</code> 为真即 PASS）。</td></tr>
+    <tr><td>CAP（连接授权策略）</td><td>回答"谁可以通过网关连接"——先过这一关，没授权的用户连网关这一步就会被拒绝。</td></tr>
+    <tr><td>RAP（资源授权策略）</td><td>回答"可以连到内网哪些计算机"——即使通过了 CAP，也只能访问 RAP 允许列表里的目标机器，不能随意跳转到内网任意主机。</td></tr>
+    <tr><td>HTTPS 443 隧道</td><td>RDP 流量被封装进 HTTPS，公网防火墙只需开 443 一个端口，不需要暴露 3389/3390，减少被扫描和探测的攻击面。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li><code>Get-WindowsFeature RDS-Gateway</code> 的 Installed 不是 True：说明角色安装未完成或失败，重新运行安装命令</li>
+    <li>生产环境接入网关后仍连不上：按"CAP 没通过" vs "RAP 没通过"分别排查，这是网关场景特有的两层检查，和任务 1/2 的"组权限+端口"是不同的两道门</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>连不上？按这个顺序查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>"无法连接到远程计算机"</td><td>RDP 未启用或防火墙没放行</td><td>查 <code>fDenyTSConnections</code>=0 和防火墙规则</td></tr>
+      <tr><td>"未授予远程登录权限"</td><td>用户不在 RD Users 组</td><td>charlie 属预期；alice 则检查 IT-Admins 是否已加入</td></tr>
+      <tr><td>改端口后连不上</td><td>没写端口或 3390 未放行</td><td>写 <code>:3390</code>，用 <code>Test-NetConnection</code> 测</td></tr>
+      <tr><td>用户名或密码不正确</td><td>没写计算机名前缀</td><td>写成 <code>DC-01\alice</code></td></tr>
+    </table>
+    <div class="callout warn">先分清是<b>网络不通</b>（前三秒就报错）还是<b>认证被拒</b>（输完密码才报错）。</div>
+  </div>
+</div>
+<aside class="notes">遇到报错时先描述清楚发生在哪一步，再对照这张表排查。网络类错误用 Test-NetConnection 判断，认证类错误到 DC1 的事件查看器"安全"日志看 4625 事件。如果 Restart-Service 后服务没起来，可在 DC1 上 Get-Service TermService 查看状态。</aside>
+</section>
+
+<!-- 14 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>任务 4 · 12′ · 对照清单自查</h2><button class="more" data-pop="pop-l14-14-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>远程桌面已启用</li>
+        <li>NLA 已启用</li>
+        <li>RDP 端口已改为 3390</li>
+        <li>IT-Admins 在 Remote Desktop Users 组中</li>
+        <li>RD Gateway 角色已安装</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>DC1 拍快照<br><code>Lesson14-Done</code></p>
+        <p class="small muted" style="margin-top:8px">下节课继续学习远程管理</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对清单，五项全部达成才算完成。清单达成后运行 check14.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。快照前确认已用 3390 端口成功连接过一次。</aside>
+
+<template id="pop-l14-14-check">
+<h3>🧪 运行检查脚本 check14.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check14.ps1</pre>
+<h4>脚本检查什么（6 项判定 + 2 项采集）</h4>
+<ul>
+  <li><b>任务 1：</b>远程桌面已启用（fDenyTSConnections=0）、NLA 已启用（UserAuthentication=1）、IT-Admins 在 Remote Desktop Users 组中</li>
+  <li><b>任务 2：</b>RDP 端口已改为 3390 且在监听、防火墙放行 TCP 3390 入站</li>
+  <li><b>任务 3：</b>RD Gateway 角色已安装</li>
+  <li><b>采集：</b>远程桌面相关防火墙规则、TermService 服务状态</li>
+</ul>
+<div class="tip">改端口后若 3390 没监听，重启 <code>UmRdpService</code> 和 <code>TermService</code> 再测。全部 PASS 后拍快照 <code>Lesson14-Done</code>。</div>
+</template>
+</section>
+
+<!-- 15 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">远程管理省去跑机房，但 RDP 是高价值攻击目标，必须加固</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">启用 + 防火墙 → 授权 RD Users → 策略限制 → 改端口 3390</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">NLA 必开；改端口要先放行防火墙；公网走 RD Gateway</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 15 课：</b>远程管理工具。学习更多远程管理方式。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check14.ps1" download>check14.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check14.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. fDenyTSConnections 设为几表示允许远程连接？2. charlie 为什么连不上？3. 改 RDP 端口时为什么要先建防火墙规则？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

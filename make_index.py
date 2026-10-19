@@ -12,8 +12,10 @@ GROUPS = [
     ("基础模块", "项目 2 · Windows 服务器用户管理", [3, 4, 5]),
     ("基础模块", "项目 3 · Windows 服务器共享管理", [6, 7]),
     ("进阶模块", "项目 4 · Windows 服务器网站管理", [9, 10, 11, 12]),
+    ("阶段考核", "阶段考核 2 · 进阶模块 A", [13]),
+    ("进阶模块", "项目 5 · Windows 服务器远程管理", [14]),
 ]
-MOD_COLOR = {"基础模块": "var(--accent)", "进阶模块": "var(--green)"}
+MOD_COLOR = {"基础模块": "var(--accent)", "进阶模块": "var(--green)", "阶段考核": "var(--red)"}
 
 
 def text(s):
@@ -45,8 +47,9 @@ def main():
     rows, total_pages, n_pop, n_chk = [], 0, 0, 0
     last_mod = None
     for mod, proj, lessons in GROUPS:
+        is_exam = mod == "阶段考核"
         color = MOD_COLOR[mod]
-        if mod != last_mod:
+        if not is_exam and mod != last_mod:
             rows.append(f'<div class="mod" style="--c:{color}">{mod}</div>')
             last_mod = mod
         items = []
@@ -61,13 +64,13 @@ def main():
                 n_chk += 1
                 badges.append(f'<span class="ix-b ix-chk" title="downloads/check{n:02d}.ps1">🧪 check{n:02d}</span>')
             items.append(f'''
-      <a class="lesson" href="{i["file"]}">
+      <a class="lesson{' exam' if is_exam else ''}" href="{i["file"]}">
         <span class="no">{n:02d}</span>
         <span class="main"><span class="t">{html.escape(i["title"])}</span><span class="s">{html.escape(i["sub"])}</span></span>
         <span class="side"><span class="h">学时 {i["hours"]} · {i["pages"]} 页</span><span class="bs">{"".join(badges)}</span></span>
       </a>''')
         rows.append(f'''
-    <section class="grp" style="--c:{color}">
+    <section class="grp{' examgrp' if is_exam else ''}" style="--c:{color}">
       <h2>{html.escape(proj)}<span class="cnt">{f"第 {lessons[0]}–{lessons[-1]} 次课" if len(lessons) > 1 else f"第 {lessons[0]} 次课"}</span></h2>
       {"".join(items)}
     </section>''')
@@ -93,6 +96,7 @@ def main():
  .grp{{margin:14px 0 0;border-left:4px solid var(--c);background:var(--surface);border-radius:0 12px 12px 0;padding:14px 18px 10px}}
  .grp h2{{font-size:21px;margin:0 0 8px;display:flex;align-items:baseline;gap:14px}}
  .grp h2 .cnt{{font-size:14px;color:var(--muted);font-weight:400}}
+ .examgrp{{background:linear-gradient(90deg,rgba(255,86,48,.12),var(--surface) 60%)}}
  a.lesson{{display:flex;align-items:center;gap:18px;padding:10px 12px;border-radius:10px;color:inherit;text-decoration:none;border-top:1px solid var(--line)}}
  a.lesson:first-of-type{{border-top:none}}
  a.lesson:hover{{background:var(--surface2)}}
@@ -118,7 +122,7 @@ def main():
   <header>
     <div class="bar"></div>
     <h1>Windows 服务器配置与安全管理</h1>
-    <p>Windows Server 2022 · 红蓝对抗防御　|　已上完 第 1–7、9–10 次课（持续更新中）</p>
+    <p>Windows Server 2022 · 红蓝对抗防御　|　已上完 第 1–7、9–14 次课（持续更新中）</p>
     <div class="stats">
       <span><b>{total_pages}</b> 页幻灯片</span><span><b>{n_pop}</b> 课有详细步骤弹窗</span><span><b>{n_chk}</b> 课有检查脚本</span>
     </div>

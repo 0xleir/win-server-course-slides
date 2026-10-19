@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第13课 · 阶段考核 2 进阶模块A考核</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 4 · 网站管理　|　第 13 次课 · 学时 25–26</p>
+  <h1>🏁 阶段考核 2 · 进阶模块A考核</h1>
+  <p class="muted">IIS 网站 · HTTPS · FTP · IIS 安全配置</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">DC1 + CLIENT1</span></div>
+</div>
+<aside class="notes">开场先宣布：本次是严格个人考核，占总评 8%，从现在开始禁止交流。确认每位学生都已恢复到教师下发的 CR2-Start 快照，再开始计时。考核内容覆盖第 9–12 课：IIS 站点、HTTPS、IP 限制与请求过滤、FTP。</aside>
+</section>
+
+<!-- 02 考核说明 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">考核说明</span><h2>本次考核怎么考</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:24%">项目</th><th>说明</th></tr>
+      <tr><td><b>时长</b></td><td>80 分钟，总分 100 分</td></tr>
+      <tr><td><b>形式</b></td><td>VM 内上机操作，评分脚本自动打分</td></tr>
+      <tr><td><b>起始快照</b></td><td><code>CR2-Start</code>（基于 <code>S4-IISReady</code> 精简）</td></tr>
+      <tr><td><b>完成方式</b></td><td>个人独立完成，GUI 或 PowerShell 均可</td></tr>
+      <tr><td><b>评分脚本</b></td><td><code>C:\Scripts\Checkride02.ps1</code></td></tr>
+    </table>
+    <div class="callout"><b>考核范围：</b>第 9–12 课 —— IIS 站点与绑定、自签名证书与 HTTPS、IP 限制、请求过滤、FTP 用户隔离与 FTPS。</div>
+  </div>
+</div>
+<aside class="notes">教师课前确认：CR2-Start 已下发到每台机器，且 C:\Scripts\Checkride02.ps1 已预置。强调评分只看最终配置状态，不看过程，所以用图形界面还是命令都可以。提问：起始快照为什么要统一？——保证起点一致，评分公平。</aside>
+</section>
+
+<!-- 03 考场规则 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">考场规则</span><h2>可以做 / 不可以做</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card good">
+        <h3>✔ 可以</h3>
+        <ul class="points">
+          <li>从 <code>CR2-Start</code> 快照开始操作</li>
+          <li>任选 IIS 管理器或 PowerShell 完成</li>
+          <li>在 CLIENT1 上自测访问效果</li>
+          <li>环境故障（VM 卡死、无法启动）举手报告</li>
+        </ul>
+      </div>
+      <div class="card bad">
+        <h3>✘ 不可以</h3>
+        <ul class="points">
+          <li>与同学交流、查看他人屏幕</li>
+          <li>恢复到 <code>CR2-Start</code> 以外的快照</li>
+          <li>修改或删除 <code>C:\Scripts</code> 下的评分脚本</li>
+          <li>超时后继续操作</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout warn">阶段考核 1–3 是<b>严格个人考核</b>：成绩只代表你自己的操作能力。</div>
+  </div>
+</div>
+<aside class="notes">规则在开考前完整宣读一次。违规的具体处理按学校考务规定执行，开考前明确告知学生。巡视时重点关注：是否有人恢复了 S4-IISReady 等旧快照（旧快照里有现成的 LabFTP 等配置）。</aside>
+</section>
+
+<!-- 04 任务书：场景 + 任务A -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 A <span class="t">· 40 分 · DC1</span></span><h2>Web 站点部署</h2></div>
+  <div class="body">
+    <p class="muted">场景：公司需要部署内部网站和文件传输服务。</p>
+    <table class="tbl">
+      <tr><th style="width:10%">题号</th><th>要求</th><th style="width:12%">分值</th></tr>
+      <tr><td><b>A1</b></td><td>创建网站 <code>IntranetSite</code>，路径 <code>C:\WebSites\Intranet</code>，端口 80，主机名 <code>intranet.lab.local</code></td><td>10 分</td></tr>
+      <tr><td><b>A2</b></td><td>创建第二个网站 <code>APISite</code>，端口 8443，HTTPS，使用自签名证书</td><td>15 分</td></tr>
+      <tr><td><b>A3</b></td><td>对 <code>IntranetSite</code> 配置 IP 限制：仅允许 <code>10.10.10.0/24</code> 访问</td><td>10 分</td></tr>
+      <tr><td><b>A4</b></td><td>添加 DNS 记录 <code>intranet.lab.local</code></td><td>5 分</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">任务书页在开考时整体投屏，考试过程中保持在任务书页，方便学生随时对照。A2 原文没有指定 APISite 的物理路径和证书名称，学生自行选择即可，监考时不要替学生决定。A4 原文没写 IP，按本环境 IIS 所在的 DC1，即 10.10.10.10；若学生提问，统一口径回答。</aside>
+</section>
+
+<!-- 05 任务B -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 B <span class="t">· 35 分 · DC1</span></span><h2>FTP 服务</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:10%">题号</th><th>要求</th><th style="width:12%">分值</th></tr>
+      <tr><td><b>B1</b></td><td>创建 FTP 站点 <code>ExamFTP</code>，端口 21</td><td>10 分</td></tr>
+      <tr><td><b>B2</b></td><td>配置用户隔离（按用户名目录）</td><td>10 分</td></tr>
+      <tr><td><b>B3</b></td><td>为用户 <code>ftpuser1</code>（需创建）配置读写权限</td><td>10 分</td></tr>
+      <tr><td><b>B4</b></td><td>启用 SSL</td><td>5 分</td></tr>
+    </table>
+    <div class="callout"><b>参照：</b>第 12 课 <code>LabFTP</code> 的做法（目录结构、隔离方式、FTP SSL 设置）。</div>
+  </div>
+</div>
+<aside class="notes">B 部分的难点在 B2+B3 的配合：隔离模式"用户名目录"要求在 FTP 根目录下存在 LocalUser\ftpuser1 目录，否则 ftpuser1 登录失败。原文没有给出 ExamFTP 的根目录和 ftpuser1 的密码，由学生自定。注意 CR2-Start 中 LabFTP 可能仍占用 21 端口，若学生报"端口冲突"，属于考点之一，不提示具体做法。</aside>
+</section>
+
+<!-- 06 任务C -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 C <span class="t">· 25 分 · DC1</span></span><h2>IIS 安全配置</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:10%">题号</th><th>要求</th><th style="width:12%">分值</th></tr>
+      <tr><td><b>C1</b></td><td>请求过滤：拒绝 <code>.exe</code> <code>.bat</code> <code>.cmd</code> 扩展名</td><td>10 分</td></tr>
+      <tr><td><b>C2</b></td><td>配置 IIS 日志目录为 <code>C:\IISLogs</code></td><td>5 分</td></tr>
+      <tr><td><b>C3</b></td><td>设置默认文档顺序：<code>default.html</code> &gt; <code>index.html</code> &gt; <code>index.htm</code></td><td>10 分</td></tr>
+    </table>
+    <div class="callout"><b>完成全部任务后运行：</b><code>C:\Scripts\Checkride02.ps1</code></div>
+  </div>
+</div>
+<aside class="notes">C 部分原文没有说明是在服务器级别还是在某个站点上配置。建议考前与评分脚本核对后统一口径（例如：服务器级别配置，所有站点继承）。C3 考的是顺序，不仅仅是"存在"，学生容易只添加不调整顺序。</aside>
+</section>
+
+<!-- 07 评分标准 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">评分标准</span><h2>100 分怎么分配</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:24%">模块</th><th style="width:14%">题号</th><th style="width:12%">分值</th><th>考查重点</th></tr>
+      <tr><td><b>A · Web 站点</b></td><td>A1–A4</td><td>40 分</td><td>站点、主机名绑定、HTTPS、IP 限制、DNS</td></tr>
+      <tr><td><b>B · FTP 服务</b></td><td>B1–B4</td><td>35 分</td><td>FTP 站点、用户隔离、权限、SSL</td></tr>
+      <tr><td><b>C · 安全配置</b></td><td>C1–C3</td><td>25 分</td><td>请求过滤、日志目录、默认文档</td></tr>
+      <tr><td colspan="2"><b>合计</b></td><td><b>100 分</b></td><td>占课程总评 8%</td></tr>
+    </table>
+    <div class="callout">成绩<b>以 <code>Checkride02.ps1</code> 输出为准</b>：脚本检查的是最终配置状态。</div>
+  </div>
+</div>
+<aside class="notes">占比 8% 来自课程考核方案"阶段考核 1–5 每次 8%"。分值最高的单题是 A2（15 分），提醒学生合理分配时间。如有学生对脚本判分有异议，记录下来考后复核，考试中不当场争论。</aside>
+</section>
+
+<!-- 08 考试流程 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">考试流程</span><h2>80 分钟时间线</h2></div>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:5"><span class="t">5′</span><b>开考</b>恢复 CR2-Start<br>宣读规则</div>
+      <div class="seg" style="flex:31"><span class="t">建议 31′</span><b>任务 A</b>Web 站点<br>40 分</div>
+      <div class="seg" style="flex:22"><span class="t">建议 22′</span><b>任务 B</b>FTP 服务<br>35 分</div>
+      <div class="seg" style="flex:13"><span class="t">建议 13′</span><b>任务 C</b>安全配置<br>25 分</div>
+      <div class="seg" style="flex:9"><span class="t">9′</span><b>收尾</b>运行脚本<br>记录得分</div>
+    </div>
+    <div class="callout warn"><b>建议：</b>先做有把握的题，剩 10 分钟时无论是否做完，都要运行评分脚本。</div>
+  </div>
+</div>
+<aside class="notes">中间三段时长只是建议分配（原文只规定总时长 80 分钟），学生可以按任意顺序作答。监考在 40 分钟、70 分钟各提醒一次剩余时间。70 分钟时要求所有人开始运行评分脚本。</aside>
+</section>
+
+<!-- 09 提交与评分 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">提交与评分</span><h2>运行评分脚本</h2></div>
+  <div class="body">
+    <div class="code-cap">在 DC1 上，以管理员身份运行 PowerShell</div>
+<pre><code class="language-powershell" data-trim>
+C:\Scripts\Checkride02.ps1
+</code></pre>
+    <div class="grid2">
+      <ul class="points check">
+        <li>脚本按题号逐项检查 A1–C3</li>
+        <li>举手，由监考老师现场确认总分</li>
+        <li>确认后不得再修改配置</li>
+      </ul>
+      <div class="card">
+        <h3>📋 监考记录</h3>
+        <p>学号 · 总分 · 交卷时间</p>
+        <p class="small muted" style="margin-top:8px">截图脚本输出作为成绩凭证</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">脚本可以多次运行，学生在考试时间内可以自查后继续修正，以最后一次监考确认的结果为准。原文没有给出 Checkride02.ps1 的逐项检查清单，考前教师应自己跑一遍满分环境，确认脚本能正常判分。截图凭证的做法是本课件的补充建议。</aside>
+</section>
+
+<!-- 10 常见失分点 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">提醒</span><h2>常见失分点（据题目推断）</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:12%">题号</th><th style="width:44%">容易出错的地方</th><th>提醒</th></tr>
+      <tr><td>A1 / A4</td><td>主机名绑定写错，或忘了建 DNS 记录</td><td>在 CLIENT1 上 <code>Resolve-DnsName</code> 自测</td></tr>
+      <tr><td>A2</td><td>证书没绑定到 8443，或防火墙未放行</td><td>检查绑定类型是 https、端口 8443</td></tr>
+      <tr><td>A3</td><td>只加了允许条目，未把"未指定客户端"设为拒绝</td><td>回看第 11 课 HRPortal 的设置</td></tr>
+      <tr><td>B2 / B3</td><td>缺少 <code>LocalUser\ftpuser1</code> 目录</td><td>隔离模式按用户名找目录</td></tr>
+      <tr><td>C3</td><td>文档都在，但顺序不对</td><td>用"上移"调整到要求的顺序</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">这一页建议在考前 2 分钟展示，作为提醒而非答案，展示后切回任务书页。这些失分点是根据题目和第 9–12 课内容推断的，不是评分脚本的官方说明。考试中不要针对个别学生逐条提示，避免不公平。</aside>
+</section>
+
+<!-- 11 结束页 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>考核结束</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>考了什么</h3><p class="small">IIS 站点、HTTPS、IP 限制、FTP 隔离、请求过滤</p></div>
+      <div class="card blue"><h3>考后做什么</h3><p class="small">对照失分题号，回看第 9–12 课对应任务</p></div>
+      <div class="card blue"><h3>关键能力</h3><p class="small">没有分步提示时，独立把服务从零配到可用</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 14 课：</b>远程桌面服务（RDS），进入项目 5 · 远程管理。</div>
+  </div>
+</div>
+<aside class="notes">收卷后简要讲评：统计全班各题得分率，挑得分率最低的 1–2 道题现场演示正确做法。提醒学生下节课从教师指定的快照开始，不要在考核后的环境上继续做第 14 课。</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+</body>
+</html>
