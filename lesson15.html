@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第15课 · 远程管理工具</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 5 · 远程管理　|　第 15 次课 · 学时 29–30</p>
+  <h1>远程管理工具</h1>
+  <p class="muted">WinRM · PowerShell Remoting · MMC：不登录桌面也能管服务器</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM3</span></div>
+</div>
+<aside class="notes">开场提问：上节课我们用远程桌面管理服务器，如果要给 50 台服务器同时查一个服务状态，还要开 50 个 RDP 窗口吗？今天学的是"命令行级"的远程管理，这是运维自动化的基础。本课你独立操作：在 CLIENT1（管理端）上远程管理 DC1（被管理端），全程由你一人完成两台机器之间的切换与验证。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>概念</b>WinRM 原理<br>TrustedHosts</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 1</b>WinRM 配置</div>
+      <div class="seg" style="flex:24"><span class="t">24′</span><b>任务 2</b>PowerShell Remoting</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 3</b>MMC 与服务器管理器</div>
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>任务 4</b>验证</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清楚 WinRM、PowerShell Remoting、RDP 三者的区别</li>
+        <li>在工作组环境下配置 WinRM 与 TrustedHosts，建立远程会话</li>
+        <li>用 <code>Invoke-Command</code> 和 MMC 远程查看服务、进程和事件日志</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念部分压缩到 10 分钟，原文任务合计 80 分钟，概念可穿插在任务 1 的等待时间里讲。任务 2 是重点，留足 24 分钟让学生多敲几遍命令。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3 · 管理端<br>发起远程连接</div></div>
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · 被管理端<br>WinRM 监听 5985</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>环境：</b>仍是<b>工作组</b>模式（域在第 17 课才建），账号写 <code>DC-01\Administrator</code><span class="small muted">（DC-01 换成你自己的 DC 计算机名，即第 1 课的 DC-学号）</span></div>
+      <div class="callout"><b>方向：</b>CLIENT1 → DC1，你在 CLIENT1 上远程管理 DC1</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">开始前让学生在 CLIENT1 上 ping 10.10.10.10 确认网络通。强调现在没有域，所以凭据要写"计算机名\用户名"，这也是为什么需要 TrustedHosts。你在 CLIENT1 上发起连接，操作对象是 DC1。</aside>
+</section>
+
+<!-- 04 概念1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>RDP vs PowerShell Remoting</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>远程桌面 RDP（上节课）</h3>
+        <ul class="points">
+          <li>传输整个桌面画面，占带宽</li>
+          <li>一次只能操作一台服务器</li>
+          <li>靠人工点鼠标，难以自动化</li>
+          <li>端口 3389</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>PowerShell Remoting（本课）</h3>
+        <ul class="points">
+          <li>只传命令和结果对象，非常轻量</li>
+          <li>一条命令同时发给多台服务器</li>
+          <li>可写成脚本，天然适合自动化</li>
+          <li>基于 WinRM，端口 5985 / 5986</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>一句话：</b>RDP 适合"偶尔看一眼"，Remoting 适合"批量、重复地管"。</div>
+  </div>
+</div>
+<aside class="notes">提问：Server Core（无桌面版）上没有图形界面，你怎么管理它？答案就是 PowerShell Remoting 和远程 MMC。补充：5985 是 HTTP，5986 是 HTTPS；HTTP 下 WinRM 默认也会对内容加密（Kerberos/NTLM 会话加密）。</aside>
+</section>
+
+<!-- 05 概念2 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>一条远程命令是怎么跑起来的</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>① CLIENT1</b><code>Invoke-Command</code></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② WS-Man 协议</b>HTTP 5985</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>③ DC1 WinRM 服务</b>监听器 Listener</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 远端执行</b>wsmprovhost 进程</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>⑤ 结果回传</b>序列化对象</div>
+    </div>
+    <table class="tbl">
+      <tr><th>组件</th><th>作用</th></tr>
+      <tr><td><b>WinRM 服务</b></td><td>Windows 的远程管理服务，负责收发请求</td></tr>
+      <tr><td><b>Listener 监听器</b></td><td>在 5985 端口等待连接，<code>Enable-PSRemoting</code> 自动创建</td></tr>
+      <tr><td><b>防火墙规则</b></td><td>放行 5985 入站，同样由 <code>Enable-PSRemoting</code> 配好</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">Enable-PSRemoting 一条命令做了三件事：启动 WinRM 服务并设为自动、创建监听器、开防火墙规则。winrm quickconfig 是更老的等价命令。强调结果回来的是"序列化对象"，所以远程拿到的对象没有方法，只有属性。</aside>
+</section>
+
+<!-- 06 概念3 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>工作组里为什么要配 TrustedHosts</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card good">
+        <h3>域环境（第 17 课以后）</h3>
+        <ul class="points">
+          <li>用 Kerberos 认证</li>
+          <li>双方都能验证对方身份</li>
+          <li>不需要 TrustedHosts</li>
+        </ul>
+      </div>
+      <div class="card bad">
+        <h3>工作组环境（今天）</h3>
+        <ul class="points">
+          <li>只能用 NTLM，且用 IP 连接</li>
+          <li>客户端无法验证服务器是不是"真的"</li>
+          <li>默认拒绝 → 必须手动加入信任列表</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout warn"><b>注意：</b>TrustedHosts 配在<b>发起连接的一方</b>（Client 配置），意思是"我愿意把凭据交给这些主机"。</div>
+  </div>
+</div>
+<aside class="notes">这是本课最容易搞错的概念：TrustedHosts 不是"允许谁连我"，而是"我信任谁、愿意连它"。所以 CLIENT1 上必须把 10.10.10.10 加进去。课堂提问：把 TrustedHosts 设成 * 有什么风险？——凭据可能被发给冒充的服务器。</aside>
+</section>
+
+<!-- 07 任务1 DC1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 20′ · DC1</span></span><h2>在被管理端启用 WinRM</h2><button class="more" data-pop="pop-l15-t1a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l15-t1a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 DC1 上，以管理员身份运行 PowerShell</div>
+<pre><code class="language-powershell" data-trim>
+Enable-PSRemoting -Force
+winrm quickconfig
+
+# 查看配置与监听器
+winrm get winrm/config
+Get-WSManInstance winrm/config/listener -Enumerate
+</code></pre>
+    <div class="callout">监听器输出里应看到 <code>Transport = HTTP</code>、<code>Port = 5985</code>、<code>Enabled = true</code>。</div>
+  </div>
+</div>
+<aside class="notes">winrm quickconfig 在已启用的情况下会提示"WinRM 服务已在此计算机上运行"，这是正常的，不是报错。winrm get 输出很长，让学生重点找 Service 下的 AllowUnencrypted = false 和 Auth 部分。</aside>
+
+<template id="pop-l15-t1a-steps">
+  <h3>📋 详细步骤：在被管理端启用 WinRM</h3>
+  <h4>第一步：DC1 上，以管理员身份运行 PowerShell</h4>
+<pre>Enable-PSRemoting -Force
+winrm quickconfig
+</pre>
+  <p><code>Enable-PSRemoting</code> 一条命令会自动启动 WinRM 服务（并设为自动启动）、创建 HTTP 监听器、放行防火墙规则三件事。<code>winrm quickconfig</code> 是更老的等价命令，若已启用会提示"WinRM 服务已在此计算机上运行"，这是正常提示不是报错。</p>
+  <h4>第二步：查看配置与监听器</h4>
+<pre>winrm get winrm/config
+Get-WSManInstance winrm/config/listener -Enumerate
+</pre>
+  <p>重点看监听器输出里的 <code>Transport = HTTP</code>、<code>Port = 5985</code>、<code>Enabled = true</code>。<code>winrm get</code> 输出很长，可以重点找 Service 下的 <code>AllowUnencrypted = false</code> 和 Auth 部分。</p>
+</template>
+<template id="pop-l15-t1a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Enable-PSRemoting -Force</code></td><td>一步到位把被管理端配置为"可远程管理"：启动 WinRM 服务、建监听器、开防火墙规则。check 脚本用 <code>Get-Service WinRM</code> 核实服务是否 Running。</td></tr>
+    <tr><td>HTTP 监听器端口 5985</td><td>WinRM 默认走 HTTP 5985（HTTPS 是 5986）。check 脚本遍历 <code>WSMan:\localhost\Listener</code> 下所有监听器，确认存在 Transport=HTTP、Port=5985 的一条，这是 PowerShell Remoting 能连通的前提。</td></tr>
+    <tr><td>防火墙放行 5985</td><td>即使服务和监听器都好了，防火墙不放行照样连不进来。<code>Enable-PSRemoting</code> 会自动开好这条规则（通常是"Windows 远程管理(HTTP-In)"组）。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li><code>Get-Service WinRM</code> 不是 Running：重新执行 <code>Enable-PSRemoting -Force</code></li>
+    <li>监听器列表里没有 HTTP:5985：同样用 <code>Enable-PSRemoting -Force</code> 会自动创建</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务1 TrustedHosts -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 20′ · DC1 + CLIENT1</span></span><h2>配置 TrustedHosts</h2><button class="more" data-pop="pop-l15-t1b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l15-t1b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>① DC1：信任整个实验网段</h3>
+<pre><code class="language-powershell" data-trim>
+Set-Item WSMan:\localhost\Client\TrustedHosts `
+  -Value "10.10.10.*" -Force
+</code></pre>
+      </div>
+      <div class="card blue">
+        <h3>② CLIENT1：管理员 PowerShell</h3>
+<pre><code class="language-powershell" data-trim>
+Enable-PSRemoting -Force
+Set-Item WSMan:\localhost\Client\TrustedHosts `
+  -Value "10.10.10.10" -Force
+</code></pre>
+      </div>
+    </div>
+<pre><code class="language-powershell" data-trim>
+# 两台都可以这样确认
+Get-Item WSMan:\localhost\Client\TrustedHosts
+</code></pre>
+  </div>
+</div>
+<aside class="notes">对比两种写法：DC1 用通配符信任整个网段（方便但范围大），CLIENT1 只信任 DC1 一个 IP（最小化原则）。注意 Set-Item 是覆盖而不是追加，如需追加要加 -Concatenate。Win10 上 Enable-PSRemoting 如果报"网络连接类型为公用"，见排障页。</aside>
+
+<template id="pop-l15-t1b-steps">
+  <h3>📋 详细步骤：配置 TrustedHosts</h3>
+  <h4>第一步：DC1 上信任整个实验网段</h4>
+<pre>Set-Item WSMan:\localhost\Client\TrustedHosts `
+  -Value "10.10.10.*" -Force
+</pre>
+  <h4>第二步：CLIENT1 上，管理员 PowerShell</h4>
+<pre>Enable-PSRemoting -Force
+Set-Item WSMan:\localhost\Client\TrustedHosts `
+  -Value "10.10.10.10" -Force
+</pre>
+  <p>CLIENT1 只信任 DC1 这一个 IP（最小化原则），和 DC1 上信任整个网段的写法做对比。</p>
+  <h4>第三步：两台都确认一次</h4>
+<pre>Get-Item WSMan:\localhost\Client\TrustedHosts
+</pre>
+  <div class="tip"><code>Set-Item</code> 是<b>覆盖</b>而不是追加写入，如果已经有值还想追加，需要加 <code>-Concatenate</code> 参数，否则旧值会被直接覆盖掉。</div>
+  <div class="tip">Win10 上 <code>Enable-PSRemoting</code> 如果报"网络连接类型为公用"，加 <code>-SkipNetworkProfileCheck</code> 参数或把网络改为专用。</div>
+</template>
+<template id="pop-l15-t1b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>TrustedHosts 配在<b>发起连接的一方</b></td><td>工作组环境用 NTLM，客户端没法像域里的 Kerberos 那样验证服务器身份，所以要显式声明"我信任这些主机，愿意把凭据交给它们"——这是客户端（发起方）单方面的信任声明，不是服务端的访问控制。</td></tr>
+    <tr><td>DC1 写 <code>10.10.10.*</code>，CLIENT1 写 <code>10.10.10.10</code></td><td>示范两种粒度：DC1 作为常被连接的一方信任整个网段比较方便；CLIENT1 作为今天唯一的管理端只需要信任 DC1 一个 IP，体现最小化授权原则。</td></tr>
+    <tr><td>check 脚本判定逻辑</td><td>check15.ps1 用正则匹配 TrustedHosts 的值，含 <code>10.10.10.*</code> 或精确的 <code>10.10.10.10</code> 都算 PASS，和这里两种配法对应。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>报"WinRM 客户端无法处理该请求"：先检查<b>发起连接那一端</b>（通常是 CLIENT1）的 TrustedHosts 有没有配，而不是去查 DC1</li>
+    <li><code>Get-Item WSMan:\localhost\Client\TrustedHosts</code> 的 Value 是空的：说明还没配置过，用 Set-Item 补上</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 交互式 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 24′ · CLIENT1</span></span><h2>交互式远程会话</h2><button class="more" data-pop="pop-l15-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l15-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$cred = Get-Credential   # 输入 DC-01\Administrator
+Enter-PSSession -ComputerName 10.10.10.10 -Credential $cred
+
+[10.10.10.10]: PS> hostname
+[10.10.10.10]: PS> Get-Service W3SVC
+[10.10.10.10]: PS> exit
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>提示符变了</b>：前缀 <code>[10.10.10.10]:</code> 说明命令在 DC1 上执行</div>
+      <div class="callout warn"><b>hostname 应返回 DC1</b>，不是 CLIENT1；<code>exit</code> 回到本机</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">Get-Credential 弹框里用户名一定要写 DC-01\Administrator，只写 Administrator 会被当成 CLIENT1 的本地账号。W3SVC 是第 9–13 课装的 IIS 服务，应显示 Running。你可以在 DC1 上开另一个窗口观察任务管理器里的 wsmprovhost.exe 进程，验证远程会话确实建立了。</aside>
+
+<template id="pop-l15-t2a-steps">
+  <h3>📋 详细步骤：交互式远程会话</h3>
+  <h4>第一步：CLIENT1 上准备凭据</h4>
+<pre>$cred = Get-Credential   # 输入 DC-01\Administrator
+</pre>
+  <div class="tip">用户名一定要写 <code>DC-01\Administrator</code>，只写 Administrator 会被当成 CLIENT1 本机的账号，找不到会报错。</div>
+  <h4>第二步：建立交互式会话</h4>
+<pre>Enter-PSSession -ComputerName 10.10.10.10 -Credential $cred
+</pre>
+  <p>成功后提示符会变成 <code>[10.10.10.10]: PS&gt;</code>，前缀说明接下来的命令实际在 DC1 上执行。</p>
+  <h4>第三步：在远程会话里执行命令</h4>
+<pre>[10.10.10.10]: PS> hostname
+[10.10.10.10]: PS> Get-Service W3SVC
+[10.10.10.10]: PS> exit
+</pre>
+  <p><code>hostname</code> 应返回 DC1（不是 CLIENT1），<code>Get-Service W3SVC</code> 应显示 Running（第 9–13 课装的 IIS 服务）。<code>exit</code> 退出会话回到本机。</p>
+  <div class="tip">可以让 DC1 这边同时打开任务管理器观察：会话期间会出现一个 <code>wsmprovhost.exe</code> 进程，退出后消失。</div>
+</template>
+<template id="pop-l15-t2a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Get-Credential</code> + <code>DC-01\Administrator</code></td><td>工作组环境没有域账号可以隐式信任，必须显式用"计算机名\用户名"指明凭据属于哪台机器的本地账户。</td></tr>
+    <tr><td><code>Enter-PSSession</code></td><td>建立一个持续的交互式远程会话，像"远程登录一个 shell"，适合临时排查、逐条试命令，但只能连一台机器。</td></tr>
+    <tr><td>提示符 <code>[10.10.10.10]:</code></td><td>这是用来确认"我现在敲的命令是在哪台机器上跑"的最直观标志，避免误以为还在本机操作。</td></tr>
+    <tr><td><code>wsmprovhost.exe</code> 进程</td><td>WinRM 服务端用来承载远程会话的宿主进程，会话建立时出现、退出后消失，是验证"远程命令确实在对端执行"的另一个证据。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>连接失败且提示和认证有关：先确认 CLIENT1 的 TrustedHosts 配了没，再确认账号前缀写对了没</li>
+    <li>hostname 返回的是 CLIENT1 而不是 DC1：说明命令其实没有在远程会话里执行，检查提示符是否真的切换了</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 Invoke-Command -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 24′ · CLIENT1</span></span><h2>Invoke-Command：一次性远程执行</h2><button class="more" data-pop="pop-l15-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l15-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">2.2 远程查看 CPU 占用前 5 的进程</div>
+<pre><code class="language-powershell" data-trim>
+Invoke-Command -ComputerName 10.10.10.10 -Credential $cred `
+  -ScriptBlock {
+    Get-Process | Sort-Object CPU -Descending |
+      Select-Object -First 5
+  }
+</code></pre>
+    <div class="code-cap">2.3 多台并行（概念演示）· 2.4 远程运行本地脚本</div>
+<pre><code class="language-powershell" data-trim>
+Invoke-Command -ComputerName 10.10.10.10,10.10.10.100 `
+  -Credential $cred -ScriptBlock { hostname }
+Invoke-Command -ComputerName 10.10.10.10 -Credential $cred `
+  -FilePath C:\LabFiles\remote-check.ps1
+</code></pre>
+  </div>
+</div>
+<aside class="notes">Enter-PSSession 像"打电话聊天"，Invoke-Command 像"发一条短信等回复"，后者才适合脚本化。结果里会多一列 PSComputerName，标明是哪台机器返回的。-FilePath 的脚本放在 CLIENT1 本地，由 PowerShell 读取后发到远端执行，DC1 上不需要有这个文件。</aside>
+
+<template id="pop-l15-t2b-steps">
+  <h3>📋 详细步骤：Invoke-Command 一次性远程执行</h3>
+  <h4>第一步：2.2 远程查看 CPU 占用前 5 的进程</h4>
+<pre>Invoke-Command -ComputerName 10.10.10.10 -Credential $cred `
+  -ScriptBlock {
+    Get-Process | Sort-Object CPU -Descending |
+      Select-Object -First 5
+  }
+</pre>
+  <p>结果里会多出一列 <code>PSComputerName</code>，标明这行数据是哪台机器返回的（和 Enter-PSSession 不同，这里是"发一次命令、等结果回来"，不维持持续会话）。</p>
+  <h4>第二步：2.3 多台并行（概念演示）</h4>
+<pre>Invoke-Command -ComputerName 10.10.10.10,10.10.10.100 `
+  -Credential $cred -ScriptBlock { hostname }
+</pre>
+  <div class="tip">10.10.10.100 不在 CLIENT1 的 TrustedHosts 里，这一台很可能报错，只要 10.10.10.10（DC1）那一行成功即可，这正好展示 Invoke-Command 对多目标的容错——一台失败不影响其他机器。</div>
+  <h4>第三步：2.4 远程运行本地脚本</h4>
+<pre>Invoke-Command -ComputerName 10.10.10.10 -Credential $cred `
+  -FilePath C:\LabFiles\remote-check.ps1
+</pre>
+  <p><code>remote-check.ps1</code> 放在 CLIENT1 本地，PowerShell 会读取这个文件内容后发送到 DC1 执行，DC1 上不需要真的存在这个文件。</p>
+</template>
+<template id="pop-l15-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Invoke-Command</code> vs <code>Enter-PSSession</code></td><td>Enter-PSSession 像"打电话聊天"（持续交互），Invoke-Command 像"发一条短信等回复"（一次性执行拿结果），后者天然适合写进脚本自动化、批量跑。</td></tr>
+    <tr><td><code>-ComputerName A,B</code> 多目标</td><td>一条命令同时发给多台服务器，这是 PowerShell Remoting 相比 RDP"一次只能操作一台"的核心优势，体现了"批量管理"。</td></tr>
+    <tr><td><code>PSComputerName</code> 列</td><td>多台机器的结果会混在一起返回，这一列用来区分每条结果到底来自哪台机器。</td></tr>
+    <tr><td><code>-FilePath</code> 本地脚本远程跑</td><td>脚本内容留在管理端（CLIENT1），不需要提前把脚本拷贝到每台被管理服务器上，便于集中维护一份脚本管理一批机器。</td></tr>
+    <tr><td>check 脚本里的等价验证</td><td>check15.ps1 用 <code>Invoke-Command -ComputerName 10.10.10.10 -ScriptBlock { $env:COMPUTERNAME }</code> 作为"PowerShell Remoting 可用"的判定依据，和这里 2.2/2.4 的用法是同一个 cmdlet。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>10.10.10.100 那一行报错是预期的，不代表任务失败，只要 DC1 那一行成功</li>
+    <li>连 DC1 都失败：回到任务 1，检查 WinRM 服务、TrustedHosts、防火墙三项</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务2 预期结果 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 2 验证</span><h2>两种方式对比与预期结果</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:26%">命令</th><th style="width:30%">适用场景</th><th>看到这个说明成功</th></tr>
+      <tr><td><code>Enter-PSSession</code></td><td>临时登录一台机器排查</td><td>提示符带 <code>[10.10.10.10]:</code></td></tr>
+      <tr><td><code>-ScriptBlock</code></td><td>批量执行一小段命令</td><td>输出多一列 <code>PSComputerName</code></td></tr>
+      <tr><td>多台 <code>-ComputerName</code></td><td>同时管多台服务器</td><td>每台各返回一行主机名</td></tr>
+      <tr><td><code>-FilePath</code></td><td>执行写好的检查脚本</td><td>显示 remote-check.ps1 的检查输出</td></tr>
+    </table>
+    <div class="callout warn"><b>2.3 是概念演示：</b>10.10.10.100 不在 CLIENT1 的 TrustedHosts 里，可能报错，只要 DC1 那一行成功即可。</div>
+  </div>
+</div>
+<aside class="notes">多台并行时，一台失败不影响其他机器，错误会以红字单独显示，这正好展示了 Invoke-Command 的容错特性。可以让学生思考：如果想让 10.10.10.100 也成功，需要改哪台机器的什么配置？</aside>
+</section>
+
+<!-- 12 任务3 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 16′ · CLIENT1 / DC1</span></span><h2>MMC 远程管理与服务器管理器</h2><button class="more" data-pop="pop-l15-t3-steps">📋 详细步骤</button><button class="more" data-pop="pop-l15-t3-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">3.1 服务器管理器添加远程服务器（CLIENT1 需有 RSAT，否则在 DC1 上做）</div>
+    <div class="crumb"><span>服务器管理器</span><i>›</i><span>添加要管理的服务器</span><i>›</i><span>DNS</span><i>›</i><span>输入 IP 并添加</span></div>
+    <div class="code-cap">3.2 MMC 远程计算机管理</div>
+    <div class="crumb"><span>mmc</span><i>›</i><span>文件</span><i>›</i><span>添加/删除管理单元</span><i>›</i><span>计算机管理</span><i>›</i><span>另一台计算机：10.10.10.10</span></div>
+    <div class="code-cap">3.3 远程事件查看器</div>
+    <div class="crumb"><span>eventvwr.msc</span><i>›</i><span>右键"事件查看器(本地)"</span><i>›</i><span>连接到另一台计算机</span></div>
+    <div class="callout"><b>MMC 走的不是 WinRM</b>：计算机管理、事件查看器主要用 RPC/DCOM，需要防火墙放行对应规则。</div>
+  </div>
+</div>
+<aside class="notes">工作组环境下 MMC 连远程常报"拒绝访问"，可以先在 CLIENT1 执行 cmdkey /add:10.10.10.10 /user:DC-01\Administrator /pass 保存凭据（会提示输入密码），或连接时选"以其他用户身份连接"。服务器管理器则使用 WinRM，可与任务 1 联系起来。如果 CLIENT1 没装 RSAT，也可以直接切到 DC1 本机上用服务器管理器操作，验证效果是一样的。</aside>
+
+<template id="pop-l15-t3-steps">
+  <h3>📋 详细步骤：MMC 远程管理与服务器管理器</h3>
+  <h4>3.1 服务器管理器添加远程服务器</h4>
+  <div class="crumb"><span>服务器管理器</span><i>›</i><span>添加要管理的服务器</span><i>›</i><span>DNS</span><i>›</i><span>输入 IP 并添加</span></div>
+  <p>CLIENT1 需要装了 RSAT（远程服务器管理工具）才能用；没装的话就直接在 DC1 本机上操作服务器管理器。服务器管理器走的是 WinRM，所以要先完成任务 1。</p>
+  <h4>3.2 MMC 远程计算机管理</h4>
+  <div class="crumb"><span>mmc</span><i>›</i><span>文件</span><i>›</i><span>添加/删除管理单元</span><i>›</i><span>计算机管理</span><i>›</i><span>另一台计算机：10.10.10.10</span></div>
+  <h4>3.3 远程事件查看器</h4>
+  <div class="crumb"><span>eventvwr.msc</span><i>›</i><span>右键"事件查看器(本地)"</span><i>›</i><span>连接到另一台计算机</span></div>
+  <h4>遇到"拒绝访问"怎么办</h4>
+<pre>cmdkey /add:10.10.10.10 /user:DC-01\Administrator /pass
+</pre>
+  <p>运行后会提示输入密码，保存后 MMC 连接时就不用每次重新输入凭据；也可以在连接对话框里直接选"以其他用户身份连接"。</p>
+</template>
+<template id="pop-l15-t3-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>MMC（计算机管理 / 事件查看器）走 RPC/DCOM</td><td>和服务器管理器不同，这两个传统 MMC 管理单元连远程主要靠 RPC/DCOM 协议，不是 WinRM，所以需要防火墙放行对应的"远程事件日志管理"等规则组，和任务 1 配的 WinRM 规则是两套独立的防火墙放行项。</td></tr>
+    <tr><td>服务器管理器走 WinRM</td><td>与任务 1 的 WinRM 配置直接相关：WinRM 没配好，服务器管理器添加远程服务器这一步也会失败。</td></tr>
+    <tr><td><code>cmdkey /add</code> 保存凭据</td><td>工作组环境下每次连接都要输入"计算机名\用户名+密码"比较麻烦，cmdkey 把凭据缓存到 Windows 凭据管理器，后续 MMC/mstsc 等连接可以直接复用。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>MMC 报"拒绝访问"：用 cmdkey 保存一次凭据，或连接时显式选"以其他用户身份连接"</li>
+    <li>服务器管理器添加失败：回到任务 1 用 <code>Test-WSMan 10.10.10.10</code> 先确认 WinRM 端点是否就绪</li>
+    <li>事件查看器连不上：检查 DC1 防火墙是否放行"远程事件日志管理"相关规则组</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>远程连不上？按这个顺序查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:32%">现象</th><th style="width:30%">原因</th><th>处理</th></tr>
+      <tr><td>"WinRM 客户端无法处理该请求"</td><td>TrustedHosts 没配</td><td>在 CLIENT1 上加 10.10.10.10</td></tr>
+      <tr><td>Enable-PSRemoting 报"公用网络"</td><td>Win10 网卡被识别为公用</td><td><code>-SkipNetworkProfileCheck</code> 或改为专用网络</td></tr>
+      <tr><td>拒绝访问</td><td>账号没写机器前缀</td><td>写成 <code>DC-01\Administrator</code></td></tr>
+      <tr><td>连接超时</td><td>5985 未放行 / 服务未启动</td><td><code>Test-WSMan 10.10.10.10</code> 检查</td></tr>
+      <tr><td>MMC 连接失败</td><td>RPC 防火墙规则未开</td><td>DC1 放行"远程事件日志管理"等规则</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">Test-WSMan 是最快的探测手段：返回协议版本信息就说明 WinRM 端口通、服务在跑，剩下就是认证问题。先让学生自己用 Test-WSMan 定位是"网络层"还是"认证层"问题，再对照此表。</aside>
+</section>
+
+<!-- 14 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>任务 4 · 12′ · 对照清单自查</h2><button class="more" data-pop="pop-l15-14-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>WinRM 服务运行中</li>
+        <li>TrustedHosts 已配置</li>
+        <li>PowerShell Remoting 可用</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>DC1 与 CLIENT1 都拍快照<br><code>Lesson15-Done</code></p>
+        <p class="small muted" style="margin-top:8px">下节课在此基础上做安全加固</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">两台机器都逐项核对一次清单，因为两边都配置了 WinRM 和 TrustedHosts。清单达成后在 DC1 运行 check15.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。如果"Remoting 可用"一项不达成，先回到排障页用 Test-WSMan 定位。快照前确认已 exit 退出所有远程会话。</aside>
+
+<template id="pop-l15-14-check">
+<h3>🧪 运行检查脚本 check15.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check15.ps1</pre>
+<h4>脚本检查什么（5 项判定 + 2 项采集，在 DC1 上跑）</h4>
+<ul>
+  <li><b>任务 1：</b>WinRM 服务运行中、HTTP 监听器（端口 5985）、防火墙放行 5985 入站、TrustedHosts 含实验网段</li>
+  <li><b>任务 2：</b>PowerShell Remoting 可用（本机对 10.10.10.10 发起远程执行成功 / Test-WSMan OK）</li>
+  <li><b>采集：</b>WinRM 监听器清单、WinRM 相关入站防火墙规则</li>
+</ul>
+<div class="tip">脚本在 DC1（被管理端）上跑，验证的是被管理端 WinRM 端点是否就绪。全部 PASS 后拍快照 <code>Lesson15-Done</code>。</div>
+</template>
+</section>
+
+<!-- 15 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">命令级远程管理轻量、可批量、可脚本化，是自动化运维的基础</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small"><code>Enable-PSRemoting</code> → TrustedHosts → <code>Enter-PSSession</code> / <code>Invoke-Command</code></p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">工作组下 TrustedHosts 配在发起端，账号写 <code>DC-01\Administrator</code></p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 16 课：</b>远程访问安全加固。今天打开的 RDP、WinRM 入口，下节课学习如何收紧。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check15.ps1" download>check15.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 DC1 以管理员身份运行 <code>check15.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. WinRM 默认 HTTP 端口是多少？2. TrustedHosts 应该配在管理端还是被管理端？3. Enter-PSSession 和 Invoke-Command 各适合什么场景？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>
