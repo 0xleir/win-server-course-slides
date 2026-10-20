@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第16课 · 远程访问安全加固</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 5 · 远程管理　|　第 16 次课 · 学时 31–32</p>
+  <h1>远程访问安全加固</h1>
+  <p class="muted">远程能连上只是第一步，"只让该连的人、用安全的方式连"才算完成</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 DC1 + VM3 CLIENT1</span></div>
+</div>
+<aside class="notes">开场提问：第 14、15 课我们打开了 RDP 和 WinRM，现在任何能访问 10.10.10.10 的人都能尝试登录，这安全吗？今天是项目 5 的收尾课，结束时要拍关键快照 S5-RemoteReady。操作建议：你在 DC1 上一步一步做加固，每做完一步就切到 CLIENT1 窗口"连一下试试"，确认没有把自己锁在外面，再继续下一步。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>概念</b>攻击面<br>纵深防御</div>
+      <div class="seg" style="flex:24"><span class="t">24′</span><b>任务 1</b>RDP 安全加固<br>审计 · 会话 · 重定向</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 2</b>WinRM 安全加固<br>HTTPS · IP 过滤</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 3</b>防火墙基线<br>默认阻止入站</div>
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>任务 4</b>验证 · 快照</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说出 RDP、WinRM 各自的攻击面，以及"纵深防御"的几道关卡</li>
+        <li>用组策略限制 RDP 会话数、超时和剪贴板/驱动器重定向</li>
+        <li>配置 WinRM HTTPS 监听器，并把防火墙改为默认阻止入站</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念部分控制在 10 分钟，原文四个任务正好 80 分钟，概念可以穿插在任务之间讲。任务 3 改默认入站策略是本课风险最高的一步，务必先确认放行规则都在，再执行。</aside>
+</section>
+
+<!-- 02b 概念：教材补充 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>默认端口 3389：方便，也最危险</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>3389 的风险</h3>
+        <ul class="points">
+          <li>远程桌面默认监听 TCP 3389，人尽皆知</li>
+          <li>直接暴露外网，极易成为攻击目标</li>
+          <li>自动化扫描器专门扫 3389 做暴力破解</li>
+          <li>曾有服务器因未改默认端口遭勒索病毒攻击</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>改默认端口</h3>
+        <ul class="points">
+          <li>注册表 <code>PortNumber</code> 改为非 3389</li>
+          <li>避开针对 3389 的自动化扫描</li>
+          <li>常规却相对有效的加固手段</li>
+          <li>需同步放行防火墙新端口</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout warn"><b>要点：</b>改端口只是"隐藏"，挡不住全端口扫描；必须配合 NLA、强密码、审计、防火墙等纵深防御。</div>
+  </div>
+</div>
+<aside class="notes">教材补充：远程桌面是网络管理员最常用的工具之一，外网访问时非常方便，但它默认的 3389 端口太容易受到攻击。教材里举了真实案例——有客户的服务器就因为没有更改默认端口而遭到勒索病毒攻击，幸亏提前在别的设备做了备份，只是重装服务器损失了一些时间。所以更改远程桌面的默认端口，是一项常规却相对有效的手段：通过注册表把 PortNumber 从 3389 改掉，就能避开那些专门扫 3389 的自动化攻击工具。但要强调，改端口只是"隐藏入口"，用 nmap 做全端口扫描照样能发现，所以它只是辅助手段，真正的安全还要靠本课后面要做的 NLA、强密码、登录审计、会话限制和防火墙默认阻止等纵深防御。改端口后别忘了在防火墙放行新端口，否则自己也连不上。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · 被加固的服务器<br>RDP 3390 · WinRM</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3 · 远程管理端<br>mstsc · PowerShell</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>起点：</b>第 15 课快照 <code>Lesson15-Done</code>，RDP 端口已是 3390，WinRM HTTP 可用</div>
+      <div class="callout"><b>终点：</b>RDP 受限、WinRM 走 HTTPS、防火墙默认阻止入站，拍 <code>S5-RemoteReady</code></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">本课只用 DC1 和 CLIENT1，SVR2 可以不开机，节省主机资源。注意此时还是工作组环境，lab.local 域要到第 17 课才创建。你主要在 DC1 上操作，同时在 CLIENT1 上保持一个 mstsc 窗口，方便随时切过去测试连接是否正常。</aside>
+</section>
+
+<!-- 04 概念1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>远程入口就是攻击面</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>只"能用"的远程访问</h3>
+        <ul class="points">
+          <li>任何 IP 都能尝试连接 RDP / WinRM</li>
+          <li>登录失败不留记录，被暴力破解也不知道</li>
+          <li>剪贴板、磁盘可随意在两端复制文件</li>
+          <li>WinRM 走 HTTP 5985，依赖 NTLM/Kerberos 加密</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>加固后的远程访问</h3>
+        <ul class="points">
+          <li>防火墙默认阻止，只放行必要端口</li>
+          <li>登录成功/失败全部审计</li>
+          <li>限制会话数和空闲断开时间</li>
+          <li>禁止重定向，WinRM 改走 HTTPS 5986</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>一句话：</b>改端口（第 14 课）只能挡住扫描器，真正的安全靠层层设卡。</div>
+  </div>
+</div>
+<aside class="notes">提问：第 14 课把 RDP 改成 3390，算不算安全措施？引导学生说出"只是隐藏，nmap 全端口扫描照样能发现"。RDP 暴力破解是勒索软件最常见的入侵途径之一，可以举新闻案例。</aside>
+</section>
+
+<!-- 05 概念2 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>纵深防御：一次连接要过几道关</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>① 防火墙</b>端口放行吗？<br>任务 3</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 来源过滤</b>IP 在白名单吗？<br>任务 2.2</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>③ 加密通道</b>TLS 证书<br>任务 2.1</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 认证+审计</b>谁登录了？<br>任务 1.1</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>⑤ 会话控制</b>多少人·多久·能带走什么<br>任务 1.2–1.4</div>
+    </div>
+    <div class="callout warn"><b>原则：</b>任何一道关被突破，后面的关卡仍然有效；不要把安全押在单一措施上。</div>
+  </div>
+</div>
+<aside class="notes">这页是本课的"地图"，每做完一个任务回到这里打勾。提问：如果攻击者已经拿到了管理员密码，哪几道关还能起作用？答案：①②仍能挡住非白名单来源，④至少能留下证据。</aside>
+</section>
+
+<!-- 06 概念3 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>WinRM：HTTP 5985 vs HTTPS 5986</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>对比项</th><th>HTTP 监听器</th><th>HTTPS 监听器</th></tr>
+      <tr><td>端口</td><td>5985</td><td>5986</td></tr>
+      <tr><td>传输加密</td><td>靠认证协议加密消息内容</td><td>TLS 加密整个通道</td></tr>
+      <tr><td>服务器身份</td><td>工作组下无法验证</td><td>证书证明"我就是 dc1"</td></tr>
+      <tr><td>需要什么</td><td><code>Enable-PSRemoting</code> 即可</td><td>证书 + 新建监听器 + 放行端口</td></tr>
+    </table>
+    <div class="callout"><b>自签名证书：</b>能加密，但客户端不信任它；正式环境应由 CA 签发（第 23 课 AD CS 会讲）。</div>
+  </div>
+</div>
+<aside class="notes">第 15 课在工作组里要设 TrustedHosts，正是因为 HTTP 方式无法验证服务器身份。HTTPS 监听器要绑定证书指纹（Thumbprint），证书的 DnsName 应与客户端连接时用的名字一致。</aside>
+</section>
+
+<!-- 07 任务1 审计+会话 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 24′ · DC1</span></span><h2>RDP 加固 ①：登录审计</h2><button class="more" data-pop="pop-l16-t1a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l16-t1a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">1.1 在 DC1 上，以管理员身份运行（PowerShell 或 cmd）</div>
+<pre><code class="language-powershell" data-trim>
+# 登录 (Logon)
+auditpol /set /subcategory:"{0CCE9215-69AE-11D9-BED3-505054503030}" `
+  /success:enable /failure:enable
+# 其他登录/注销事件 (Other Logon/Logoff Events)
+auditpol /set /subcategory:"{0CCE921C-69AE-11D9-BED3-505054503030}" `
+  /success:enable /failure:enable
+auditpol /get /category:"{69979849-797A-11D9-BED3-505054503030}"   # 登录/注销
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>4624 / 4625：</b>登录成功 / 失败，RDP 登录类型为 10</div>
+      <div class="callout"><b>4778 / 4779：</b>会话重新连接 / 断开（Other Logon/Logoff）</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">原文命令是一行写完的，这里用反引号续行以便显示，cmd 中请写成一行。最后一条 auditpol /get 是补充的查看命令，确认两项都是"成功和失败"。让 B 在 CLIENT1 故意输错一次密码，A 在事件查看器"安全"日志中找 4625。子类别名跟系统语言走：中文系统写英文名会报 0x57，所以统一用 GUID（任何语言通用，必须加引号）；中文系统也可以直接写中文名，如 /subcategory:"登录"。</aside>
+
+<template id="pop-l16-t1a-steps">
+  <h3>📋 详细步骤：RDP 加固 ① 登录审计</h3>
+  <h4>第一步：在 DC1 上以管理员身份打开 PowerShell 或 cmd</h4>
+  <h4>第二步：开启"登录"子类别的成功+失败审计</h4>
+<pre>auditpol /set /subcategory:"{0CCE9215-69AE-11D9-BED3-505054503030}" /success:enable /failure:enable</pre>
+  <div class="tip">子类别名跟系统语言走：中文系统写英文名（如 Logon）会报 0x57，必须统一用 GUID，且 GUID 必须加引号，否则会被 PowerShell 当成脚本块也报 0x57。中文系统也可以直接写中文名，如 <code>/subcategory:"登录"</code>。</div>
+  <h4>第三步：开启"其他登录/注销事件"子类别的成功+失败审计</h4>
+<pre>auditpol /set /subcategory:"{0CCE921C-69AE-11D9-BED3-505054503030}" /success:enable /failure:enable</pre>
+  <p>这个子类别记录会话重新连接（4778）/断开（4779）事件。</p>
+  <h4>第四步：确认两项都已是"成功和失败"</h4>
+<pre>auditpol /get /category:"{69979849-797A-11D9-BED3-505054503030}"   # 登录/注销</pre>
+  <p>命令输出里"登录"和"其他登录/注销事件"两行都应显示"成功和失败"。</p>
+  <h4>第五步：验证效果</h4>
+  <p>让搭档在 CLIENT1 上用 <code>mstsc /v:10.10.10.10:3390</code> 故意输错一次密码，再在 DC1 事件查看器"安全"日志里按事件 ID 4625 查找该次失败登录（RDP 登录类型为 10）。</p>
+</template>
+<template id="pop-l16-t1a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>{0CCE9215-...}</code>（登录 Logon）</td><td>记录每一次登录尝试，成功=4624，失败=4625；RDP 登录会标 LogonType=10，是判断暴力破解的核心证据</td></tr>
+    <tr><td><code>{0CCE921C-...}</code>（其他登录/注销事件）</td><td>记录会话重新连接 4778 / 断开 4779，用于追踪 RDP 会话的"挂起-恢复"行为</td></tr>
+    <tr><td><code>/success:enable /failure:enable</code></td><td>两种结果都要记录——只记成功看不到攻击尝试，只记失败看不到谁真的登录成功了</td></tr>
+    <tr><td>用 GUID 而非英文名</td><td>子类别英文名跟语言环境绑定，中文系统下用英文名（如 Logon）会报错 0x57；GUID 任何语言系统通用</td></tr>
+    <tr><td><code>auditpol /get</code></td><td>只读查询，确认策略真的生效，而不是凭感觉</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li><code>auditpol /get</code> 显示"没有审核"或空白 → 命令里的 GUID 没加引号，或子类别名拼错</li>
+    <li>事件查看器找不到 4625 → 先确认审计确实开了成功和失败，再确认是在"安全"日志而不是"系统"日志里找</li>
+    <li>报 0x57（参数不正确）→ 大概率是用了英文子类别名却系统是中文，或 GUID 没加双引号被 PowerShell 当脚本块解析</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务1 会话限制 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 24′ · DC1</span></span><h2>RDP 加固 ②：会话数与超时</h2><button class="more" data-pop="pop-l16-t1b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l16-t1b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p class="muted">运行 <code>gpedit.msc</code>，依次展开：</p>
+    <div class="crumb"><span>计算机配置</span><i>›</i><span>管理模板</span><i>›</i><span>Windows 组件</span><i>›</i><span>远程桌面服务</span><i>›</i><span>远程桌面会话主机</span></div>
+    <table class="tbl">
+      <tr><th>子节点</th><th>策略</th><th>设置</th></tr>
+      <tr><td>连接</td><td>限制连接数</td><td>已启用 · <b>2</b></td></tr>
+      <tr><td>会话时间限制</td><td>设置已断开会话的时间限制</td><td>已启用 · <b>15 分钟</b></td></tr>
+      <tr><td>会话时间限制</td><td>到达时间限制时终止会话</td><td>已启用</td></tr>
+    </table>
+    <div class="callout">改完执行 <code>gpupdate /force</code> 立即生效</div>
+  </div>
+</div>
+<aside class="notes">原文路径省略了"Windows 组件"一层，超时策略实际位于"会话时间限制"子节点而不是"连接"，这里按真实位置写。提问：断开会话为什么要限时？因为断开不等于注销，程序和登录令牌仍留在服务器上。gpupdate 是补充的，避免等待策略刷新。</aside>
+
+<template id="pop-l16-t1b-steps">
+  <h3>📋 详细步骤：RDP 加固 ② 会话数与超时</h3>
+  <h4>第一步：打开组策略编辑器</h4>
+<pre>gpedit.msc</pre>
+  <h4>第二步：展开到远程桌面会话主机</h4>
+  <ol>
+    <li>计算机配置</li>
+    <li>管理模板</li>
+    <li>Windows 组件</li>
+    <li>远程桌面服务</li>
+    <li>远程桌面会话主机</li>
+  </ol>
+  <h4>第三步：限制连接数</h4>
+  <p>子节点"连接" → 策略"限制连接数" → 已启用，设为 <b>2</b></p>
+  <h4>第四步：设置断开会话超时</h4>
+  <p>子节点"会话时间限制" → 策略"设置已断开会话的时间限制" → 已启用，设为 <b>15 分钟</b></p>
+  <h4>第五步：到期强制终止会话</h4>
+  <p>同一子节点 → 策略"到达时间限制时终止会话" → 已启用</p>
+  <h4>第六步：立即刷新策略</h4>
+<pre>gpupdate /force</pre>
+  <div class="tip">超时策略实际位于"会话时间限制"子节点，不是"连接"子节点——两者容易弄混。</div>
+</template>
+<template id="pop-l16-t1b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>限制连接数 = 2</td><td>限制同时在线的 RDP 会话数，防止账号被盗后被攻击者和合法用户同时大量占用，也便于演示"第三个连接被拒"</td></tr>
+    <tr><td>断开会话时间限制 = 15 分钟</td><td>断开连接 ≠ 注销，程序和登录令牌仍留在服务器上占用资源、留下可被劫持的会话；超时后自动清理</td></tr>
+    <tr><td>到达时间限制时终止会话</td><td>如果不勾选这项，到期后系统只是提醒，不会真正断开；必须显式启用才会强制终止</td></tr>
+    <tr><td><code>gpupdate /force</code></td><td>本地组策略默认要等刷新周期才生效，强制刷新立即看到效果，便于当堂验证</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>第三个 RDP 用户登录没被拒 → 策略没刷新，先 <code>gpupdate /force</code> 再重试，或检查注册表 <code>MaxInstanceCount</code> 是否落到 1~2 之间</li>
+    <li>断开会话超时不生效 → 确认"到达时间限制时终止会话"也已启用，否则只是限制不终止</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务1 重定向 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 24′ · DC1</span></span><h2>RDP 加固 ③：禁止剪贴板/驱动器重定向</h2><button class="more" data-pop="pop-l16-t1c-steps">📋 详细步骤</button><button class="more" data-pop="pop-l16-t1c-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>远程桌面服务</span><i>›</i><span>远程桌面会话主机</span><i>›</i><span>设备和资源重定向</span></div>
+    <div class="grid2">
+      <div class="card good">
+        <h3>不允许剪贴板重定向</h3>
+        <p>已启用 → 两端之间不能复制粘贴文字和文件</p>
+      </div>
+      <div class="card good">
+        <h3>不允许驱动器重定向</h3>
+        <p>已启用 → 远程会话里看不到客户端的 C: 盘</p>
+      </div>
+    </div>
+    <div class="callout warn"><b>测试：</b>B 在 CLIENT1 用 <code>mstsc /v:10.10.10.10:3390</code> 重新登录，尝试复制粘贴，应当失败。</div>
+  </div>
+</div>
+<aside class="notes">重定向策略只对新建立的会话生效，已连接的会话要注销后重连才能看到效果。讨论：这两项是防"数据泄露"，也防"把恶意程序带进服务器"。运维人员会抱怨不方便，正式环境通常用跳板机统一文件传输。</aside>
+
+<template id="pop-l16-t1c-steps">
+  <h3>📋 详细步骤：RDP 加固 ③ 禁止剪贴板/驱动器重定向</h3>
+  <h4>第一步：在 gpedit.msc 中展开</h4>
+  <div class="code-cap">远程桌面服务 › 远程桌面会话主机 › 设备和资源重定向</div>
+  <h4>第二步：禁止剪贴板重定向</h4>
+  <p>策略"不允许剪贴板重定向" → 已启用（两端之间不能复制粘贴文字和文件）</p>
+  <h4>第三步：禁止驱动器重定向</h4>
+  <p>策略"不允许驱动器重定向" → 已启用（远程会话里看不到客户端的 C: 盘）</p>
+  <h4>第四步：刷新策略</h4>
+<pre>gpupdate /force</pre>
+  <div class="tip">重定向策略只对新建立的会话生效，已连接的会话要先注销再重新用 <code>mstsc</code> 登录才能看到效果。</div>
+  <h4>第五步：验证</h4>
+  <p>搭档在 CLIENT1 执行</p>
+<pre>mstsc /v:10.10.10.10:3390</pre>
+  <p>重新登录后尝试复制粘贴，应当失败；查看会话里是否还能看到本机 C: 盘，应当看不到。</p>
+</template>
+<template id="pop-l16-t1c-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>不允许剪贴板重定向</td><td>防止通过复制粘贴把服务器上的敏感数据带出，或把恶意文件/脚本带进服务器</td></tr>
+    <tr><td>不允许驱动器重定向</td><td>防止把本地磁盘映射进远程会话，杜绝"拖文件"方式的数据泄露/恶意程序植入通道</td></tr>
+    <tr><td>策略只对新会话生效</td><td>组策略改的是会话建立时的协商参数，已经连上的旧会话不会动态感知，必须重新连接才生效</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>复制粘贴仍然能用 → 大概率是旧会话没刷新，先 <code>gpupdate /force</code> 然后注销重连，而不是直接在旧窗口里重试</li>
+    <li>需要确认策略真的生效 → check16.ps1 读取注册表 <code>fDisableClip</code>（值应为 1），路径是组策略或本地策略对应的 Terminal Services 键</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 HTTPS -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 20′ · DC1</span></span><h2>WinRM 加固 ①：HTTPS 监听器</h2><button class="more" data-pop="pop-l16-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l16-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$cert = New-SelfSignedCertificate -DnsName "dc1.lab.local" `
+  -CertStoreLocation cert:\LocalMachine\My
+New-WSManInstance winrm/config/listener `
+  -SelectorSet @{Address="*";Transport="HTTPS"} `
+  -ValueSet @{CertificateThumbprint=$cert.Thumbprint}
+New-NetFirewallRule -DisplayName "Allow WinRM HTTPS" `
+  -Direction Inbound -Protocol TCP -LocalPort 5986 `
+  -Action Allow
+</code></pre>
+    <div class="code-cap">确认：应同时看到 HTTP 和 HTTPS 两个监听器</div>
+<pre><code class="language-powershell" data-trim>
+Get-WSManInstance winrm/config/listener -Enumerate
+</code></pre>
+  </div>
+</div>
+<aside class="notes">三条命令必须在同一个 PowerShell 窗口执行，因为 $cert 变量要传下去。原文证书名是 dc1.lab.local，但本课时域还没建，这个名字只是写在证书里，不影响创建监听器。查看监听器的命令来自第 15 课。</aside>
+
+<template id="pop-l16-t2a-steps">
+  <h3>📋 详细步骤：WinRM 加固 ① HTTPS 监听器</h3>
+  <h4>第一步：在同一个 PowerShell 窗口里依次执行（$cert 变量要传给下一条命令）</h4>
+  <h4>第二步：创建自签名证书</h4>
+<pre>$cert = New-SelfSignedCertificate -DnsName "dc1.lab.local" `
+  -CertStoreLocation cert:\LocalMachine\My</pre>
+  <p>本课时域还没建，证书里的 dc1.lab.local 只是写在证书中的名字，不影响创建监听器。</p>
+  <h4>第三步：新建 HTTPS 监听器并绑定证书</h4>
+<pre>New-WSManInstance winrm/config/listener `
+  -SelectorSet @{Address="*";Transport="HTTPS"} `
+  -ValueSet @{CertificateThumbprint=$cert.Thumbprint}</pre>
+  <h4>第四步：放行防火墙 5986 端口</h4>
+<pre>New-NetFirewallRule -DisplayName "Allow WinRM HTTPS" `
+  -Direction Inbound -Protocol TCP -LocalPort 5986 `
+  -Action Allow</pre>
+  <h4>第五步：确认同时存在 HTTP 和 HTTPS 两个监听器</h4>
+<pre>Get-WSManInstance winrm/config/listener -Enumerate</pre>
+  <div class="tip">三条命令必须在同一个窗口执行；如果 $cert 丢失（比如换了新窗口），New-WSManInstance 会因为证书指纹为空而报错。</div>
+</template>
+<template id="pop-l16-t2a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>New-SelfSignedCertificate</code></td><td>HTTPS 监听器必须绑定证书才能建立 TLS 通道；自签名证书能加密，但客户端默认不信任它（正式环境应由 CA 签发）</td></tr>
+    <tr><td><code>Transport="HTTPS"</code> + 端口 5986</td><td>5986 是 WinRM HTTPS 的标准端口，和 HTTP 的 5985 并存，互不影响</td></tr>
+    <tr><td><code>CertificateThumbprint=$cert.Thumbprint</code></td><td>监听器通过指纹绑定具体证书，必须和刚创建的证书一致，否则报错或用了别的证书</td></tr>
+    <tr><td>放行 TCP 5986 入站</td><td>防火墙默认不认识新端口，监听器建好但没放行照样连不通</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check16.ps1 判定"WinRM HTTPS 监听器存在"要求同时满足端口=5986 且证书指纹非空，两者缺一都是 FAIL</li>
+    <li><code>Get-WSManInstance ... -Enumerate</code> 看不到 HTTPS 监听器 → 多半是 New-WSManInstance 报错但没注意到，重新在同一窗口按顺序跑三条命令</li>
+    <li>5986 连不通但监听器已建好 → 检查防火墙规则是否真的放行了 TCP 5986</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务2 过滤+日志 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 20′ · DC1</span></span><h2>WinRM 加固 ②：来源过滤与日志</h2><button class="more" data-pop="pop-l16-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l16-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>2.2 只允许实验网段</h3>
+<pre><code class="language-powershell" data-trim>
+Set-Item WSMan:\localhost\Service\IPv4Filter `
+  -Value "10.10.10.1-10.10.10.254"
+</code></pre>
+      </div>
+      <div class="card blue">
+        <h3>2.3 开启操作日志</h3>
+<pre><code class="language-powershell" data-trim>
+wevtutil sl "Microsoft-Windows-WinRM/Operational" /e:true
+</code></pre>
+      </div>
+    </div>
+    <div class="code-cap">B 在 CLIENT1 上测试 5986 端口是否可达</div>
+<pre><code class="language-powershell" data-trim>
+Test-NetConnection 10.10.10.10 -Port 5986
+</code></pre>
+    <div class="callout"><b>预期：</b><code>TcpTestSucceeded : True</code></div>
+    <div class="callout warn"><b>注意：</b>IPv4Filter 只认范围写法 <code>IP1-IP2</code>（如 <code>10.10.10.1-10.10.10.254</code>），不能用 <code>10.10.10.*</code> 通配——那是 IIS 的 IP 限制写法，这里会报"IP 筛选器无效"。</div>
+  </div>
+</div>
+<aside class="notes">IPv4Filter 是服务端的来源白名单，和第 15 课客户端的 TrustedHosts 不是一回事，学生容易混淆，可以提问区分。Set-Item 会提示确认，输入 Y。Test-NetConnection 是补充的只读测试；日志在事件查看器 应用程序和服务日志 › Microsoft › Windows › Windows Remote Management。</aside>
+
+<template id="pop-l16-t2b-steps">
+  <h3>📋 详细步骤：WinRM 加固 ② 来源过滤与日志</h3>
+  <h4>第一步：设置来源 IP 过滤，只允许实验网段</h4>
+<pre>Set-Item WSMan:\localhost\Service\IPv4Filter `
+  -Value "10.10.10.1-10.10.10.254"</pre>
+  <p>命令会提示确认，输入 <code>Y</code>。</p>
+  <div class="tip">IPv4Filter 只认范围写法 <code>IP1-IP2</code>，不能用 <code>10.10.10.*</code> 通配——那是 IIS 的 IP 限制写法，这里会报"IP 筛选器无效"。</div>
+  <h4>第二步：开启 WinRM 操作日志</h4>
+<pre>wevtutil sl "Microsoft-Windows-WinRM/Operational" /e:true</pre>
+  <p>日志路径：事件查看器 → 应用程序和服务日志 → Microsoft → Windows → Windows Remote Management。</p>
+  <h4>第三步：在 CLIENT1 上测试 5986 端口是否可达</h4>
+<pre>Test-NetConnection 10.10.10.10 -Port 5986</pre>
+  <p>预期输出：<code>TcpTestSucceeded : True</code></p>
+</template>
+<template id="pop-l16-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>WSMan:\localhost\Service\IPv4Filter</code></td><td>服务端来源白名单，限制只有实验网段 10.10.10.0/24 的客户端能连 WinRM，不是客户端的 TrustedHosts（二者容易混淆：IPv4Filter 在服务器端生效，TrustedHosts 在客户端生效）</td></tr>
+    <tr><td>范围写法 <code>10.10.10.1-10.10.10.254</code></td><td>WinRM 的 IPv4Filter 语法只支持 IP 范围，不支持 <code>*</code> 通配符</td></tr>
+    <tr><td><code>wevtutil sl ... /e:true</code></td><td>WinRM 操作日志默认是关闭的，开启后才能追溯连接来源、认证结果等细节</td></tr>
+    <tr><td><code>Test-NetConnection -Port 5986</code></td><td>只读测试端口连通性，不涉及认证，用来快速定位是防火墙/监听器问题还是认证问题</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check16.ps1 判定过滤生效要求 <code>IPv4Filter</code> 严格匹配 <code>10.10.10.\d+ - 10.10.10.\d+</code> 格式的范围；写成 <code>10.10.10.*</code> 或留空都是 FAIL</li>
+    <li><code>TcpTestSucceeded : False</code> → 先查防火墙 5986 规则是否放行，再查 IPv4Filter 是否把测试机的 IP 排除在范围外</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 任务3 审查 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 16′ · DC1</span></span><h2>防火墙 ①：先审查，再动手</h2><button class="more" data-pop="pop-l16-t3a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l16-t3a-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Get-NetFirewallRule -Enabled True |
+  Select-Object DisplayName, Direction, Action, Profile |
+  Sort-Object Direction | Format-Table
+</code></pre>
+    <p class="muted">对照下面的清单，确认这些入站放行规则都已存在：</p>
+    <div class="grid3">
+      <div class="card"><h3>基础服务</h3><p class="small">DNS · DHCP · ICMP</p></div>
+      <div class="card"><h3>网站/文件</h3><p class="small">HTTP/HTTPS · FTP</p></div>
+      <div class="card"><h3>远程管理</h3><p class="small">RDP 3390 · WinRM 5986</p></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">这一步的意义：下一页把默认入站改为阻止后，没有放行规则的服务会立刻不通。缺哪条规则先补上再继续，否则 B 的远程连接可能被断开，只能回 VM 控制台操作。</aside>
+
+<template id="pop-l16-t3a-steps">
+  <h3>📋 详细步骤：防火墙 ① 先审查，再动手</h3>
+  <h4>第一步：列出当前所有已启用的规则，按方向排序</h4>
+<pre>Get-NetFirewallRule -Enabled True |
+  Select-Object DisplayName, Direction, Action, Profile |
+  Sort-Object Direction | Format-Table</pre>
+  <h4>第二步：对照清单，确认下面这些入站放行规则都已存在</h4>
+  <ol>
+    <li>基础服务：DNS、DHCP、ICMP</li>
+    <li>网站/文件：HTTP/HTTPS、FTP</li>
+    <li>远程管理：RDP 3390、WinRM 5986</li>
+  </ol>
+  <div class="tip">这一步的意义：下一步把默认入站改为阻止后，没有放行规则的服务会立刻不通。缺哪条先补上再继续。</div>
+</template>
+<template id="pop-l16-t3a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Get-NetFirewallRule -Enabled True</code></td><td>只看启用中的规则，排除已停用但仍存在的规则干扰判断</td></tr>
+    <tr><td>先审查、后改默认策略</td><td>白名单思维下，没被明确允许的入站一律拒绝；如果没有提前确认 RDP 3390 / WinRM 5986 等规则在位，改完默认阻止会立刻把自己锁在外面</td></tr>
+    <tr><td>check16.ps1 关键端口检查</td><td>脚本会检查 3390/5986/5985 是否存在"TCP + 对应端口 + 启用 + Allow + Inbound"的规则，缺一类即判定该端口未放行</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>清单里某项规则缺失 → 先用 <code>New-NetFirewallRule</code> 补上，再做下一步改默认策略</li>
+    <li>不确定某条规则具体监听哪个端口 → <code>Get-NetFirewallRule -EA SilentlyContinue | Get-NetFirewallPortFilter</code> 查看端口/协议细节</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 任务3 基线 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 16′ · DC1</span></span><h2>防火墙 ②：默认阻止入站 + 备份</h2><button class="more" data-pop="pop-l16-t3b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l16-t3b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Set-NetFirewallProfile -Profile Domain,Public,Private `
+  -DefaultInboundAction Block -DefaultOutboundAction Allow
+Get-NetFirewallRule -Enabled True -Direction Inbound |
+  Format-Table DisplayName, LocalPort
+netsh advfirewall export C:\LabFiles\firewall-backup.wfw
+</code></pre>
+    <div class="grid2">
+      <div class="callout warn"><b>白名单思维：</b>没被明确允许的入站，一律拒绝</div>
+      <div class="callout"><b>备份：</b>改坏了可用 <code>netsh advfirewall import</code> 还原</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">注意 Get-NetFirewallRule 的结果对象并没有 LocalPort 属性，这一列会显示为空，原文命令保留；想看端口可补充用 Get-NetFirewallPortFilter。建议 A 操作 DC1 控制台而不是通过 RDP 执行这一步，避免把自己锁在外面。改完让 B 再测一次 mstsc 和 5986。</aside>
+
+<template id="pop-l16-t3b-steps">
+  <h3>📋 详细步骤：防火墙 ② 默认阻止入站 + 备份</h3>
+  <div class="tip">建议 A 在 DC1 的 VM 控制台直接操作，而不是通过 RDP 执行这一步，避免规则缺失时把自己锁在外面。</div>
+  <h4>第一步：把三个配置文件的默认入站策略改为阻止</h4>
+<pre>Set-NetFirewallProfile -Profile Domain,Public,Private `
+  -DefaultInboundAction Block -DefaultOutboundAction Allow</pre>
+  <h4>第二步：查看当前已启用的入站规则</h4>
+<pre>Get-NetFirewallRule -Enabled True -Direction Inbound |
+  Format-Table DisplayName, LocalPort</pre>
+  <p>注意：该命令对象没有 LocalPort 属性，这一列会显示为空，想看端口要用 Get-NetFirewallPortFilter。</p>
+  <h4>第三步：导出防火墙配置备份</h4>
+<pre>netsh advfirewall export C:\LabFiles\firewall-backup.wfw</pre>
+  <p>改坏了可用 <code>netsh advfirewall import C:\LabFiles\firewall-backup.wfw</code> 还原。</p>
+  <h4>第四步：验证没有把自己锁死</h4>
+  <p>搭档在 CLIENT1 上再测一次 <code>mstsc /v:10.10.10.10:3390</code> 和 <code>Test-NetConnection 10.10.10.10 -Port 5986</code>，都应正常。</p>
+</template>
+<template id="pop-l16-t3b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>DefaultInboundAction Block</code></td><td>白名单思维：没有被明确放行的入站流量一律拒绝，大幅缩小攻击面</td></tr>
+    <tr><td><code>DefaultOutboundAction Allow</code></td><td>出站默认仍放行，否则服务器连不了外网（更新、DNS 查询等），本课只收紧入站</td></tr>
+    <tr><td>三个配置文件都要改（Domain,Public,Private）</td><td>check16.ps1 判定要求至少 3 个配置文件的 DefaultInboundAction 都是 Block，少一个也算 FAIL</td></tr>
+    <tr><td><code>netsh advfirewall export</code></td><td>改动风险最高的策略前先备份，一旦把自己锁死可以在控制台 import 还原</td></tr>
+    <tr><td>在控制台而非 RDP 操作</td><td>如果规则缺失，改完默认阻止的瞬间 RDP 会话会直接断开，只有控制台不受影响</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>改完后 RDP 立刻断开 → 说明 3390 的放行规则不在位，去 VM 控制台 import 备份或补规则</li>
+    <li>5986 测试变 False → 检查 WinRM HTTPS 的放行规则是否也在"必要放行规则"清单里确认过</li>
+  </ul>
+</template>
+</section>
+
+<!-- 14 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>加固后连不上？按这个顺序查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:32%">现象</th><th style="width:32%">原因</th><th>处理</th></tr>
+      <tr><td>改默认阻止后 RDP 断开</td><td>缺少 3390 放行规则</td><td>在 VM 控制台补规则，或 import 备份</td></tr>
+      <tr><td>第 3 个 RDP 用户被拒</td><td>限制连接数 = 2，属预期</td><td>注销一个已断开的会话</td></tr>
+      <tr><td>剪贴板仍能用</td><td>旧会话 / 策略未刷新</td><td><code>gpupdate /force</code> 后重新登录</td></tr>
+      <tr><td>New-WSManInstance 报错</td><td>HTTPS 监听器已存在或 $cert 为空</td><td>先 Enumerate 查看；同一窗口重建证书</td></tr>
+      <tr><td>5986 测试 False</td><td>防火墙规则或 IPv4Filter 不对</td><td>检查规则和 <code>10.10.10.1-10.10.10.254</code></td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">第一行是本课最容易出的事故，强调永远通过 VM 控制台做防火墙改动。第二行很多学生会误以为是故障，其实恰好证明策略生效了，可以作为演示：A、B 加上老师同时连，第三个被拒。</aside>
+</section>
+
+<!-- 15 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>任务 4 · 12′ · 对照清单自查</h2><button class="more" data-pop="pop-l16-15-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>RDP 并发限制 ≤ 2</li>
+        <li>剪贴板重定向已禁用</li>
+        <li>WinRM HTTPS 监听器存在</li>
+        <li>防火墙默认入站策略 = Block</li>
+      </ul>
+      <div class="card">
+        <h3>📸 关键快照</h3>
+        <p>DC1 和 CLIENT1 拍快照<br><code>S5-RemoteReady</code></p>
+        <p class="small muted" style="margin-top:8px">项目 5 完成，第 17 课建域从这里开始</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对清单。清单达成后运行 check16.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。S5-RemoteReady 是关键快照，后面的域实验出问题都可以回到这里，务必提醒学生确认快照名拼写。检查前让 B 最后测一次 RDP 和 5986，确认"加固了但没把自己锁死"。</aside>
+
+<template id="pop-l16-15-check">
+<h3>🧪 运行检查脚本 check16.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check16.ps1</pre>
+<h4>脚本检查什么（6 项判定 + 2 项采集，在 DC1 上跑）</h4>
+<ul>
+  <li><b>任务 1：</b>RDP 并发连接数 ≤ 2、剪贴板重定向已禁用</li>
+  <li><b>任务 2：</b>WinRM HTTPS 监听器存在（5986 + 证书）、来源过滤 IPv4Filter 限 10.10.10.0/24</li>
+  <li><b>任务 3：</b>防火墙默认入站 = 阻止（三个配置文件）、关键端口 3390/5986 放行规则在位</li>
+  <li><b>采集：</b>WinRM 监听器清单、各配置文件默认入站动作</li>
+</ul>
+<div class="tip">IPv4Filter 只认范围写法 <code>10.10.10.1-10.10.10.254</code>，不认 <code>10.10.10.*</code>。全部 PASS 后拍关键快照 <code>S5-RemoteReady</code>（老师机对应 Lesson16-Done）。</div>
+</template>
+</section>
+
+<!-- 16 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">远程入口是攻击面，改端口只是隐藏，要靠纵深防御</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">审计 + GPO 限会话/重定向 → WinRM HTTPS + IP 过滤 → 防火墙默认阻止</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">改默认阻止前先确认放行规则，并在控制台操作、先备份</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 17 课：</b>Active Directory 域搭建。把 DC1 提升为 <code>lab.local</code> 的域控制器。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check16.ps1" download>check16.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 DC1 以管理员身份运行 <code>check16.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. RDP 登录失败的事件 ID 是多少？2. IPv4Filter 和 TrustedHosts 分别在哪一端起作用？3. 把防火墙改成默认阻止入站前，必须做哪两件事？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>
