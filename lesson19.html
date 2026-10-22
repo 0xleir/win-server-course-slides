@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第19课 · 组策略（GPO）配置</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 6 · 域管理　|　第 19 次课 · 学时 37–38</p>
+  <h1>组策略（GPO）配置</h1>
+  <p class="muted">在 DC 上改一次，整个部门的电脑和用户一起生效</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">DC1 + CLIENT1</span></div>
+</div>
+<aside class="notes">开场提问：上节课建好了 IT-Dept、Finance-Dept 这些 OU，但 OU 只是"分了类"，还没有"管起来"。如果要让财务部所有人都不能改壁纸、IT 部登录自动映射网盘，该怎么做？答案就是今天的组策略。本课结束要拍关键快照 S6-DomainReady，下节课 阶段考核 3 的 GPO 题就是今天的内容。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>概念</b>GPO 与链接<br>LSDOU</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 1</b>GPO 基础操作<br>安全策略 · 桌面限制</div>
+      <div class="seg" style="flex:20"><span class="t">20′</span><b>任务 2</b>登录脚本<br>驱动器映射</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 3</b>优先级与继承<br>gpresult</div>
+      <div class="seg" style="flex:16"><span class="t">16′</span><b>任务 4</b>验证 · 快照</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>在 GPMC 中创建 GPO，并把它链接到指定 OU</li>
+        <li>用登录脚本和"首选项"为用户自动映射网络驱动器</li>
+        <li>用 LSDOU 解释策略冲突，并用 <code>gpresult</code> 查看最终结果</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念只讲 10 分钟，重点是"GPO 本身不生效，链接到 OU 才生效"和 LSDOU 顺序。任务 2、任务 3 都需要在 CLIENT1 上用域用户登录验证，注销/登录比较费时，提醒学生提前规划。</aside>
+</section>
+
+<!-- 19 概念：教材补充 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>组策略 GPO · 处理顺序</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>组策略是什么</h3>
+        <ul class="points">
+          <li>Windows 集中管理用户和计算机工作环境的特性</li>
+          <li>一套配置就是一个<b>组策略对象（GPO）</b></li>
+          <li>可施行密码复杂性、限制访问任务管理器、限制访问特定文件夹等</li>
+          <li>独立非域机器上用的叫<b>本地组策略（LGPO）</b></li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <h3>叠加与继承</h3>
+        <ul class="points check">
+          <li>策略沿层级父传子、子传孙，称"继承"</li>
+          <li>多条策略叠加，<b>越后应用的优先级越高</b>、覆盖前面</li>
+          <li>同名设置冲突时，后处理的那层生效</li>
+        </ul>
+      </div>
+    </div>
+    <div class="code-cap">处理顺序：越靠后应用，优先级越高（覆盖前面）</div>
+    <div class="flow">
+      <div class="node"><b>① 本地 L</b>本机本地策略</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 站点 S</b>AD 站点关联</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>③ 域 D</b>整个域关联</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>④ OU</b>组织单元 · 最后生效</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">组策略（Group Policy）是 Windows 用来集中管理用户账户和计算机账户工作环境的特性，一套具体配置就叫一个组策略对象 GPO。它能做的事很多：施行密码复杂性策略不让用户设弱密码、阻止陌生用户连共享、禁止打开任务管理器、限制访问某些文件夹等等。在独立不加域的电脑上用的那种叫本地组策略 LGPO。重点讲处理顺序，口诀 LSDOU——本地、站点、域、OU，按这个先后依次应用。关键结论是：越后应用的优先级越高，也就是 OU 的策略最后处理、最终说了算，会覆盖掉前面本地、站点、域里相冲突的设置。另外策略是分层继承的，父传子子传孙；高层管理员设了带继承性的策略，即使低层策略与之相悖，高层那条仍会按规则生效。记住这条顺序，后面排查"为什么我的策略没生效"时就知道往哪一层找冲突。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · 域控制器<br>GPMC · NETLOGON · 共享</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3 · 域成员客户端<br>用域用户登录验证效果</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>第一步 · DC1：</b>创建 GPO、编辑设置、链接到 OU、写登录脚本</div>
+      <div class="callout"><b>第二步 · CLIENT1：</b>用 <code>LAB\zhangsan</code>、<code>LAB\sunqi</code> 登录，观察效果</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">操作顺序：先在 DC1 上做配置，再切到 CLIENT1 上验证；后面建 Finance-Override 覆盖策略时也是同样套路——自己在 DC1 上建好，再自己切到 CLIENT1 跑 gpresult 查看效果。测试账号来自第 18 课：zhangsan 在 Finance-Dept，sunqi 在 IT-Dept，密码 Domain@2026!。开始前确认 CLIENT1 已在域中、DNS 指向 10.10.10.10。</aside>
+</section>
+
+<!-- 04 概念：GPO 与链接 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>GPO 是"规则包"，链接才让它生效</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">域 lab.local</div>
+        <div class="nest"><div class="lbl">组策略对象（GPO 仓库）</div><span class="obj">📜 Lab-Security-Policy</span><span class="obj">📜 Standard-Desktop</span></div>
+        <div class="nest">
+          <div class="lbl">OU Company　🔗 Lab-Security-Policy</div>
+          <div class="grid2" style="gap:14px">
+            <div class="nest"><div class="lbl">OU Finance-Dept</div><span class="obj">🔗 Standard-Desktop</span></div>
+            <div class="nest"><div class="lbl">OU IT-Dept</div><span class="obj">🔗 IT-LoginScript</span></div>
+          </div>
+        </div>
+      </div>
+      <table class="tbl">
+        <tr><th>部分</th><th>作用对象</th><th>何时应用</th></tr>
+        <tr><td><b>计算机配置</b></td><td>OU 里的<b>计算机</b></td><td>开机 / 后台刷新</td></tr>
+        <tr><td><b>用户配置</b></td><td>OU 里的<b>用户</b></td><td>登录 / 后台刷新</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+<aside class="notes">强调两点：一，GPO 建在"组策略对象"容器里，本身不影响任何人，要链接到站点、域或 OU 才生效；一个 GPO 可以链接多处。二，用户配置只对 OU 里的用户生效，计算机配置只对 OU 里的计算机生效。提问：Standard-Desktop 设置在"用户配置"，CLIENT1 计算机对象在 Computers 容器里，zhangsan 登录 CLIENT1 会受影响吗？答案：会，因为看的是用户所在的 OU。</aside>
+</section>
+
+<!-- 05 概念：LSDOU -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>处理顺序 LSDOU：越靠近对象，优先级越高</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>L 本地</b>本机 gpedit</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>S 站点</b>AD 站点</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>D 域</b>Default Domain Policy</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>OU 父</b>Company</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>OU 子</b>Finance-Dept<br>最后应用 = 胜出</div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>后者覆盖前者：</b>同一项设置冲突时，最后处理的 GPO 生效；不冲突的设置会叠加。</div>
+      <div class="callout"><b>两个例外：</b>上级链接设"强制"则不可被覆盖；子 OU 可"阻止继承"。</div>
+    </div>
+    <div class="callout warn"><b>账户策略例外：</b>密码 / 锁定策略只有链接在<b>域级别</b>才对域用户生效（任务 3 会遇到）。</div>
+  </div>
+</div>
+<aside class="notes">用"家规、校规、班规"类比：班规最后看，冲突时听班规。强制（Enforced）和阻止继承本课不要求操作，但 GPMC 里能看到这两个选项，可以点给学生看。账户策略例外是本课最容易误解的地方：链接到 OU 的密码策略只影响该 OU 中计算机的本地账户，域用户的密码策略只看域级别 GPO（如 Default Domain Policy）；按 OU/组区分密码策略要用细粒度密码策略 PSO。</aside>
+</section>
+
+<!-- 06 概念：策略 vs 首选项 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>"策略"与"首选项"，以及什么时候生效</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>策略（Policies）</h3>
+        <ul class="points">
+          <li>强制执行，用户不能改（选项变灰）</li>
+          <li>GPO 删除或取消链接后自动撤销</li>
+          <li>例：隐藏桌面图标、禁止改壁纸</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>首选项（Preferences）</h3>
+        <ul class="points">
+          <li>设定"初始值"，用户之后可修改</li>
+          <li>适合映射驱动器、打印机、快捷方式</li>
+          <li>例：任务 2 的 P: 盘映射</li>
+        </ul>
+      </div>
+    </div>
+    <table class="tbl">
+      <tr><th>刷新时机</th><th>说明</th></tr>
+      <tr><td>开机 / 登录</td><td>计算机配置在开机时应用，用户配置在登录时应用</td></tr>
+      <tr><td>后台刷新</td><td>默认每 90 分钟（随机偏移 0–30 分钟）</td></tr>
+      <tr><td><code>gpupdate /force</code></td><td>立即重新应用全部设置，课堂上用它</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">这里解释"为什么改了 GPO 客户端没变化"：客户端不会实时收到推送，要等刷新。登录脚本和部分桌面设置只在登录时生效，gpupdate 后还需注销重新登录。DC 之间的刷新间隔是 5 分钟，可以顺带一提。</aside>
+</section>
+
+<!-- 07 任务1 安全策略 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 20′ · DC1</span></span><h2>认识默认 GPO，新建 Lab-Security-Policy</h2><button class="more" data-pop="pop-l19-t1a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l19-t1a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p class="muted">① 运行 <code>gpmc.msc</code>，先编辑浏览两个默认策略（只看不改）：</p>
+    <div class="grid2">
+      <div class="callout"><b>Default Domain Policy</b>：链接在域上，含域密码策略</div>
+      <div class="callout"><b>Default Domain Controllers Policy</b>：只作用于 DC</div>
+    </div>
+    <p class="muted" style="margin-top:12px">② 右键"组策略对象" → 新建 <code>Lab-Security-Policy</code> → 编辑：</p>
+    <div class="crumb"><span>计算机配置</span><i>›</i><span>策略</span><i>›</i><span>Windows 设置</span><i>›</i><span>安全设置</span><i>›</i><span>账户策略</span></div>
+    <div class="grid2">
+      <div class="card"><h3>密码策略</h3><p class="small">最短长度 = <b>10</b>　最长期限 = <b>60</b> 天</p></div>
+      <div class="card"><h3>账户锁定策略</h3><p class="small">阈值 = <b>3</b> 次　锁定时间 = <b>30</b> 分钟</p></div>
+    </div>
+    <div class="callout"><b>③ 链接：</b>右键 <code>Company</code> OU → 链接现有 GPO → 选 <code>Lab-Security-Policy</code></div>
+  </div>
+</div>
+<aside class="notes">提醒学生：不要直接修改两个默认策略，生产环境里默认策略出错会影响整个域。设置锁定阈值时系统会提示同时设置"重置计数器"时间，接受建议值即可。概念 2 讲过，链接到 OU 的账户策略不作用于域用户，可以让学生先按原文做，任务 3 用 gpresult 再回头讨论。</aside>
+<template id="pop-l19-t1a-steps">
+  <h3>📋 详细步骤：新建 Lab-Security-Policy 并链接到 Company OU</h3>
+  <h4>第一步：浏览两个默认策略（只看不改）</h4>
+  <ol>
+    <li>在 DC1 上运行 <code>gpmc.msc</code> 打开组策略管理</li>
+    <li>展开 <b>组策略对象</b>，右键 <b>Default Domain Policy</b> → 编辑，浏览一下（这个链接在域上，含域密码策略），<b>不要改任何设置</b></li>
+    <li>同样浏览 <b>Default Domain Controllers Policy</b>（只作用于 DC），也不要改</li>
+  </ol>
+  <div class="tip">生产环境里改坏默认策略会影响整个域，所以本课新建一个独立的 GPO 来做实验，不动默认策略。</div>
+  <h4>第二步：新建 Lab-Security-Policy</h4>
+  <ol>
+    <li>右键 <b>组策略对象</b> → <b>新建</b>，名称填 <code>Lab-Security-Policy</code></li>
+    <li>右键该 GPO → <b>编辑</b>，依次展开：<code>计算机配置 › 策略 › Windows 设置 › 安全设置 › 账户策略</code></li>
+  </ol>
+  <h4>第三步：设置密码策略</h4>
+  <ol>
+    <li>进入 <b>密码策略</b>，把 <b>密码长度最小值</b> 设为 <code>10</code></li>
+    <li>把 <b>密码最长使用期限</b> 设为 <code>60</code> 天</li>
+  </ol>
+  <h4>第四步：设置账户锁定策略</h4>
+  <ol>
+    <li>进入 <b>账户锁定策略</b>，把 <b>账户锁定阈值</b> 设为 <code>3</code> 次</li>
+    <li>把 <b>账户锁定时间</b> 设为 <code>30</code> 分钟</li>
+    <li>系统会弹窗提示同时设置"重置账户锁定计数器"的时间，直接接受建议值即可</li>
+  </ol>
+  <h4>第五步：链接到 Company OU</h4>
+  <ol>
+    <li>在 GPMC 左侧找到 <code>Company</code> OU，右键 → <b>链接现有 GPO</b></li>
+    <li>选择 <code>Lab-Security-Policy</code>，确定</li>
+  </ol>
+  <p>这样 Lab-Security-Policy 只影响 Company OU 及其子 OU 下的<b>计算机</b>的本地账户，不影响域用户账户。</p>
+</template>
+<template id="pop-l19-t1a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>只看默认策略不改</td><td>Default Domain Policy / Default Domain Controllers Policy 影响全域/全部 DC，生产中出错代价很大；新建独立 GPO 做实验更安全，也符合最佳实践。</td></tr>
+    <tr><td>密码策略 › 最短长度 = 10</td><td>对应 check19.ps1 的"域密码策略最短长度 &gt;= 10"判定项，但该判定实际读取的是<b>域级别</b>密码策略（<code>Get-ADDefaultDomainPasswordPolicy</code>），不是链接到 OU 的 Lab-Security-Policy——这是本课最容易踩的坑，详见"每项为什么"表格最后一行。</td></tr>
+    <tr><td>账户锁定阈值 = 3 次 / 30 分钟</td><td>账户策略（密码策略、账户锁定策略）比较特殊：链接到 OU 的 GPO 只影响该 OU 中<b>计算机的本地账户</b>（比如本地 Administrator），不影响域用户登录域时用的密码规则。</td></tr>
+    <tr><td>链接到 Company OU</td><td>GPO 建在"组策略对象"容器里本身不生效，必须链接到站点/域/OU 才会被应用；链接到 Company 会让其下所有子 OU（Finance-Dept、IT-Dept 等）继承到。对应 check19.ps1 的 <code>Get-GPInheritance -Target "OU=Company,DC=lab,DC=local"</code> 判定。</td></tr>
+    <tr><td>为什么域用户密码策略不受影响</td><td>Windows 的账户策略例外规则：域用户的密码策略永远只看<b>域级别</b> GPO（如 Default Domain Policy），要按 OU/组区分密码策略需要用细粒度密码策略（PSO），这是进阶内容本课不要求操作。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check19.ps1 报 "Lab-Security-Policy 存在且链接到 Company OU" FAIL：先用 <code>Get-GPO -Name "Lab-Security-Policy"</code> 确认 GPO 存在，再在 GPMC 里确认链接到的是 Company 而不是别的 OU</li>
+    <li>check19.ps1 报 "域密码策略最短长度 &gt;= 10" FAIL：说明只改了链接到 Company 的 Lab-Security-Policy 不够，需要在 Default Domain Policy（或任何链接在<b>域</b>上的 GPO）里把最短长度也设为 10，用 <code>Get-ADDefaultDomainPasswordPolicy</code> 核实</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务1 桌面限制 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 20′ · DC1</span></span><h2>新建 Standard-Desktop 桌面限制</h2><button class="more" data-pop="pop-l19-t1b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l19-t1b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>用户配置</span><i>›</i><span>策略</span><i>›</i><span>管理模板</span><i>›</i><span>桌面</span></div>
+    <table class="tbl">
+      <tr><th>设置项</th><th>取值</th><th>效果</th></tr>
+      <tr><td>隐藏和禁用桌面上的所有项目</td><td>已启用</td><td>桌面图标全部消失（演示用，稍后可禁用）</td></tr>
+      <tr><td>禁止更改桌面背景</td><td>已启用</td><td>个性化中的壁纸选项变灰</td></tr>
+    </table>
+    <div class="callout"><b>链接到：</b><code>Finance-Dept</code> OU（只影响财务部用户）</div>
+    <p class="muted">切到 CLIENT1 上可用 PowerShell 刷新：</p>
+<pre><code class="language-powershell" data-trim>
+gpupdate /force
+</code></pre>
+    <div class="callout warn">用户配置要<b>注销后用 <code>LAB\zhangsan</code> 重新登录</b>才能看到效果。</div>
+  </div>
+</div>
+<aside class="notes">"禁止更改桌面壁纸"在不同版本里显示为"禁止更改桌面背景"（位于 控制面板 › 个性化），"桌面"节点下是"桌面墙纸"设置，学生找不到时可用筛选器搜索"背景"。对比实验：换用 sunqi（IT-Dept）登录，桌面不受影响，验证"只作用于链接的 OU"。</aside>
+<template id="pop-l19-t1b-steps">
+  <h3>📋 详细步骤：新建 Standard-Desktop 并链接到 Finance-Dept</h3>
+  <h4>第一步：新建 GPO 并进入管理模板</h4>
+  <ol>
+    <li>在 gpmc.msc 中右键 <b>组策略对象</b> → 新建，名称填 <code>Standard-Desktop</code></li>
+    <li>右键编辑，依次展开：<code>用户配置 › 策略 › 管理模板 › 桌面</code></li>
+  </ol>
+  <h4>第二步：隐藏桌面所有图标（演示用）</h4>
+  <ol>
+    <li>找到 <b>隐藏和禁用桌面上的所有项目</b>，设为<b>已启用</b></li>
+    <li>效果：登录后桌面图标全部消失，这是为了演示策略确实生效，后面排障后可改回<b>未配置</b></li>
+  </ol>
+  <h4>第三步：禁止更改桌面背景</h4>
+  <ol>
+    <li>找到 <b>禁止更改桌面背景</b>（在不同 Windows 版本里可能显示为"禁止更改桌面壁纸"，位于 控制面板 › 个性化 节点下，不是"桌面"节点），设为<b>已启用</b></li>
+    <li>如果在"桌面"节点下找不到，用策略编辑器的筛选器搜索关键字"背景"</li>
+  </ol>
+  <h4>第四步：链接到 Finance-Dept OU</h4>
+  <ol>
+    <li>右键 <code>Finance-Dept</code> OU → 链接现有 GPO → 选 <code>Standard-Desktop</code></li>
+  </ol>
+  <h4>第五步：在 CLIENT1 上验证</h4>
+<pre>gpupdate /force</pre>
+  <ol>
+    <li>注销当前用户，用 <code>LAB\zhangsan</code>（Finance-Dept，密码 Domain@2026!）重新登录——用户配置必须注销重登才能看到效果</li>
+    <li>观察桌面图标是否消失、右键个性化里的壁纸选项是否变灰</li>
+    <li>对比实验：换用 <code>LAB\sunqi</code>（IT-Dept）登录，桌面应该不受影响，验证"只作用于链接的 OU"</li>
+  </ol>
+</template>
+<template id="pop-l19-t1b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>用户配置 › 管理模板 › 桌面</td><td>这类设置只影响<b>用户</b>的桌面体验，和计算机配置是两套独立的树；放错位置（比如放进计算机配置）不会生效。</td></tr>
+    <tr><td>隐藏和禁用桌面上的所有项目</td><td>效果明显，便于直观验证策略已生效；缺点是会影响日常使用，所以验证完建议改回未配置。</td></tr>
+    <tr><td>禁止更改桌面背景</td><td>限制普通用户随意改壁纸，是企业桌面统一管理的常见需求；对应检查项"链接到 Finance-Dept OU"。</td></tr>
+    <tr><td>链接到 Finance-Dept 而不是 Company</td><td>演示"策略只影响被链接的那个 OU（及其子 OU）"，不会影响同级的 IT-Dept；对应 check19.ps1 的 <code>Get-GPInheritance -Target "OU=Finance-Dept,OU=Company,DC=lab,DC=local"</code> 判定。</td></tr>
+    <tr><td>gpupdate /force</td><td>强制立即从 DC 拉取并重新应用策略，不用等默认的刷新周期（约 90~120 分钟）。</td></tr>
+    <tr><td>注销后用 zhangsan 重新登录</td><td>用户配置类策略（尤其涉及桌面环境）通常只在<b>用户登录时</b>应用一次，光跑 gpupdate /force 不注销重登，部分设置看不到效果。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>zhangsan 登录后桌面没变化：先确认 Standard-Desktop 确实链接在 Finance-Dept 上（<code>Get-GPInheritance -Target ...</code>），再确认 zhangsan 的用户对象真的在 Finance-Dept OU 里（ADUC 核实），最后确认已经注销重登不是只跑了 gpupdate</li>
+    <li>sunqi（IT-Dept）登录后桌面也被影响：说明 GPO 链接的位置不对，可能链接到了 Company 而不是 Finance-Dept</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 登录脚本 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 20′ · DC1</span></span><h2>写登录脚本，放进 NETLOGON</h2><button class="more" data-pop="pop-l19-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l19-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 DC1 的 PowerShell 中生成 it-login.bat</div>
+<pre><code class="language-powershell" data-trim>
+@"
+@echo off
+net use H: \\DC-01\IT-Share /persistent:yes
+echo %date% %time% %username% logged in ^
+  >> \\DC-01\IT-Share\login.log
+"@ | Out-File -FilePath "\\lab.local\NETLOGON\it-login.bat" `
+  -Encoding ASCII
+Add-ADGroupMember -Identity "IT-Users" -Members "Domain-IT"
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>NETLOGON</b>：DC 自带的共享，所有域用户可读，专门放登录脚本。用域路径 <code>\\lab.local\NETLOGON</code>，与 DC 名字无关；<code>\\DC-01\IT-Share</code> 里的 DC-01 换成你自己的 DC 计算机名（第 1 课的 DC-学号）</div>
+      <div class="callout warn"><b>-Encoding ASCII</b>：bat 不能用 UTF-16。<b>最后一行</b>把 Domain-IT 放进 IT-Users，sunqi 才能往 IT-Share 写日志</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">NETLOGON 的实际路径是 C:\Windows\SYSVOL\sysvol\lab.local\scripts，会随 SYSVOL 复制到所有 DC。脚本第 3 行要往 IT-Share 写日志，因此用户需要对 IT-Share 有写权限，第 7 课给的"更改"是授予 IT-Users 的，而 sunqi 在第 18 课只进了全局组 Domain-IT，不在 IT-Users 里，实测写 login.log 会"拒绝访问"（映射仍成功，因为 Everyone 有共享读）。所以命令最后一行把 Domain-IT 嵌套进 IT-Users（升域后 IT-Users 是本地域组）：这就是第 18 课提到的 AGDLP——账户进全局组，全局组进本地域组，权限只授给本地域组。新加组后用户要注销重登才生效。行尾的 ^ 是 cmd 续行符，因版面限制把原文一行拆成两行，效果相同，也可写成一行。可以用 type \\lab.local\NETLOGON\it-login.bat 确认内容。</aside>
+<template id="pop-l19-t2a-steps">
+  <h3>📋 详细步骤：写登录脚本 it-login.bat 并放进 NETLOGON</h3>
+  <h4>第一步：在 DC1 的 PowerShell 中生成脚本文件</h4>
+<pre>@"
+@echo off
+net use H: \\DC-01\IT-Share /persistent:yes
+echo %date% %time% %username% logged in ^
+  >> \\DC-01\IT-Share\login.log
+"@ | Out-File -FilePath "\\lab.local\NETLOGON\it-login.bat" `
+  -Encoding ASCII</pre>
+  <p>直接把这段多行命令粘贴进 DC1 上的 PowerShell 窗口执行即可。</p>
+  <div class="tip"><code>-Encoding ASCII</code> 不能省略——bat 文件如果是 UTF-16（PowerShell 的默认编码），cmd.exe 读取时会读成乱码甚至无法执行。</div>
+  <h4>第二步：理解脚本内容</h4>
+  <ol>
+    <li><code>net use H: \\DC-01\IT-Share /persistent:yes</code>：把 IT-Share 共享映射为 H: 盘，<code>/persistent:yes</code> 表示下次登录也保留</li>
+    <li><code>echo ... >> \\DC-01\IT-Share\login.log</code>：往 IT-Share 共享写一行登录日志，记录时间和用户名；行尾 <code>^</code> 是 cmd 的续行符，纯粹为了排版拆成两行，效果和写一行一样</li>
+  </ol>
+  <h4>第三步：确认脚本已经写入 NETLOGON</h4>
+<pre>type \\lab.local\NETLOGON\it-login.bat</pre>
+  <p>NETLOGON 的实际物理路径是 <code>C:\Windows\SYSVOL\sysvol\lab.local\scripts</code>，会随 SYSVOL 自动复制到所有 DC，所有域用户默认可读。</p>
+  <h4>第四步：让域用户 sunqi 能写日志</h4>
+<pre>Add-ADGroupMember -Identity "IT-Users" -Members "Domain-IT"
+Get-ADGroupMember IT-Users | Select-Object SamAccountName</pre>
+  <p>IT-Share 的"更改"权限是第 7 课授给 IT-Users 的，sunqi 只在 Domain-IT 里。不做这一步，H: 能映射（Everyone 有读），但写 login.log 会"拒绝访问"。列表里出现 Domain-IT 就对了。</p>
+</template>
+<template id="pop-l19-t2a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>\\lab.local\NETLOGON\it-login.bat</code></td><td>NETLOGON 是 DC 自带的共享，专门用来放登录脚本，所有域用户默认可读；对应 check19.ps1 检查的 <code>C:\Windows\SYSVOL\sysvol\lab.local\scripts\it-login.bat</code> 是否存在。</td></tr>
+    <tr><td><code>-Encoding ASCII</code></td><td>bat 批处理文件只能用 ANSI/ASCII 编码，PowerShell 默认写出来是 UTF-16（带 BOM），cmd.exe 解析会出现乱码甚至整个脚本失效。</td></tr>
+    <tr><td><code>net use H: ... /persistent:yes</code></td><td>把共享映射成持久的驱动器盘符，用户下次开机登录依然保留这个映射。check19.ps1 用正则 <code>$txt -match "net use"</code> 验证脚本里确实含有盘符映射命令。</td></tr>
+    <tr><td>往 IT-Share 写日志</td><td>演示登录脚本可以做的不仅是映射盘符，还能记录操作；但要求用户对 IT-Share 有写权限。第 7 课把"更改"授给了 IT-Users，sunqi 不在该组，所以要配合第四步；权限不够时日志写入失败、映射仍成功，不会阻塞登录。</td></tr>
+    <tr><td><code>Add-ADGroupMember IT-Users -Members Domain-IT</code></td><td>AGDLP：<b>A</b>ccount 进 <b>G</b>lobal 组（Domain-IT），全局组进 <b>D</b>omain <b>L</b>ocal 组（IT-Users），<b>P</b>ermission 只授给本地域组。以后 IT 部门新增员工，只要进 Domain-IT，就自动拿到 IT-Share 的写权限，不用再改共享和 NTFS。</td></tr>
+    <tr><td>行尾 <code>^</code> 续行符</td><td>仅为了排版把一行命令拆成两行显示，cmd.exe 原生支持这个续行语法，去掉写成一行效果完全相同。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check19.ps1 "NETLOGON 中存在 it-login.bat" 报 FAIL：确认文件真的写到了 NETLOGON 共享（而不是本地某个目录），可用 <code>type \\lab.local\NETLOGON\it-login.bat</code> 验证内容</li>
+    <li>报 WARN（文件存在但没匹配到 net use）：说明脚本内容被改动过，检查里面是否还含有 <code>net use</code> 这一行</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 GPO 挂脚本 + 首选项 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 20′ · DC1</span></span><h2>两种映射驱动器的方法</h2><button class="more" data-pop="pop-l19-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l19-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>① GPO "IT-LoginScript"</h3>
+        <div class="crumb"><span>用户配置</span><i>›</i><span>策略</span><i>›</i><span>Windows 设置</span><i>›</i><span>脚本</span><i>›</i><span>登录</span></div>
+        <ul class="points">
+          <li>添加：<code>it-login.bat</code></li>
+          <li>链接到：<code>IT-Dept</code> OU</li>
+          <li>结果：H: → <code>\\DC-01\IT-Share</code></li>
+        </ul>
+      </div>
+      <div class="card blue">
+        <h3>② GPO "Drive-Mappings"</h3>
+        <div class="crumb"><span>用户配置</span><i>›</i><span>首选项</span><i>›</i><span>Windows 设置</span><i>›</i><span>驱动器映射</span></div>
+        <ul class="points">
+          <li>新建：操作 = 创建，驱动器号 = P:</li>
+          <li>位置：<code>\\DC-01\Public$</code></li>
+          <li>链接到：<code>Company</code> OU</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>对比：</b>脚本灵活但要自己写、易出错；首选项点几下即可，还能按组"项目级别目标"筛选。</div>
+  </div>
+</div>
+<aside class="notes">"显示文件"打开的是该 GPO 自己在 SYSVOL\Policies 下的脚本目录，不是 NETLOGON；原文把 bat 放在 NETLOGON 根目录，在"添加"对话框里直接填写 \\lab.local\NETLOGON\it-login.bat 即可。验证：用 sunqi 登录 CLIENT1 应看到 H: 和 P:，用 zhangsan 登录只看到 P:（Drive-Mappings 链接在 Company，会继承到所有子 OU）。提问：zhangsan 为什么没有 H: 盘？</aside>
+<template id="pop-l19-t2b-steps">
+  <h3>📋 详细步骤：两种映射驱动器的方法</h3>
+  <h4>方法① GPO 登录脚本 "IT-LoginScript"</h4>
+  <ol>
+    <li>新建 GPO，命名 <code>IT-LoginScript</code>，编辑进入：<code>用户配置 › 策略 › Windows 设置 › 脚本 › 登录</code></li>
+    <li>点"添加"，<b>不要点"显示文件"</b>（那个打开的是该 GPO 自己在 SYSVOL\Policies 下的脚本目录，不是 NETLOGON）</li>
+    <li>在"添加"对话框的脚本名里直接填写完整路径 <code>\\lab.local\NETLOGON\it-login.bat</code></li>
+    <li>链接 <code>IT-LoginScript</code> 到 <code>IT-Dept</code> OU</li>
+  </ol>
+  <p>预期结果：IT-Dept 下的用户登录后会多出 H: 盘，映射到 <code>\\DC-01\IT-Share</code>。</p>
+  <h4>方法② GPO 首选项 "Drive-Mappings"</h4>
+  <ol>
+    <li>新建 GPO，命名 <code>Drive-Mappings</code>，编辑进入：<code>用户配置 › 首选项 › Windows 设置 › 驱动器映射</code></li>
+    <li>右键 → 新建 → 映射驱动器，操作选<b>创建</b>，驱动器号选 <code>P:</code></li>
+    <li>位置填 <code>\\DC-01\Public$</code></li>
+    <li>链接 <code>Drive-Mappings</code> 到 <code>Company</code> OU（会继承到 Company 下所有子 OU，包括 Finance-Dept 和 IT-Dept）</li>
+  </ol>
+  <h4>第三步：在 CLIENT1 上验证</h4>
+  <ol>
+    <li>用 <code>LAB\sunqi</code>（IT-Dept，密码 Domain@2026!）登录，应该同时看到 H: 和 P: 两个盘</li>
+    <li>用 <code>LAB\zhangsan</code>（Finance-Dept）登录，应该只看到 P: 盘，没有 H:</li>
+    <li>思考：zhangsan 为什么没有 H: 盘？——因为 IT-LoginScript 只链接到了 IT-Dept，zhangsan 不在这个 OU</li>
+  </ol>
+</template>
+<template id="pop-l19-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>登录脚本方式</td><td>更灵活，能做任意批处理逻辑（比如写日志），但要自己写脚本，容易出编码/路径错误。对应 check19.ps1 的 "IT-LoginScript 链接到 IT-Dept OU" 判定。</td></tr>
+    <tr><td>首选项（Drive Maps）方式</td><td>图形化点几下即可配置，还能用"项目级别目标"按用户/组/OS 版本等条件筛选谁应用这条映射，适合不想写脚本的简单场景。</td></tr>
+    <tr><td>IT-LoginScript 链接到 IT-Dept</td><td>只让 IT 部门用户获得 H: 映射，演示"链接到哪个 OU 就只影响那个 OU"；对应 <code>Get-GPInheritance -Target "OU=IT-Dept,OU=Company,DC=lab,DC=local"</code> 判定。</td></tr>
+    <tr><td>Drive-Mappings 链接到 Company</td><td>演示"链接到父 OU 会继承到所有子 OU"：Finance-Dept 和 IT-Dept 都是 Company 的子 OU，两边用户登录后都会拿到 P: 盘。</td></tr>
+    <tr><td>不用"显示文件"按钮</td><td>"显示文件"打开的是这个 GPO 自己专属的脚本存放目录（在 SYSVOL\Policies\{GUID}\User\Scripts\Logon 下），和存放在 NETLOGON 根目录的 it-login.bat 是两个不同的位置；本课选择在"添加"对话框直接填 UNC 路径指向 NETLOGON 下已有的文件。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check19.ps1 "IT-LoginScript 链接到 IT-Dept OU" FAIL：先确认 GPO 存在（<code>Get-GPO -Name IT-LoginScript</code>），再确认链接的目标是 IT-Dept 不是别处</li>
+    <li>sunqi 登录后没有 H: 盘：检查 IT-LoginScript 里脚本路径是否正确填的是 <code>\\lab.local\NETLOGON\it-login.bat</code>，以及 sunqi 的用户对象是否确实在 IT-Dept OU</li>
+    <li>所有人都没有 P: 盘：检查 Drive-Mappings 是否链接到了 Company（而不是漏链接或链接错了位置）</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务3 冲突 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 16′ · DC1 + CLIENT1</span></span><h2>制造冲突，强制刷新</h2><button class="more" data-pop="pop-l19-t3-steps">📋 详细步骤</button><button class="more" data-pop="pop-l19-t3-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>Lab-Security-Policy</b>链接 Company<br>最短长度 10</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>Finance-Override</b>链接 Finance-Dept<br>最短长度 12</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>按 LSDOU</b>子 OU 后处理<br>12 覆盖 10</div>
+    </div>
+    <div class="code-cap">在 DC1 和 CLIENT1 上都执行</div>
+<pre><code class="language-powershell" data-trim>
+gpupdate /force
+</code></pre>
+    <div class="callout warn"><b>注意：</b>这是"OU 间覆盖"的演示；密码策略对<b>域用户</b>只认域级别 GPO，所以 zhangsan 改密码时仍按域策略校验。</div>
+  </div>
+</div>
+<aside class="notes">操作顺序：先到 DC1 新建 Finance-Override（计算机配置 › 策略 › Windows 设置 › 安全设置 › 账户策略 › 密码策略），再切到 CLIENT1 上刷新。可以在 GPMC 中选中 Finance-Dept，打开"组策略继承"选项卡，直观看到 Finance-Override 排在 Lab-Security-Policy 前面（优先级 1 最高）。如果想让冲突效果在域用户上体现，可换成桌面类用户设置做同样的覆盖实验。</aside>
+<template id="pop-l19-t3-steps">
+  <h3>📋 详细步骤：制造冲突，强制刷新</h3>
+  <h4>第一步：在 DC1 上新建 Finance-Override</h4>
+  <ol>
+    <li>新建 GPO，命名 <code>Finance-Override</code></li>
+    <li>编辑进入：<code>计算机配置 › 策略 › Windows 设置 › 安全设置 › 账户策略 › 密码策略</code></li>
+    <li>把 <b>密码长度最小值</b> 设为 <code>12</code>（比 Lab-Security-Policy 的 10 更严格）</li>
+    <li>链接 <code>Finance-Override</code> 到 <code>Finance-Dept</code> OU</li>
+  </ol>
+  <h4>第二步：观察优先级</h4>
+  <ol>
+    <li>在 GPMC 中选中 <code>Finance-Dept</code> OU，右侧切到"组策略继承"选项卡</li>
+    <li>应该看到 <code>Finance-Override</code> 排在 <code>Lab-Security-Policy</code> 前面，优先级列显示为 1（数字越小优先级越高）</li>
+  </ol>
+  <h4>第三步：在 DC1 和 CLIENT1 上都强制刷新</h4>
+<pre>gpupdate /force</pre>
+  <div class="tip">按 LSDOU 顺序，子 OU（Finance-Dept）的策略比父 OU（Company）后处理，所以 12 覆盖 10——这是"OU 间覆盖"的演示。</div>
+  <h4>第四步：理解这对域用户没有直接影响</h4>
+  <p>这里设置的是<b>计算机配置</b>的账户策略，只影响 Finance-Dept OU 中<b>计算机</b>的本地账户；域用户 zhangsan 改密码时，校验的仍然是域级别的密码策略（Default Domain Policy），不受 Finance-Override 影响。</p>
+</template>
+<template id="pop-l19-t3-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>Finance-Override 密码最短长度 = 12</td><td>刻意设一个和 Lab-Security-Policy（10）不同的值，用来观察哪个值最终生效，直观演示冲突覆盖规则。</td></tr>
+    <tr><td>链接到 Finance-Dept（子 OU）</td><td>LSDOU 口诀——本地、站点、域、OU，按先后顺序依次应用，<b>越后应用优先级越高</b>。Finance-Dept 是 Company 的子 OU，比 Company 后处理，所以 Finance-Override（12）覆盖 Lab-Security-Policy（10）。</td></tr>
+    <tr><td>组策略继承选项卡</td><td>GPMC 提供的可视化工具，直接列出某个 OU 上生效的全部 GPO 及其优先级顺序，排查"到底哪条策略赢了"最直接的办法，等价于手动模拟 gpresult 的部分功能。</td></tr>
+    <tr><td>gpupdate /force</td><td>两边都要刷新：DC1 上刷新是让这台机器本身应用新策略（如果 DC1 恰好在被影响的 OU 下），CLIENT1 刷新是让它拉取最新的 GPO 配置。</td></tr>
+    <tr><td>域用户密码不受此影响</td><td>账户策略的例外规则：计算机配置下的密码/锁定策略只影响<b>该 OU 中计算机的本地账户</b>，域用户账户的密码策略永远只认域级别 GPO。这是本课最容易误解的点，呼应"每项为什么"表格里 Lab-Security-Policy 的说明。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>"组策略继承"里 Finance-Override 没有排在最前面：检查链接顺序/优先级设置，或确认 Finance-Override 真的链接到了 Finance-Dept 而不是别处</li>
+    <li>gpupdate /force 后没变化：确认两边都执行了，且 Finance-Override 设置的是计算机配置而不是用户配置（计算机配置需要计算机重启或等待后台刷新才完全生效，用户配置才是登录生效）</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 任务3 gpresult -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 3 验证</span><h2>用 gpresult 看"最终生效了什么"</h2></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+gpresult /r
+gpresult /h C:\LabFiles\gpo-report.html
+</code></pre>
+    <table class="tbl">
+      <tr><th>看哪里</th><th>预期结果（以 CLIENT1 上的 zhangsan 为例）</th></tr>
+      <tr><td>用户设置 › 应用的 GPO</td><td>Standard-Desktop、Drive-Mappings</td></tr>
+      <tr><td>已筛选出的 GPO</td><td>未应用的 GPO 及原因（如"空"、"拒绝访问"）</td></tr>
+      <tr><td>HTML 报告 › 获胜 GPO</td><td>每项设置由哪个 GPO 决定，冲突一目了然</td></tr>
+    </table>
+    <div class="callout">用浏览器打开 <code>gpo-report.html</code>，这就是"策略结果集（RSoP）"。</div>
+  </div>
+</div>
+<aside class="notes">gpresult /r 默认显示当前用户和计算机两部分；看计算机部分需要管理员权限运行。CLIENT1 上若没有 C:\LabFiles 目录，/h 会报错，先建目录或换路径。提问：为什么报告里没有 IT-LoginScript？因为 zhangsan 不在 IT-Dept。</aside>
+</section>
+
+<!-- 13 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>策略没生效？按这个顺序查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:30%">现象</th><th style="width:34%">原因</th><th>处理</th></tr>
+      <tr><td>gpresult 里没有该 GPO</td><td>没链接，或用户不在该 OU</td><td>GPMC 查链接；ADUC 查用户所在 OU</td></tr>
+      <tr><td>改了设置客户端没变化</td><td>还没刷新 / 用户配置需重新登录</td><td><code>gpupdate /force</code> 后注销再登录</td></tr>
+      <tr><td>H: / P: 盘没出现</td><td>bat 编码错误或共享名写错</td><td>用 <code>type</code> 查看脚本；手动 <code>net use</code> 测试路径</td></tr>
+      <tr><td>密码长度仍按旧值</td><td>账户策略只认域级别 GPO</td><td>在域级别 GPO 中修改</td></tr>
+      <tr><td>gpupdate 报无法联系 DC</td><td>客户端 DNS 不是 10.10.10.10</td><td>修 DNS，<code>nltest /dsgetdc:lab.local</code></td></tr>
+    </table>
+    <div class="callout warn"><b>万能第一步：</b>先跑 <code>gpresult /r</code>，确认 GPO 到底有没有被应用。</div>
+  </div>
+</div>
+<aside class="notes">先让学生自己猜原因再翻表。最常见的是"用户不在该 OU"：第 18 课 CSV 导入时 OU 列写错，用户会落到别的 OU。驱动器映射排障时可在 CLIENT1 上手动运行 \\lab.local\NETLOGON\it-login.bat，直接看报错。</aside>
+</section>
+
+<!-- 14 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>任务 4 · 16′ · 对照清单自查</h2><button class="more" data-pop="pop-l19-14-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>Lab-Security-Policy 存在且链接到 Company OU</li>
+        <li>Standard-Desktop 链接到 Finance-Dept OU</li>
+        <li>IT-LoginScript 链接到 IT-Dept OU</li>
+        <li>域密码策略最短长度 &gt;= 10</li>
+        <li>NETLOGON 中存在 it-login.bat</li>
+      </ul>
+      <div class="card">
+        <h3>📸 关键快照</h3>
+        <p><code>S6-DomainReady</code></p>
+        <p class="small muted" style="margin-top:8px">域管理阶段完成，后续课程从这里开始</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对清单。清单达成后运行 check19.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。注意第 4 项"域密码策略最短长度 &gt;= 10"检查的是域级别策略：只把 Lab-Security-Policy 链接到 Company OU 不会改变域密码策略，若此项不达成，需要在 Default Domain Policy（或链接在域上的 GPO）中把最短长度设为 10。拍快照前可把"隐藏桌面所有图标"改回未配置，避免后续课程操作不便。</aside>
+
+<template id="pop-l19-14-check">
+<h3>🧪 运行检查脚本 check19.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check19.ps1</pre>
+<h4>脚本检查什么（5 项判定 + 2 项采集，在 DC1 上跑）</h4>
+<ul>
+  <li><b>任务 1：</b>Lab-Security-Policy 链接到 Company、Standard-Desktop 链接到 Finance-Dept、IT-LoginScript 链接到 IT-Dept、域密码策略最短长度 ≥ 10</li>
+  <li><b>任务 2：</b>NETLOGON 中存在 it-login.bat（含盘符映射）</li>
+</ul>
+<div class="tip">账户策略只认域级别——最短长度要在 Default Domain Policy 改，不是链接到 OU 的 GPO。全部 PASS 后拍关键快照 <code>S6-DomainReady</code>（老师机对应 Lesson19-Done），域管理阶段完成。</div>
+</template>
+</section>
+
+<!-- 15 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">GPO 把配置集中到 DC，按 OU 批量下发给用户和计算机</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">新建 GPO → 编辑设置 → 链接 OU → <code>gpupdate /force</code> → <code>gpresult</code></p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">LSDOU 后者优先；账户策略只认域级别</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 20 课：</b>阶段考核 3 进阶模块 B 考核（远程管理 / AD / 组策略），从快照 <code>CR3-Start</code> 开始，个人独立完成。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check19.ps1" download>check19.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 DC1 以管理员身份运行 <code>check19.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. GPO 建好了但没人受影响，最可能漏了哪一步？2. 父 OU 和子 OU 的 GPO 设置冲突，谁胜出？3. 用什么命令查看某用户最终应用了哪些 GPO？提醒：阶段考核 3 的 C 题要求创建 Sales-Policy 和登录脚本，正是今天的内容，回去复习。</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>
