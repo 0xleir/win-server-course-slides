@@ -219,7 +219,7 @@
   <h4>第四步：验证</h4>
   <ol>
     <li>在 DC1 上 <code>net share</code>，应能看到 Public$ 以及系统默认的 C$ / ADMIN$ / IPC$</li>
-    <li>从 CLIENT1 浏览 <code>\\DC1</code> 时 <b>看不到</b> Public$（隐藏），但直接输 <code>\\DC1\Public$</code> 照样能进</li>
+    <li>从 CLIENT1 浏览 <code>\\DC-01</code> 时 <b>看不到</b> Public$（隐藏），但直接输 <code>\\DC-01\Public$</code> 照样能进<span class="small muted">（DC-01 换成你自己的 DC 计算机名，即第 1 课的 DC-学号）</span></li>
   </ol>
 </template>
 <template id="pop-l07-07-why">
@@ -392,9 +392,9 @@ net use                                  # 查看当前所有映射</pre>
   <div class="body">
     <table class="tbl">
       <tr><th>谁 → 访问哪里</th><th>共享权限</th><th>NTFS 权限</th><th>有效权限</th></tr>
-      <tr><td>bob → \\DC1\IT-Share\readme.txt</td><td>IT-Users → 更改</td><td>IT-Users → 修改</td><td class="green">修改 ✓</td></tr>
-      <tr><td>charlie → \\DC1\Finance-Share\readme.txt</td><td>Finance → 更改</td><td>Finance → 修改</td><td class="green">修改 ✓</td></tr>
-      <tr><td>bob → \\DC1\Finance-Share\readme.txt</td><td>IT-Users → 无访问</td><td>（不再检查）</td><td class="red">拒绝 ✗</td></tr>
+      <tr><td>bob → \\DC-01\IT-Share\readme.txt</td><td>IT-Users → 更改</td><td>IT-Users → 修改</td><td class="green">修改 ✓</td></tr>
+      <tr><td>charlie → \\DC-01\Finance-Share\readme.txt</td><td>Finance → 更改</td><td>Finance → 修改</td><td class="green">修改 ✓</td></tr>
+      <tr><td>bob → \\DC-01\Finance-Share\readme.txt</td><td>IT-Users → 无访问</td><td>（不再检查）</td><td class="red">拒绝 ✗</td></tr>
     </table>
     <div class="callout warn"><b>思考题：</b>charlie 同时也是 IT-Users 成员，而 Finance-Share 对 IT-Users 设了"无访问"。用任务 2 的实测结果验证：拒绝优先会不会影响他？</div>
   </div>
@@ -468,7 +468,7 @@ Get-SmbShare | Select Name, FolderEnumerationMode   # 应为 AccessBased</pre>
     </table>
   </div>
 </div>
-<aside class="notes">课堂上最常见的是第二种：学生换用户测试却得到同样结果，误以为权限没生效。错误 1219：同一服务器不能用两个不同用户同时连接，alice 映射 S: 后再用 charlie 映射 F: 就可能触发，可先断开或用 \\DC1 与 \\10.10.10.10 两种名称区分。浏览看不到 Public$ 是隐藏共享的正常现象。</aside>
+<aside class="notes">课堂上最常见的是第二种：学生换用户测试却得到同样结果，误以为权限没生效。错误 1219：同一服务器不能用两个不同用户同时连接，alice 映射 S: 后再用 charlie 映射 F: 就可能触发，可先断开或用 \\DC-01 与 \\10.10.10.10 两种名称区分。浏览看不到 Public$ 是隐藏共享的正常现象。</aside>
 </section>
 
 <!-- 14 验证提交 -->
@@ -507,7 +507,7 @@ Get-SmbShare | Select Name, FolderEnumerationMode   # 应为 AccessBased</pre>
       <div class="card blue"><h3>关键点</h3><p class="small">网络访问过两道门：共享 ∩ NTFS，拒绝优先</p></div>
     </div>
     <div class="callout"><b>下节课 · 第 8 课：</b>阶段考核 1 基础模块考核（80 分钟）：用户、NTFS 与共享权限、DHCP/DNS、审核。</div>
-    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check07.ps1" download>check07.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check07.ps1</code> 生成检查报告，连同报告一起提交。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check07.ps1" download>check07.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check07.ps1</code> 生成检查报告，提交该报告即可。</div>
   </div>
 </div>
 <aside class="notes">出口小测（口头）：1. 共享权限"更改"、NTFS"读取"，网络用户的有效权限是什么？2. Public$ 能阻止别人访问吗？3. 换用户测试前要先执行什么命令？提醒同学们复习第 3–7 课，下节课是考核。</aside>

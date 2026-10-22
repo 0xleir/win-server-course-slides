@@ -269,7 +269,7 @@
     <li>在 <code>lusrmgr.msc</code> 左侧单击「组」，右侧空白处右键 →「新建组…」</li>
     <li>组名填 <code>IT-Admins</code>，描述可留空</li>
     <li>点下方「添加…」，在“输入对象名称”框里输入 <code>alice</code></li>
-    <li>点「检查名称」：名字变成带下划线的 <code>DC1\alice</code>（你的机器上是 <code>DC-学号\alice</code>）说明找到了，点「确定」</li>
+    <li>点「检查名称」：名字变成带下划线的 <code>DC-01\alice</code>（你的机器上是 <code>DC-学号\alice</code>）说明找到了，点「确定」</li>
     <li>回到新建组对话框，成员列表里有 alice 后，点「创建」</li>
   </ol>
   <div class="tip">点「检查名称」后弹出“找不到名称”，说明用户名拼错或上一页还没建这个用户。</div>
@@ -412,7 +412,7 @@ Get-LocalGroup | Format-Table Name, Description
 </code></pre>
     <table class="tbl">
       <tr><th>命令</th><th>看到这个说明成功</th></tr>
-      <tr><td><code>Get-LocalGroupMember</code></td><td>列出 DC1\dave 和 DC1\frank</td></tr>
+      <tr><td><code>Get-LocalGroupMember</code></td><td>列出 DC-01\dave 和 DC-01\frank</td></tr>
       <tr><td><code>Get-LocalUser</code></td><td>alice…frank 共 6 个新用户，Guest 的 Enabled = False</td></tr>
     </table>
   </div>
@@ -434,7 +434,7 @@ Get-LocalGroup | Format-Table Name, Description
   <h4>第三步：查看组成员</h4>
 <pre>Get-LocalGroupMember -Group "Developers"</pre>
   <ol>
-    <li>应列出两行：<code>DC1\dave</code> 和 <code>DC1\frank</code>，ObjectClass 为“用户”，PrincipalSource 为 Local</li>
+    <li>应列出两行：<code>DC-01\dave</code> 和 <code>DC-01\frank</code>，ObjectClass 为“用户”，PrincipalSource 为 Local</li>
     <li>你的机器上前缀是自己的计算机名（<code>DC-学号\dave</code>）</li>
   </ol>
   <h4>第四步：查看所有用户和组</h4>
@@ -456,7 +456,7 @@ Get-LocalGroup | Format-Table Name, Description</pre>
     <tr><th style="width:30%">命令 / 参数</th><th>意义</th></tr>
     <tr><td><code>New-LocalGroup -Name "Developers"</code></td><td>等同 GUI 的「新建组」。Developers 用来放开发人员 dave、frank，后面课程按组授权时直接用它。</td></tr>
     <tr><td><code>Add-LocalGroupMember … -Member "dave","frank"</code></td><td><code>-Member</code> 接受一个列表，一条命令加多人，比 GUI 一个个点快，也方便写进脚本。</td></tr>
-    <tr><td><code>Get-LocalGroupMember</code></td><td>做完就查，是运维的基本习惯。输出的 <code>DC1\dave</code> 中“DC1\”表示这是<b>本机</b>账户；以后有了域，域账户的前缀会是域名，一眼就能区分。</td></tr>
+    <tr><td><code>Get-LocalGroupMember</code></td><td>做完就查，是运维的基本习惯。输出的 <code>DC-01\dave</code> 中“DC1\”表示这是<b>本机</b>账户；以后有了域，域账户的前缀会是域名，一眼就能区分。</td></tr>
     <tr><td><code>Format-Table Name, Enabled, LastLogon</code></td><td>只挑关心的列显示成表格。<code>Enabled</code> 用来检查 Guest 是否禁用；<code>LastLogon</code> 为空说明从未登录过，安全审计中常用它找出长期没人用的“僵尸账号”。</td></tr>
     <tr><td><code>Get-LocalGroup … Description</code></td><td>一次看清本机所有组，包括内置组的说明，方便核对自建的 4 个组都在。</td></tr>
     <tr><td><code>net localgroup</code></td><td>传统命令，输出是文本；<code>Get-LocalGroupMember</code> 输出是对象，可以继续筛选、计数。两种都会用，以后看到老脚本也能读懂。</td></tr>
@@ -673,7 +673,7 @@ Get-LocalUser user0* | Format-Table Name,FullName,Description</pre>
       <div class="card blue"><h3>关键点</h3><p class="small">账户存于本机 SAM，系统认 SID；Guest 保持禁用</p></div>
     </div>
     <div class="callout"><b>下节课 · 第 4 课：</b>本地安全策略与审计。给今天的账号加上密码策略、锁定策略，并记录登录事件。</div>
-    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check03.ps1" download>check03.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check03.ps1</code> 生成检查报告，连同报告一起提交。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check03.ps1" download>check03.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check03.ps1</code> 生成检查报告，提交该报告即可。</div>
   </div>
 </div>
 <aside class="notes">出口小测（口头）：1. 删掉 alice 再建一个同名 alice，原来的权限还在吗？为什么？2. New-LocalUser 的 -Password 为什么要 SecureString？3. 新员工入职，用组管理权限要做几步？</aside>

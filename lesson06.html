@@ -461,7 +461,7 @@ type C:\CompanyData\IT\Confidential\secret.txt
     <p class="small muted">bob 的密码：<code>Lab@2026b</code>（第 3 课设置）</p>
   </div>
 </div>
-<aside class="notes">runas 会打开一个新窗口，标题栏显示"以 DC1\bob 身份运行"，提醒学生在新窗口里输命令，不要在自己的管理员窗口里测。如果输入密码后报"登录失败：未授予用户在此计算机上的请求登录类型"，回顾第 5 课的"允许本地登录"设置。</aside>
+<aside class="notes">runas 会打开一个新窗口，标题栏显示"以 DC-01\bob 身份运行"，提醒学生在新窗口里输命令，不要在自己的管理员窗口里测。如果输入密码后报"登录失败：未授予用户在此计算机上的请求登录类型"，回顾第 5 课的"允许本地登录"设置。</aside>
 
 <template id="pop-l06-12-steps">
   <h3>📋 详细步骤：以 bob 身份验证有效权限</h3>
@@ -469,7 +469,7 @@ type C:\CompanyData\IT\Confidential\secret.txt
   <h4>第一步：以 bob 身份开窗口</h4>
 <pre>runas /user:bob cmd</pre>
   <ul><li>输入 bob 的密码 <code>Lab@2026b</code>（第 3 课设的，不回显）</li>
-  <li>新窗口标题栏显示"以 DC1\bob 身份运行"——<b>在新窗口里</b>敲下面的命令，别在管理员窗口里测</li></ul>
+  <li>新窗口标题栏显示"以 DC-01\bob 身份运行"——<b>在新窗口里</b>敲下面的命令，别在管理员窗口里测</li></ul>
   <h4>第二步：逐个测试</h4>
 <pre>type C:\CompanyData\IT\readme.txt            # 能读（IT-Users 对 IT 有修改）
 echo "test" >> C:\CompanyData\IT\readme.txt  # 能写
@@ -561,7 +561,7 @@ type C:\CompanyData\IT\Confidential\secret.txt   # 进不去（名单里没有 b
       <div class="card blue"><h3>关键点</h3><p class="small">权限累加、拒绝优先、没写就没有；用 runas 实测有效权限</p></div>
     </div>
     <div class="callout"><b>下节课 · 第 7 课：</b>共享文件夹与网络访问。把 C:\CompanyData 共享出去，从 CLIENT1 访问，理解共享权限与 NTFS 权限的叠加。</div>
-    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check06.ps1" download>check06.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check06.ps1</code> 生成检查报告，连同报告一起提交。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check06.ps1" download>check06.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check06.ps1</code> 生成检查报告，提交该报告即可。</div>
   </div>
 </div>
 <aside class="notes">出口小测（口头）：1. 修改和完全控制差在哪？2. 禁用继承时为什么选"转换为显式权限"？3. charlie 对 Finance 文件夹有什么权限，为什么？4. (OI)(CI) 分别代表什么？</aside>
