@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第18课 · 域用户与组织单元（OU）</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 6 · 域管理　|　第 18 次课 · 学时 35–36</p>
+  <h1>域用户与组织单元（OU）</h1>
+  <p class="muted">把 lab.local 按部门"分好文件夹"，再把管理权分出去</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">DC1</span></div>
+</div>
+<aside class="notes">衔接上节课：lab.local 已经建好，但里面只有默认的 Users、Computers 容器，像一个没有分类的大仓库。今天给它分部门、放进真实员工账号，并让 IT 部门的人自己管自己的部门。开场提问：域管理员一个人能管 2000 个账号的日常改密码吗？</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>概念</b>容器 vs OU<br>DN · 组 · 委派</div>
+      <div class="seg" style="flex:15"><span class="t">15′</span><b>任务 1</b>创建 OU 结构</div>
+      <div class="seg" style="flex:23"><span class="t">23′</span><b>任务 2</b>域用户<br>CSV 批量 · 安全组</div>
+      <div class="seg" style="flex:15"><span class="t">15′</span><b>任务 3</b>OU 委派管理</div>
+      <div class="seg" style="flex:15"><span class="t">15′</span><b>任务 4</b>验证</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清楚 OU 和默认容器的区别，并能读懂 DN 路径</li>
+        <li>用 PowerShell 建 OU、建域用户（含 CSV 批量）和全局安全组</li>
+        <li>把某个 OU 的管理权委派给普通用户，并验证权限边界</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">任务 2 最耗时，CSV 批量导入经常因为文件编码或路径出错，要预留排障时间。DN 路径是本课所有命令的核心，概念 2 一定要讲透，后面写错 -Path 是最常见错误。</aside>
+</section>
+
+<!-- 18 概念：教材补充 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>域用户 vs 本地用户 · 域账户数据库</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>对比项</th><th>本地用户</th><th>域用户</th></tr>
+      <tr><td>存放位置</td><td>本机 SAM 数据库</td><td>域控统一的 <code>ntds.dit</code></td></tr>
+      <tr><td>验证者</td><td>所在计算机自己</td><td>域控制器（DC）集中验证</td></tr>
+      <tr><td>可登录范围</td><td>只能登录本机</td><td>任意加入域的计算机</td></tr>
+      <tr><td>管理方式</td><td>逐台单独管理</td><td>在 DC 上集中管理授权</td></tr>
+    </table>
+    <div class="card blue">
+      <h3>域账户数据库 ntds.dit</h3>
+      <ul class="points">
+        <li>域账户数据库，路径 <code>C:\Windows\NTDS\ntds.dit</code>，保存全域账户与密码</li>
+        <li>机器提升为域的第一台 DC 时，原 SAM 数据库升级到此</li>
+        <li>此后<b>本地用户账户变成域用户账户</b>，由 DC 统一验证</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">先讲区别：本地用户存在每台电脑自己的 SAM 库里，只能登录这一台机器，谁管谁的；域用户统一存在域控的 ntds.dit 数据库里，由 DC 集中验证，一个账号可以登录域内任何一台加入域的电脑，管理也集中在 DC 上做。再讲 ntds.dit——它就是域的账户数据库，路径在 C:\Windows\NTDS\ntds.dit，里面装着全域的账户和密码信息。一个很重要的转折点：当一台计算机被提升为这个域的第一台域控时，它原来的 SAM 数据库会升级到 ntds.dit，原来的本地用户账户也就随之变成了域用户账户。所以域控上通常看不到普通意义的"本地用户"。顺便提一句部署时设置的"目录服务还原模式密码"，它只在还原模式下登录才用，因为那种模式下所有域账户都不能用。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · lab.local 域控制器<br>本课全部操作都在这里</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>起点：</b>从快照 <code>Lesson17-Done</code> 开始，用 <code>LAB\Administrator</code> 登录</div>
+      <div class="callout"><b>工具：</b>PowerShell（ActiveDirectory 模块）+ AD 用户和计算机 <code>dsa.msc</code></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">操作建议：敲完一条命令，自己对照 OU 规划图核对 -Path 参数是否写对，这是避免笔误的好习惯（任务 1、2）；任务 3 自己做完委派后，立刻自己切换账号测试效果，验证权限是否真的生效。SVR2、CLIENT1 可以开机但本课不操作。开始前先运行 Get-ADDomain 确认域正常。</aside>
+</section>
+
+<!-- 04 概念：容器 vs OU -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>默认容器 vs 组织单元 OU</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>默认容器 CN=Users</h3>
+        <ul class="points">
+          <li>装域时自动生成，所有人挤在一起</li>
+          <li>不能挂组策略 GPO</li>
+          <li>不能按部门委派管理权</li>
+          <li>不能在里面再建 OU</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>组织单元 OU=IT-Dept</h3>
+        <ul class="points">
+          <li>按部门、地点自由规划层级</li>
+          <li>可以挂 GPO（第 19 课）</li>
+          <li>可以把管理权委派给部门管理员</li>
+          <li>默认开启"防止意外删除"</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>一句话：</b>OU 是域里"能挂策略、能分权"的文件夹；容器只是个存放区。</div>
+  </div>
+</div>
+<aside class="notes">打开 dsa.msc 对比：Users 是普通文件夹图标，OU 图标上多了一个小册子。提问：上节课 SVR2、CLIENT1 加域后，计算机账户放在哪里？答：CN=Computers 容器，所以不能直接对它们挂 GPO。</aside>
+</section>
+
+<!-- 05 概念：DN 路径 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>今天要建的 OU 结构与 DN 路径</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">域 lab.local（DC=lab,DC=local）</div>
+        <div class="nest">
+          <div class="lbl">OU=Company</div>
+          <div class="grid2" style="gap:12px">
+            <span class="obj">📁 IT-Dept</span><span class="obj">📁 Finance-Dept</span>
+            <span class="obj">📁 HR-Dept</span><span class="obj">📁 Servers</span>
+          </div>
+        </div>
+      </div>
+      <table class="tbl">
+        <tr><th>对象</th><th>DN（从里往外写）</th></tr>
+        <tr><td>Company</td><td><code>OU=Company,DC=lab,DC=local</code></td></tr>
+        <tr><td>IT-Dept</td><td><code>OU=IT-Dept,OU=Company,</code><br><code>DC=lab,DC=local</code></td></tr>
+        <tr><td>wangwei</td><td><code>CN=Wang Wei,OU=IT-Dept,…</code></td></tr>
+      </table>
+    </div>
+    <div class="callout warn"><b>规律：</b>DN 像倒着写的地址，最具体的放最左边；<code>-Path</code> 写的是"放到哪个父级"。</div>
+  </div>
+</div>
+<aside class="notes">类比邮寄地址：先写房间号再写楼、再写城市。-Path 填的是父级 DN，不含对象自己的名字；所以建 Company 时 Path 是域根，建 IT-Dept 时 Path 是 Company。逗号前后不能有多余空格或中文逗号。</aside>
+</section>
+
+<!-- 06 概念：组与委派 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>组管"能访问什么"，委派管"能管理谁"</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>概念</th><th>本课取值</th><th>作用</th></tr>
+      <tr><td><b>组类型</b></td><td>Security 安全组</td><td>可以出现在权限列表 ACL 里（通讯组不行）</td></tr>
+      <tr><td><b>组作用域</b></td><td>Global 全局组</td><td>按部门归类本域用户，最常用</td></tr>
+      <tr><td><b>委派</b></td><td>wangwei → IT-Dept</td><td>在 OU 的 ACL 上给普通用户加管理权限</td></tr>
+    </table>
+    <div class="flow">
+      <div class="node"><b>域管理员</b>管整个域</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>委派</b>只授权 IT-Dept</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>wangwei</b>能管 IT-Dept<br>不能碰 Finance-Dept</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">委派体现最小权限原则：wangwei 不需要成为 Domain Admins 也能完成部门日常工作（建账号、重置密码）。组作用域还有本地域组和通用组，课上只点到，AGDLP 原则可留作课后阅读。提问：为什么不直接把 wangwei 加进 Domain Admins？</aside>
+</section>
+
+<!-- 07 任务1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 15′ · DC1</span></span><h2>创建 OU 结构</h2><button class="more" data-pop="pop-l18-t1-steps">📋 详细步骤</button><button class="more" data-pop="pop-l18-t1-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">先建父级 Company，再在它下面建 4 个部门 OU</div>
+<pre><code class="language-powershell" data-trim>
+New-ADOrganizationalUnit -Name "Company" `
+  -Path "DC=lab,DC=local"
+$p = "OU=Company,DC=lab,DC=local"
+$ous = "IT-Dept","Finance-Dept","HR-Dept","Servers"
+foreach ($o in $ous) {
+  New-ADOrganizationalUnit -Name $o -Path $p
+}
+</code></pre>
+    <div class="code-cap">确认删除保护：ProtectedFromAccidentalDeletion 应全为 True</div>
+<pre><code class="language-powershell" data-trim>
+Get-ADOrganizationalUnit -Filter * |
+  Select-Object Name, ProtectedFromAccidentalDeletion
+</code></pre>
+  </div>
+</div>
+<aside class="notes">原文是 5 条独立的 New-ADOrganizationalUnit，这里用 foreach 循环写后 4 条，效果完全一样，也可以让学生逐条敲。顺序不能反：先有 Company 才能在它下面建子 OU，否则报"找不到目录对象"。输出里还会看到默认的 Domain Controllers OU，这是正常的。</aside>
+<template id="pop-l18-t1-steps">
+  <h3>📋 详细步骤：创建 OU 结构</h3>
+  <h4>第一步：先建父级 OU</h4>
+<pre>New-ADOrganizationalUnit -Name "Company" `
+  -Path "DC=lab,DC=local"</pre>
+  <div class="tip">顺序不能反：必须先有 Company，才能在它下面建子 OU，否则报"找不到目录对象"。</div>
+  <h4>第二步：在 Company 下建 4 个部门 OU</h4>
+<pre>$p = "OU=Company,DC=lab,DC=local"
+$ous = "IT-Dept","Finance-Dept","HR-Dept","Servers"
+foreach ($o in $ous) {
+  New-ADOrganizationalUnit -Name $o -Path $p
+}</pre>
+  <p>也可以逐条敲 4 条独立的 New-ADOrganizationalUnit 命令，效果完全一样。</p>
+  <h4>第三步：确认删除保护</h4>
+<pre>Get-ADOrganizationalUnit -Filter * |
+  Select-Object Name, ProtectedFromAccidentalDeletion</pre>
+  <p>输出里 <code>ProtectedFromAccidentalDeletion</code> 一列应全为 <code>True</code>。还会看到默认的 Domain Controllers OU，这是系统自带的，正常。</p>
+</template>
+<template id="pop-l18-t1-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>New-ADOrganizationalUnit -Path "DC=lab,DC=local"</code></td><td>在域根下创建 Company 这个 OU，作为所有部门 OU 的父级，便于统一管理（比如统一的 GPO、统一的委派范围）。</td></tr>
+    <tr><td>4 个部门 OU：IT-Dept / Finance-Dept / HR-Dept / Servers</td><td>按部门划分 OU 是企业最常见的组织方式，便于按部门分别设置密码策略、委派管理权限（任务 3 会演示委派）、应用不同的组策略。</td></tr>
+    <tr><td><code>ProtectedFromAccidentalDeletion = True</code></td><td>OU 创建时默认开启"防止意外删除"保护，这是一条安全 ACE，避免管理员手误删掉整个部门的组织结构。check18.ps1 用 <code>Get-ADOrganizationalUnit -Filter "Name -eq '...'" -SearchBase $company</code> 核对这 4 个 OU 是否都在 Company 下面。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>报"找不到目录对象"：Company 还没建好，或者 <code>$p</code> 路径写错了，确认拼写是 <code>OU=Company,DC=lab,DC=local</code></li>
+    <li><code>Get-ADOrganizationalUnit -Filter *</code> 看不到 4 个部门 OU：重新执行一次 foreach 循环，或检查前面是不是报错了</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务2 单个用户 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 23′ · DC1</span></span><h2>创建第一个域用户 wangwei</h2><button class="more" data-pop="pop-l18-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l18-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$pw = ConvertTo-SecureString "Domain@2026!" `
+  -AsPlainText -Force
+New-ADUser -Name "Wang Wei" -SamAccountName "wangwei" `
+  -UserPrincipalName "wangwei@lab.local" `
+  -Path "OU=IT-Dept,OU=Company,DC=lab,DC=local" `
+  -AccountPassword $pw -Enabled $true `
+  -Department "IT" -Title "系统管理员"
+</code></pre>
+    <table class="tbl">
+      <tr><th>参数</th><th>含义</th></tr>
+      <tr><td><code>-SamAccountName</code></td><td>旧式登录名，写作 <code>LAB\wangwei</code></td></tr>
+      <tr><td><code>-UserPrincipalName</code></td><td>新式登录名 <code>wangwei@lab.local</code></td></tr>
+      <tr><td><code>-Enabled $true</code></td><td>不写这个，账户默认是禁用的</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">-Name 是显示名，会成为 DN 里的 CN=Wang Wei；真正登录用的是 SamAccountName 或 UPN。不设密码或密码不满足域复杂度策略时会报错，Domain@2026! 满足要求。建完到 dsa.msc 里刷新 IT-Dept 看一眼。</aside>
+<template id="pop-l18-t2a-steps">
+  <h3>📋 详细步骤：创建第一个域用户 wangwei</h3>
+  <h4>第一步：准备密码</h4>
+<pre>$pw = ConvertTo-SecureString "Domain@2026!" `
+  -AsPlainText -Force</pre>
+  <p>密码必须满足域复杂度策略，<code>Domain@2026!</code> 满足要求（大小写字母+数字+符号）。</p>
+  <h4>第二步：创建用户</h4>
+<pre>New-ADUser -Name "Wang Wei" -SamAccountName "wangwei" `
+  -UserPrincipalName "wangwei@lab.local" `
+  -Path "OU=IT-Dept,OU=Company,DC=lab,DC=local" `
+  -AccountPassword $pw -Enabled $true `
+  -Department "IT" -Title "系统管理员"</pre>
+  <div class="tip"><code>-Enabled $true</code> 千万别漏，不写这个参数账户默认是禁用的，登录会被拒绝。</div>
+  <h4>第三步：核对</h4>
+  <p>打开 dsa.msc，刷新 IT-Dept，应该能看到"Wang Wei"这个用户对象。</p>
+</template>
+<template id="pop-l18-t2a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>-Name "Wang Wei"</code></td><td>这是显示名，会成为对象的 DN 里的 <code>CN=Wang Wei</code>，不是登录名。</td></tr>
+    <tr><td><code>-SamAccountName "wangwei"</code></td><td>旧式登录名，登录时写作 <code>LAB\wangwei</code>，很多老的 Windows 应用只认这种格式。</td></tr>
+    <tr><td><code>-UserPrincipalName "wangwei@lab.local"</code></td><td>新式登录名，格式类似邮箱，和 SamAccountName 是两套等价的登录方式，任选其一。</td></tr>
+    <tr><td><code>-Path "OU=IT-Dept,OU=Company,DC=lab,DC=local"</code></td><td>把用户放进 IT-Dept 这个 OU，决定了它受哪个 OU 的组策略和委派权限管理（任务 3 会用到）。check18.ps1 用这个 DN 匹配来判定用户是否放对了位置。</td></tr>
+    <tr><td><code>-Enabled $true</code></td><td>New-ADUser 默认创建的账户是<b>禁用</b>的（出于安全考虑，避免误建了可登录账户），必须显式启用。</td></tr>
+    <tr><td><code>-Department / -Title</code></td><td>只是信息性属性，方便在 AD 中按部门/职位查找、生成报表，不影响权限。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>报密码不满足复杂度要求：密码要同时有大小写字母、数字和符号，长度足够</li>
+    <li>报"账户已存在"：之前已经建过，不影响已建成的用户，可以忽略或先删除重建</li>
+    <li>用户建好了但登录不了：检查有没有写 <code>-Enabled $true</code></li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 CSV -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 23′ · DC1</span></span><h2>CSV 批量创建 5 个用户</h2><button class="more" data-pop="pop-l18-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l18-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">C:\LabFiles\domain-users.csv（保存为 UTF-8）</div>
+<pre><code class="language-plaintext" data-trim>
+Name,SamAccountName,Department,OU,Title
+Zhang San,zhangsan,Finance,Finance-Dept,会计
+Li Si,lisi,Finance,Finance-Dept,出纳
+Wang Wu,wangwu,HR,HR-Dept,HR主管
+Zhao Liu,zhaoliu,HR,HR-Dept,HR专员
+Sun Qi,sunqi,IT,IT-Dept,网络工程师
+</code></pre>
+    <div class="callout"><b>思路：</b>第一行是列名，脚本里用 <code>$_.列名</code> 取值；<code>OU</code> 列决定用户放进哪个部门。</div>
+  </div>
+</div>
+<aside class="notes">你自己准备好这个文件就行：先用记事本建好 CSV，再写导入脚本。重点：列名必须和脚本里 $_.xxx 完全一致，多一个空格就取不到值。Title 列有中文，编码不对会变成乱码，见排障页。</aside>
+<template id="pop-l18-t2b-steps">
+  <h3>📋 详细步骤：CSV 批量创建 5 个用户</h3>
+  <h4>第一步：用记事本建 CSV 文件</h4>
+  <p>路径：<code>C:\LabFiles\domain-users.csv</code>，<b>保存为 UTF-8 编码</b>。</p>
+<pre>Name,SamAccountName,Department,OU,Title
+Zhang San,zhangsan,Finance,Finance-Dept,会计
+Li Si,lisi,Finance,Finance-Dept,出纳
+Wang Wu,wangwu,HR,HR-Dept,HR主管
+Zhao Liu,zhaoliu,HR,HR-Dept,HR专员
+Sun Qi,sunqi,IT,IT-Dept,网络工程师</pre>
+  <div class="tip">第一行是列名，脚本里用 <code>$_.列名</code> 取值，列名必须和脚本里的 <code>$_.xxx</code> 完全一致，多一个空格就取不到值。</div>
+  <h4>第二步：确认编码</h4>
+  <p>记事本"另存为"时文件类型要选"UTF-8"（不是 ANSI），否则 Title 列的中文会在导入时变成乱码。</p>
+  <h4>第三步：理解每一列的作用</h4>
+  <p><code>OU</code> 列决定这个用户最终会被导入脚本放进哪个部门 OU（下一页会用到）。</p>
+</template>
+<template id="pop-l18-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>CSV 第一行是列名</td><td>Import-Csv 会把第一行当表头，用 <code>$_.列名</code> 这种语法在循环里按名字取值，比按位置取值（第几列）更不容易出错。</td></tr>
+    <tr><td><code>OU</code> 列</td><td>存部门短名（如 Finance-Dept），导入脚本会拼成完整路径 <code>OU=$($_.OU),OU=Company,DC=lab,DC=local</code>，这样一份 CSV 就能把用户分别放进不同部门 OU。</td></tr>
+    <tr><td>保存为 UTF-8</td><td>Title 列含中文（会计、出纳、HR主管…），如果用默认 ANSI 编码保存，PowerShell 读取时中文会乱码甚至报错。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>导入时 Title 显示乱码：CSV 没有存成 UTF-8，重新用记事本另存为并选择 UTF-8</li>
+    <li>导入报"找不到属性"之类的错：检查 CSV 列名和脚本里 $_.xxx 的名字是不是完全一致，含有多余空格</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 CSV 导入 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 23′ · DC1</span></span><h2>导入脚本：一行 CSV 建一个用户</h2><button class="more" data-pop="pop-l18-t2c-steps">📋 详细步骤</button><button class="more" data-pop="pop-l18-t2c-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">沿用上一页的 $pw（密码 Domain@2026!）</div>
+<pre><code class="language-powershell" data-trim>
+Import-Csv C:\LabFiles\domain-users.csv | ForEach-Object {
+  $sam = $_.SamAccountName
+  New-ADUser -Name $_.Name -SamAccountName $sam `
+    -UserPrincipalName "$sam@lab.local" -Enabled $true `
+    -Path "OU=$($_.OU),OU=Company,DC=lab,DC=local" `
+    -AccountPassword $pw -Department $_.Department `
+    -Title $_.Title; Write-Host "Created: $sam" -Fore Green
+}
+</code></pre>
+    <div class="callout"><b>预期：</b>屏幕出现 5 行绿色 <code>Created: …</code>；任何一行红字都要先看是哪个用户、哪个参数。</div>
+  </div>
+</div>
+<aside class="notes">原文脚本在循环里每次重新 ConvertTo-SecureString，这里为了缩短行宽复用 $pw，并把 SamAccountName 存进 $sam，逻辑完全一致。如果新开了 PowerShell 窗口，$pw 已经不存在，要先重新执行上一页第一条命令。重复运行会报"指定的帐户已存在"，不影响已建成的用户。</aside>
+<template id="pop-l18-t2c-steps">
+  <h3>📋 详细步骤：导入脚本批量建用户</h3>
+  <h4>第一步：确认 $pw 变量还在</h4>
+  <p>沿用任务 2 第一页的 <code>$pw</code>（密码 <code>Domain@2026!</code>）。如果中途新开了一个 PowerShell 窗口，<code>$pw</code> 已经不存在，要先重新执行：</p>
+<pre>$pw = ConvertTo-SecureString "Domain@2026!" -AsPlainText -Force</pre>
+  <h4>第二步：运行导入脚本</h4>
+<pre>Import-Csv C:\LabFiles\domain-users.csv | ForEach-Object {
+  $sam = $_.SamAccountName
+  New-ADUser -Name $_.Name -SamAccountName $sam `
+    -UserPrincipalName "$sam@lab.local" -Enabled $true `
+    -Path "OU=$($_.OU),OU=Company,DC=lab,DC=local" `
+    -AccountPassword $pw -Department $_.Department `
+    -Title $_.Title; Write-Host "Created: $sam" -Fore Green
+}</pre>
+  <h4>第三步：核对输出</h4>
+  <p>预期：屏幕出现 5 行绿色 <code>Created: …</code>。任何一行红字都要先看是哪个用户、哪个参数出错。</p>
+  <div class="tip">重复运行脚本会对已经建过的用户报"指定的帐户已存在"，这是正常现象，不影响已建成的用户，可以忽略。</div>
+</template>
+<template id="pop-l18-t2c-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Import-Csv ... | ForEach-Object { ... }</code></td><td>把 CSV 的每一行变成一个带属性的对象，管道传给 ForEach-Object，循环体里的 <code>$_</code> 就是当前这一行，逐行调用 New-ADUser，一次脚本建完所有用户。</td></tr>
+    <tr><td><code>$sam = $_.SamAccountName</code></td><td>先存一个变量，避免在后面多处重复写 <code>$_.SamAccountName</code>，让代码更短更不容易打错。</td></tr>
+    <tr><td><code>-Path "OU=$($_.OU),OU=Company,DC=lab,DC=local"</code></td><td>按 CSV 里的 OU 列动态拼出每个用户该放的 OU 路径，这样一份脚本就能把用户分别放进 Finance-Dept/HR-Dept/IT-Dept 三个不同的部门。</td></tr>
+    <tr><td>复用同一个 <code>$pw</code></td><td>所有批量用户用同一个初始密码（Domain@2026!），生产环境通常会要求用户首次登录强制改密码，这里是教学简化。</td></tr>
+    <tr><td><code>Write-Host "Created: $sam" -Fore Green</code></td><td>每建完一个用户打印一行绿色提示，方便肉眼确认 5 个用户是不是都建成功了，没出现就说明那一行有问题。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>某一行报错而不是绿色 Created：看错误信息里的用户名，大概率是密码不满足复杂度、或 OU 路径拼错了</li>
+    <li>报"$pw 不是变量"之类的错：$pw 在新窗口里不存在，先重新执行上一页的 ConvertTo-SecureString</li>
+    <li>5 个用户建完后 check18.ps1 显示"位置错"：核对 CSV 的 OU 列拼写是否和真实 OU 名完全一致</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务2 安全组 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 23′ · DC1</span></span><h2>创建部门安全组并加成员</h2><button class="more" data-pop="pop-l18-t2d-steps">📋 详细步骤</button><button class="more" data-pop="pop-l18-t2d-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$it  = "OU=IT-Dept,OU=Company,DC=lab,DC=local"
+$fin = "OU=Finance-Dept,OU=Company,DC=lab,DC=local"
+New-ADGroup -Name "Domain-IT" -GroupScope Global `
+  -GroupCategory Security -Path $it
+New-ADGroup -Name "Domain-Finance" -GroupScope Global `
+  -GroupCategory Security -Path $fin
+</code></pre>
+<pre><code class="language-powershell" data-trim>
+Add-ADGroupMember -Identity "Domain-IT" `
+  -Members "wangwei","sunqi"
+Add-ADGroupMember -Identity "Domain-Finance" `
+  -Members "zhangsan","lisi"
+</code></pre>
+  </div>
+</div>
+<aside class="notes">-Members 用的是 SamAccountName，不是显示名 Wang Wei。HR 部门的 wangwu、zhaoliu 原文没有建组，可以作为课后练习让学生自己建 Domain-HR。可用 Get-ADGroupMember "Domain-IT" 现场核对成员。</aside>
+<template id="pop-l18-t2d-steps">
+  <h3>📋 详细步骤：创建部门安全组并加成员</h3>
+  <h4>第一步：创建两个安全组</h4>
+<pre>$it  = "OU=IT-Dept,OU=Company,DC=lab,DC=local"
+$fin = "OU=Finance-Dept,OU=Company,DC=lab,DC=local"
+New-ADGroup -Name "Domain-IT" -GroupScope Global `
+  -GroupCategory Security -Path $it
+New-ADGroup -Name "Domain-Finance" -GroupScope Global `
+  -GroupCategory Security -Path $fin</pre>
+  <h4>第二步：把用户加进对应的组</h4>
+<pre>Add-ADGroupMember -Identity "Domain-IT" `
+  -Members "wangwei","sunqi"
+Add-ADGroupMember -Identity "Domain-Finance" `
+  -Members "zhangsan","lisi"</pre>
+  <div class="tip">-Members 要用 SamAccountName（如 wangwei），不是显示名（Wang Wei）。</div>
+  <h4>第三步：核对成员</h4>
+<pre>Get-ADGroupMember "Domain-IT"</pre>
+  <p>应该能看到 wangwei 和 sunqi 两个成员。</p>
+  <p class="small muted">HR 部门的 wangwu、zhaoliu 这里没有建组，可以作为课后练习自己建 Domain-HR 安全组。</p>
+</template>
+<template id="pop-l18-t2d-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>-GroupScope Global</code></td><td>全局组，可以在整个域内被授权访问资源，是最常用的部门/角色分组方式。</td></tr>
+    <tr><td><code>-GroupCategory Security</code></td><td>安全组（而不是通讯组），可以用来做权限授予（比如 NTFS 权限、共享权限），通讯组只能用于邮件分发，不能授权。</td></tr>
+    <tr><td>按部门建组而不是直接给每个用户授权</td><td>这是 AD 权限管理的基本原则：权限授予组，用户加入组继承权限，日后人员调动只需改组成员，不用逐个改权限设置。</td></tr>
+    <tr><td><code>-Members "wangwei","sunqi"</code></td><td>必须用 SamAccountName（登录名），不是显示名，因为 AD 内部按账户名唯一标识对象。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li><code>Add-ADGroupMember</code> 报"找不到对象"：确认传的是 SamAccountName（如 wangwei）而不是显示名（Wang Wei）</li>
+    <li>check18.ps1 显示 Domain-IT 不含某成员：用 <code>Get-ADGroupMember "Domain-IT"</code> 核对，缺的话重新 Add-ADGroupMember</li>
+    <li>组建错了类别（通讯组而非安全组）：删除重建，-GroupCategory 要写 Security</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 任务3 委派 GUI -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 15′ · DC1</span></span><h2>把 IT-Dept 委派给 wangwei</h2><button class="more" data-pop="pop-l18-t3a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l18-t3a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>dsa.msc</span><i>›</i><span>Company</span><i>›</i><span>右键 IT-Dept</span><i>›</i><span>委派控制</span><i>›</i><span>添加 wangwei</span></div>
+    <div class="card blue">
+      <h3>勾选这三项委派任务</h3>
+      <ul class="points check">
+        <li>创建、删除和管理用户账户</li>
+        <li>重置用户密码并强制在下次登录时更改密码</li>
+        <li>修改组成员身份</li>
+      </ul>
+    </div>
+    <div class="callout warn"><b>注意：</b>一定是在 <b>IT-Dept</b> 上右键，不是 Company，否则 wangwei 会管到所有部门。</div>
+  </div>
+</div>
+<aside class="notes">向导里的任务名称与原文略有差异："重置用户密码"在界面上完整写作"重置用户密码并强制在下次登录时更改密码"，"管理组成员身份"对应"修改组成员身份"。委派向导本质是往 OU 的 ACL 里写 ACE，可以在 IT-Dept 属性 → 安全 → 高级中看到 wangwei 的条目（需先在"查看"菜单开启高级功能）。</aside>
+<template id="pop-l18-t3a-steps">
+  <h3>📋 详细步骤：把 IT-Dept 委派给 wangwei</h3>
+  <h4>第一步：打开委派向导</h4>
+  <div class="crumb"><span>dsa.msc</span><i>›</i><span>Company</span><i>›</i><span>右键 IT-Dept</span><i>›</i><span>委派控制</span><i>›</i><span>添加 wangwei</span></div>
+  <div class="tip">一定是在 <b>IT-Dept</b> 上右键，不是 Company，否则 wangwei 会管到所有部门。</div>
+  <h4>第二步：勾选这三项委派任务</h4>
+  <ol>
+    <li>创建、删除和管理用户账户</li>
+    <li>重置用户密码并强制在下次登录时更改密码</li>
+    <li>修改组成员身份</li>
+  </ol>
+  <p class="small muted">向导里的任务名称与课堂口头说法略有差异："重置用户密码"在界面上完整写作"重置用户密码并强制在下次登录时更改密码"，"管理组成员身份"对应"修改组成员身份"。</p>
+  <h4>第三步：验证委派已生效</h4>
+  <p>在"查看"菜单里开启"高级功能"，然后 IT-Dept 属性 → 安全 → 高级，应该能看到 wangwei 的条目。</p>
+</template>
+<template id="pop-l18-t3a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>在 IT-Dept 上右键而不是 Company</td><td>委派的范围就是你右键的那个容器及其下属对象，选错容器会导致授权范围过大（比如管到所有部门），这是最容易踩的坑。</td></tr>
+    <tr><td>创建、删除和管理用户账户</td><td>让 wangwei 能在 IT-Dept 下新建、删除、修改用户，相当于把 IT 部门的用户管理工作下放给部门管理员，不需要域管理员亲自操作。</td></tr>
+    <tr><td>重置用户密码并强制在下次登录时更改密码</td><td>常见的日常运维需求（员工忘密码），委派后 wangwei 可以自己处理，不用每次找域管理员。</td></tr>
+    <tr><td>修改组成员身份</td><td>让 wangwei 能把人加入/移出 IT-Dept 相关的组（比如 Domain-IT），管理部门内的组成员变动。</td></tr>
+    <tr><td>委派的本质</td><td>委派向导本质是往 IT-Dept 这个 OU 的 ACL 里写入几条 ACE（访问控制项），check18.ps1 正是通过 <code>Get-Acl "AD:\OU=IT-Dept,..."</code> 查 wangwei 的 SID 是否出现在 ACL 里来判定委派是否生效的。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>委派后下一页测试仍然失败：确认委派的是 IT-Dept 而不是 Company 或别的 OU</li>
+    <li>看不到 ACL 里的 wangwei：先在"查看"菜单打开"高级功能"才能看到"安全"标签</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 任务3 测试 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 15′ · DC1</span></span><h2>用 wangwei 的身份测试委派边界</h2><button class="more" data-pop="pop-l18-t3b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l18-t3b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$cred = Get-Credential   # 输入 wangwei@lab.local
+$tp = ConvertTo-SecureString "Test@2026!" `
+  -AsPlainText -Force
+$it = "OU=IT-Dept,OU=Company,DC=lab,DC=local"
+$fin = "OU=Finance-Dept,OU=Company,DC=lab,DC=local"
+$a = @{AccountPassword=$tp; Enabled=$true}
+$a.Credential = $cred
+New-ADUser "Test Delegate" -SamAccountName testdel `
+  -Path $it @a
+New-ADUser "Test Delegate2" -SamAccountName testdel2 `
+  -Path $fin @a
+</code></pre>
+    <div class="grid2">
+      <div class="card good"><h3>testdel → IT-Dept</h3><p class="small">预期：<b class="green">成功</b></p></div>
+      <div class="card bad"><h3>testdel2 → Finance-Dept</h3><p class="small">预期：<b class="red">拒绝访问</b>（无 Finance-Dept 权限）</p></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">你刚做完委派，现在自己用 -Credential 以 wangwei 身份测试，亲自判断结果。第二条报"拒绝访问"才是正确结果，要提醒学生不要以为是自己做错了，这正是权限边界生效的证据。$a 是参数哈希表，@a 把它展开成 -AccountPassword/-Enabled/-Credential（称为 splatting），可借此顺带介绍。-Credential 让命令以 wangwei 身份执行，而当前窗口仍是 Administrator。</aside>
+<template id="pop-l18-t3b-steps">
+  <h3>📋 详细步骤：测试委派边界</h3>
+  <h4>第一步：以 wangwei 的身份输入凭据</h4>
+<pre>$cred = Get-Credential   # 输入 wangwei@lab.local</pre>
+  <p>当前 PowerShell 窗口仍然是 Administrator 身份在运行，<code>$cred</code> 只是存了一份凭据，稍后用 -Credential 以 wangwei 的权限去执行具体命令。</p>
+  <h4>第二步：准备测试用户的密码和路径</h4>
+<pre>$tp = ConvertTo-SecureString "Test@2026!" `
+  -AsPlainText -Force
+$it = "OU=IT-Dept,OU=Company,DC=lab,DC=local"
+$fin = "OU=Finance-Dept,OU=Company,DC=lab,DC=local"
+$a = @{AccountPassword=$tp; Enabled=$true}
+$a.Credential = $cred</pre>
+  <p><code>$a</code> 是一个参数哈希表，<code>@a</code> 用的时候会把它展开成 <code>-AccountPassword/-Enabled/-Credential</code> 三个参数（称为 splatting），省得每条命令都重复写这些参数。</p>
+  <h4>第三步：在 IT-Dept 建用户（预期成功）</h4>
+<pre>New-ADUser "Test Delegate" -SamAccountName testdel `
+  -Path $it @a</pre>
+  <p>预期：<b class="green">成功</b>，因为 wangwei 已被委派管理 IT-Dept。</p>
+  <h4>第四步：在 Finance-Dept 建用户（预期失败）</h4>
+<pre>New-ADUser "Test Delegate2" -SamAccountName testdel2 `
+  -Path $fin @a</pre>
+  <p>预期：<b class="red">拒绝访问</b>，因为 wangwei 没有被委派 Finance-Dept 的权限——这正是权限边界生效的证据，不是操作错误。</p>
+</template>
+<template id="pop-l18-t3b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Get-Credential</code></td><td>弹出凭据输入框，让当前脚本能"借用"wangwei 的身份去执行某条命令，而不改变当前登录会话的身份。</td></tr>
+    <tr><td><code>-Credential $cred</code></td><td>New-ADUser 支持以指定凭据的身份执行操作，相当于模拟"wangwei 亲自登录执行这条命令"，这正是检验委派范围的手段。</td></tr>
+    <tr><td><code>$a = @{...}; @a</code>（splatting）</td><td>把一堆参数先存进哈希表，再用 <code>@a</code> 一次性展开传给命令，避免每条 New-ADUser 都重复写三遍同样的参数。</td></tr>
+    <tr><td>testdel → IT-Dept 应该成功</td><td>验证任务 3a 的委派确实生效了——wangwei 真的能在 IT-Dept 创建用户。</td></tr>
+    <tr><td>testdel2 → Finance-Dept 应该拒绝访问</td><td>验证委派<b>没有越界</b>——wangwei 只能管 IT-Dept，不能动 Finance-Dept，这是权限最小化原则的直接体现。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>testdel 建在 IT-Dept 也失败：回去确认任务 3a 的委派是不是真的做在了 IT-Dept 上，且勾选了"创建、删除和管理用户账户"</li>
+    <li>testdel2 建在 Finance-Dept 却成功了：说明委派范围选错了（可能委派到了 Company 而不是 IT-Dept），需要重新检查委派设置</li>
+    <li><code>Get-Credential</code> 密码输错：直接重新执行一次该命令重新输入</li>
+  </ul>
+</template>
+</section>
+
+<!-- 14 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>报错了？先对照这张表</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:30%">原因</th><th>处理</th></tr>
+      <tr><td>找不到目录对象</td><td><code>-Path</code> 的 DN 写错或父 OU 未建</td><td>对照概念 2 的 DN 表，检查逗号和拼写</td></tr>
+      <tr><td>指定的帐户已存在</td><td>脚本重复运行</td><td>已建好的用户不受影响，忽略即可</td></tr>
+      <tr><td>密码不符合要求</td><td>不满足域密码复杂度</td><td>使用原文密码 <code>Domain@2026!</code></td></tr>
+      <tr><td>Title 显示乱码</td><td>CSV 编码不是 UTF-8</td><td>记事本"另存为"选 UTF-8</td></tr>
+      <tr><td>testdel 也被拒绝</td><td>委派做在了别的 OU 或漏勾任务</td><td>在 IT-Dept 上重新运行委派向导</td></tr>
+    </table>
+    <div class="callout warn">删除 OU 报"拒绝访问"？那是<b>删除保护</b>在起作用，说明配置正确。</div>
+  </div>
+</div>
+<aside class="notes">先让学生把报错的第一行读出来再查表。DN 写错是本课最高频问题，尤其是把 OU=Company 漏掉。不要为了"重做"去关闭删除保护再删 OU，回滚快照更安全。</aside>
+</section>
+
+<!-- 15 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 4 · 验证与提交</span><h2>任务 4 · 15′ · 对照清单自查</h2><button class="more" data-pop="pop-l18-15-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>4 个 OU 存在（IT / Finance / HR / Servers）</li>
+        <li>6 个域用户存在（wangwei … sunqi）</li>
+        <li>Domain-IT 含 wangwei、sunqi</li>
+        <li>Domain-Finance 含 zhangsan、lisi</li>
+        <li>wangwei 对 IT-Dept 有委派权限</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>DC1 拍快照<br><code>Lesson18-Done</code></p>
+        <p class="small muted" style="margin-top:8px">下节课的 GPO 要挂到这些 OU 上</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对清单。清单达成后运行 check18.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。6 个用户是 wangwei、zhangsan、lisi、wangwu、zhaoliu、sunqi，测试用的 testdel 不在检查范围内，可以保留。有 ✗ 的项先对照排障表修复再拍快照。</aside>
+
+<template id="pop-l18-15-check">
+<h3>🧪 运行检查脚本 check18.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check18.ps1</pre>
+<h4>脚本检查什么（6 项判定 + 2 项采集，在 DC1 上跑）</h4>
+<ul>
+  <li><b>任务 1：</b>4 个部门 OU 都在 Company 下（IT/Finance/HR/Servers）</li>
+  <li><b>任务 2：</b>6 个域用户已创建且启用、用户位于对应部门 OU、Domain-IT 含 wangwei+sunqi、Domain-Finance 含 zhangsan+lisi</li>
+  <li><b>任务 3：</b>wangwei 对 IT-Dept 有委派权限（OU 的 ACL 含 wangwei 的 ACE）</li>
+</ul>
+<div class="tip">用户密码 <code>Domain@2026!</code>；组是全局安全组。全部 PASS 后拍快照 <code>Lesson18-Done</code>（第 19 课的 GPO 要挂到这些 OU 上）。</div>
+</template>
+</section>
+
+<!-- 16 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">OU 能挂策略、能分权；委派让部门自管而不必给域管权限</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small"><code>New-ADOrganizationalUnit</code> → <code>New-ADUser</code> / CSV → <code>New-ADGroup</code> → 委派控制</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">DN 从里往外写；<code>-Path</code> 是父级位置</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 19 课：</b>组策略 GPO。把策略挂到今天建的部门 OU 上，一次配置全部门生效。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check18.ps1" download>check18.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 DC1 以管理员身份运行 <code>check18.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. wangwei 的完整 DN 怎么写？2. 为什么 SVR2 现在还不能被 OU 级 GPO 管到？（它还在 CN=Computers，可移到 Servers OU）3. 委派和加入 Domain Admins 有什么区别？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

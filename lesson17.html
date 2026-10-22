@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第17课 · Active Directory 域搭建</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 6 · 域管理　|　第 17 次课 · 学时 33–34</p>
+  <h1>Active Directory 域搭建</h1>
+  <p class="muted">从"一台台单独管理"到"一个域统一管理"</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM2 + VM3</span></div>
+</div>
+<aside class="notes">开场提问：如果公司有 200 台电脑，每台都要单独建账号、改密码、设策略，会怎样？今天要解决的就是这个问题。本课是整个课程的分水岭：从这节课开始，后面的 GPO、证书、集中日志都建立在域之上。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:12"><span class="t">12′</span><b>概念</b>工作组 vs 域<br>AD 结构 · DNS</div>
+      <div class="seg" style="flex:15"><span class="t">15′</span><b>任务 1</b>安装 AD DS 角色</div>
+      <div class="seg" style="flex:23"><span class="t">23′</span><b>任务 2</b>提升为域控制器<br>创建 lab.local</div>
+      <div class="seg" style="flex:19"><span class="t">19′</span><b>任务 3</b>SVR2 加入域</div>
+      <div class="seg" style="flex:11"><span class="t">11′</span><b>任务 4</b>客户端加入域</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清楚"域"解决了什么问题，以及 AD 与 DNS 的依赖关系</li>
+        <li>用 PowerShell 把 DC1 提升为 <code>lab.local</code> 的域控制器</li>
+        <li>把服务器和客户端加入域，并能排查"找不到域"的故障</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念讲解控制在 15 分钟以内，其余时间留给操作。任务 2 最耗时，因为 DC 提升后会自动重启，重启需要 3–5 分钟，可以利用等待时间讲解"提升过程中发生了什么"。</aside>
+</section>
+
+<!-- 17 概念：教材补充 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>域与域控制器 · 部署前提</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>域是什么</h3>
+        <ul class="points">
+          <li>"域"是服务器统一管控、受严格约束的计算机集合</li>
+          <li>至少一台服务器验证电脑和用户，称<b>域控制器（DC）</b></li>
+          <li>DC 像门卫：核对电脑是否属域、账号是否存在、密码对否</li>
+          <li>验证不通过即拒绝登录，保护受权限保护的资源</li>
+          <li>DC 集成 DNS，基于 TCP/IP 解析域内机器名互访</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <h3>部署前提条件</h3>
+        <ul class="points check">
+          <li>安装者具有<b>本地管理员</b>权限</li>
+          <li>本地磁盘至少一个 <b>NTFS</b> 分区</li>
+          <li>已完成 <b>TCP/IP</b> 设置</li>
+          <li>有相应的 <b>DNS</b> 服务器支持</li>
+          <li>有足够可用磁盘空间</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">用门卫比喻讲"域"：传统工作组里每台电脑各管各的账号，谁都能加入；域则是一个相对严格的组织，由域控制器统一把门。电脑一联网，DC 先核三件事——这台机器是不是本域成员、登录账号存不存在、密码对不对，三样有一样不对就拒绝登录，用户就只能以对等网方式访问共享资源，拿不到有权限保护的资源，这就起到了保护网络资源的作用。DC 还通常集成 DNS，基于 TCP/IP 解析域内计算机名，这样不同网段的计算机也能用机器名互相访问，而工作组做不到。部署前要先满足六个前提：本地管理员权限、合适的操作系统版本、至少一个 NTFS 分区、配好 TCP/IP、有 DNS 支持、留足磁盘空间——这几条缺一不可，后面任务里 dcpromo/安装 AD 角色出错，多半就是前提没满足。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · 将成为域控制器<br>AD DS + DNS</div></div>
+      <div class="host"><div class="ic">🗄️</div><b>SVR2</b><div class="ip">10.10.10.20</div><div class="role">VM2 · 成员服务器<br>DNS → 10.10.10.10</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3 · Win10 客户端<br>DNS → 10.10.10.10</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>课前：</b>三台机器都是<b>工作组</b>模式，各管各的账号</div>
+      <div class="callout"><b>课后：</b>三台机器都属于 <code>lab.local</code> 域，用同一个账号登录</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">独立操作：你在本机依次完成全部任务——先在 DC1 上把它配置成域控制器，再切到 SVR2 加入域，最后在 CLIENT1 上验证登录效果，不用交换讲解。提醒：开始前确认 SVR2 的 IP 是 10.10.10.20。</aside>
+</section>
+
+<!-- 04 概念：工作组 vs 域 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>工作组 vs 域</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>工作组（分散管理）</h3>
+        <ul class="points">
+          <li>每台电脑有自己的用户数据库（SAM）</li>
+          <li>10 台电脑 = 同一个人要建 10 个账号</li>
+          <li>改密码、改策略要逐台操作</li>
+          <li>适合 10 台以下的小办公室</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>域（集中管理）</h3>
+        <ul class="points">
+          <li>账号统一存放在域控制器的 AD 数据库</li>
+          <li>一个账号，可以登录域内任何电脑</li>
+          <li>策略在 DC 上改一次，全域生效</li>
+          <li>企业环境的标准做法</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>一句话：</b>域把"谁能登录、能做什么"的决定权，从每台电脑收归到域控制器。</div>
+  </div>
+</div>
+<aside class="notes">可以联系第 3 课：当时在 DC1 上建的 alice、bob 是本地账号，只能登录 DC1。今天之后，域账号可以登录 SVR2 和 CLIENT1。提问：如果 alice 离职了，工作组和域环境下分别要做多少操作？</aside>
+</section>
+
+<!-- 05 概念：AD 结构 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>AD 的逻辑结构</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">林 Forest（安全边界）</div>
+        <div class="nest">
+          <div class="lbl">域 lab.local（管理与复制单元）</div>
+          <div class="grid2" style="gap:14px">
+            <div class="nest"><div class="lbl">OU 研发部</div><span class="obj">👤 用户</span><span class="obj">💻 计算机</span></div>
+            <div class="nest"><div class="lbl">OU 财务部</div><span class="obj">👤 用户</span><span class="obj">👥 组</span></div>
+          </div>
+        </div>
+      </div>
+      <table class="tbl">
+        <tr><th>名词</th><th>含义</th></tr>
+        <tr><td><b>林</b></td><td>最外层容器；今天创建的第一个域就是林根</td></tr>
+        <tr><td><b>域</b></td><td>共享同一个 AD 数据库的计算机和用户集合</td></tr>
+        <tr><td><b>OU</b></td><td>域内的"文件夹"，用来分类和挂 GPO（第 18 课）</td></tr>
+        <tr><td><b>DC</b></td><td>存放 AD 数据库、负责认证的服务器</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+<aside class="notes">今天只建一个林、一个域，不涉及树和多域。OU 下节课详细讲，这里只需要知道它存在。强调 DC 是一台"角色"服务器，不是一个容器。</aside>
+</section>
+
+<!-- 06 概念：DNS 依赖 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>没有 DNS，就找不到域</h2></div>
+  <div class="body">
+    <p class="muted">一台电脑加入 lab.local 时，实际发生的过程：</p>
+    <div class="flow">
+      <div class="node"><b>① 询问 DNS</b>"lab.local 的域控在哪？"</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>② DNS 返回</b>SRV 记录<br><code>_ldap._tcp.lab.local</code></div>
+      <div class="arrow">→</div>
+      <div class="node"><b>③ 联系 DC1</b>10.10.10.10</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 认证加入</b>创建计算机账户</div>
+    </div>
+    <div class="callout warn"><b>本课最常见的故障：</b>客户端的 DNS 没有指向 10.10.10.10。DNS 指向错了，第 ① 步就会失败，报错"找不到域"。</div>
+  </div>
+</div>
+<aside class="notes">这页是后面排障的基础。SRV 记录由 Install-ADDSForest 自动注册到 DNS 中，所以我们要带上 -InstallDns。可以在任务 2 完成后，用 nslookup -type=srv _ldap._tcp.lab.local 现场演示。</aside>
+</section>
+
+<!-- 07 任务1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 15′ · DC1</span></span><h2>安装 AD DS 角色</h2><button class="more" data-pop="pop-l17-t1-steps">📋 详细步骤</button><button class="more" data-pop="pop-l17-t1-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p>安装角色只是把 AD 的"程序文件"装上，<b class="orange">此时 DC1 还不是域控制器</b>。</p>
+    <div class="code-cap">在 DC1 上，以管理员身份运行 PowerShell</div>
+<pre><code class="language-powershell" data-trim>
+Install-WindowsFeature AD-Domain-Services -IncludeManagementTools
+
+# 确认结果：Install State 应为 Installed
+Get-WindowsFeature AD-Domain-Services
+</code></pre>
+    <div class="callout"><b>-IncludeManagementTools</b>：同时安装"AD 用户和计算机"等管理工具，缺了它就没有图形界面可用。</div>
+  </div>
+</div>
+<aside class="notes">安装约需 2–3 分钟，不需要重启。安装完成后，服务器管理器顶部会出现黄色感叹号，提示"将此服务器提升为域控制器"，这正好引出任务 2。</aside>
+<template id="pop-l17-t1-steps">
+  <h3>📋 详细步骤：安装 AD DS 角色</h3>
+  <h4>第一步：在 DC1 上以管理员身份打开 PowerShell</h4>
+  <ol>
+    <li>右键「开始」→ <b>Windows PowerShell (管理员)</b></li>
+  </ol>
+  <h4>第二步：安装角色</h4>
+<pre>Install-WindowsFeature AD-Domain-Services -IncludeManagementTools</pre>
+  <p>安装约需 2–3 分钟，不需要重启。</p>
+  <div class="tip">一定要带 <code>-IncludeManagementTools</code>，否则不会装"AD 用户和计算机"（dsa.msc）等管理工具，后面任务会用到。</div>
+  <h4>第三步：确认安装结果</h4>
+<pre>Get-WindowsFeature AD-Domain-Services</pre>
+  <p>看 <b>Install State</b> 一列，应为 <code>Installed</code>。</p>
+  <h4>第四步：观察提示</h4>
+  <p>打开服务器管理器，顶部会出现黄色感叹号，提示"将此服务器提升为域控制器"——这正是任务 2 要做的事。此时 DC1 还<b>不是</b>域控制器，只是装好了程序文件。</p>
+</template>
+<template id="pop-l17-t1-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Install-WindowsFeature AD-Domain-Services</code></td><td>只安装"域服务"这个 Windows 角色的程序文件和二进制，不会创建域、不会动数据库，这一步可以随时撤销（Uninstall-WindowsFeature）而不影响任何域配置。</td></tr>
+    <tr><td><code>-IncludeManagementTools</code></td><td>一并安装 RSAT 管理工具（dsa.msc"AD 用户和计算机"、dsa.msc 等 MMC 控制台），缺了它只能用命令行管理 AD，没有图形界面。</td></tr>
+    <tr><td><code>Get-WindowsFeature AD-Domain-Services</code></td><td>用来核对"角色是否真的装好了"——Install State 字段，而不是靠服务器管理器界面感觉。</td></tr>
+    <tr><td>先装角色、再提升域控（分两步）</td><td>Windows Server 把"装软件"和"做配置变更（创建域、重启）"拆开，便于排错：如果提升失败，至少能确认角色本身装对了。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li><code>Get-WindowsFeature</code> 显示 <code>Install State</code> 不是 <code>Installed</code>：安装过程被中断，重新运行安装命令</li>
+    <li>服务器管理器没出现黄色感叹号：刷新一下服务器管理器，或者直接进入任务 2 用命令行提升（命令行不依赖这个提示）</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务2 原理 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 23′ · DC1</span></span><h2>提升为域控制器：会发生什么</h2><button class="more" data-pop="pop-l17-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l17-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>建 AD 数据库</b>NTDS.dit</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>装 DNS</b>建 lab.local 区域</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>注册 SRV 记录</b>让别人找得到</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>本地账号升级</b>变成域账号</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>自动重启</b>约 3–5 分钟</div>
+    </div>
+    <table class="tbl">
+      <tr><th>参数</th><th>本课取值</th><th>说明</th></tr>
+      <tr><td><code>-DomainName</code></td><td>lab.local</td><td>域的 DNS 名称</td></tr>
+      <tr><td><code>-DomainNetbiosName</code></td><td>LAB</td><td>登录时写作 <code>LAB\用户名</code></td></tr>
+      <tr><td><code>-InstallDns</code></td><td>$true</td><td>在 DC1 上同时装 DNS（必须）</td></tr>
+      <tr><td><code>-SafeModeAdministratorPassword</code></td><td>P@ssw0rd2024!</td><td>目录服务还原模式密码，用于修复 AD</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">重点解释 DSRM 密码：它不是域管理员密码，是 AD 损坏时进入"目录服务还原模式"用的，生产环境必须妥善保存。本地 Administrator 会变成 LAB\Administrator，密码不变。</aside>
+<template id="pop-l17-t2a-steps">
+  <h3>📋 详细步骤：提升为域控制器前要确认的事</h3>
+  <h4>第一步：理解提升会做哪 5 件事</h4>
+  <ol>
+    <li>建 AD 数据库 NTDS.dit</li>
+    <li>装 DNS，建 lab.local 区域</li>
+    <li>注册 SRV 记录，让别人能找到这台 DC</li>
+    <li>本地账号升级为域账号</li>
+    <li>自动重启（约 3–5 分钟）</li>
+  </ol>
+  <h4>第二步：确认提升要用到的 4 个参数</h4>
+<pre>-DomainName lab.local
+-DomainNetbiosName LAB
+-InstallDns $true
+-SafeModeAdministratorPassword P@ssw0rd2024!</pre>
+  <p>这几个参数会在下一页"创建新林 lab.local"的命令里实际用到。</p>
+  <div class="tip">SafeModeAdministratorPassword（DSRM 密码）不是域管理员密码，是 AD 数据库损坏时进入"目录服务还原模式"修复用的，和登录密码是两套。</div>
+  <h4>第三步：提升前再检查一次网络</h4>
+  <p>DC1 的 IP 必须是静态 10.10.10.10，首选 DNS 指向 127.0.0.1（或自己），否则提升过程会弹出警告。</p>
+</template>
+<template id="pop-l17-t2a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>-DomainName lab.local</code></td><td>域的 DNS 名称，之后所有域对象的根都是 <code>DC=lab,DC=local</code>。</td></tr>
+    <tr><td><code>-DomainNetbiosName LAB</code></td><td>旧式登录名前缀，登录时写作 <code>LAB\用户名</code>，和 UPN（<code>user@lab.local</code>）是两套等价的登录方式。</td></tr>
+    <tr><td><code>-InstallDns $true</code></td><td>在域控上必须同时装 DNS 并建 lab.local 区域，否则其他机器无法通过 DNS 的 SRV 记录找到这台 DC（见概念 3）。</td></tr>
+    <tr><td><code>-SafeModeAdministratorPassword</code></td><td>DSRM（目录服务还原模式）密码，AD 数据库出问题时离线修复要用，务必和域管理员密码分开记录保存。</td></tr>
+    <tr><td>本地账户升级为域账户</td><td>本地 Administrator 变成 <code>LAB\Administrator</code>，密码不变，但账户的作用域从"仅本机"变成"整个域"。</td></tr>
+    <tr><td>提升前先确认静态 IP + DNS 指向自己</td><td>DC 必须能解析自己要建的域名，否则 Install-ADDSForest 会在检测阶段报错或警告。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>提升过程卡在网络检测：先确认 DC1 IP 固定为 10.10.10.10，DNS 指向 127.0.0.1</li>
+    <li>DSRM 密码记混了：和登录用的域管理员密码分开记，不要用同一个</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 命令 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 23′ · DC1</span></span><h2>创建新林 lab.local</h2><button class="more" data-pop="pop-l17-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l17-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$pw = ConvertTo-SecureString "P@ssw0rd2024!" -AsPlainText -Force
+
+Install-ADDSForest `
+    -DomainName "lab.local" -DomainNetbiosName "LAB" `
+    -ForestMode "WinThreshold" -DomainMode "WinThreshold" `
+    -InstallDns:$true -SafeModeAdministratorPassword $pw -Force:$true
+</code></pre>
+    <div class="grid2">
+      <div class="callout warn"><b>反引号 ` 是续行符</b>，后面不能有空格，否则命令会被截断。</div>
+      <div class="callout"><b>重启后</b>用 <code>LAB\Administrator</code> 登录，密码不变。</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">让学生先确认 DC1 的 IP 是静态的 10.10.10.10、DNS 指向 127.0.0.1，否则提升会报警告。等待重启的时间可以回到概念 3 那页，讲解 SRV 记录。</aside>
+<template id="pop-l17-t2b-steps">
+  <h3>📋 详细步骤：创建新林 lab.local</h3>
+  <h4>第一步：确认网络（提升前最后一次检查）</h4>
+  <ol>
+    <li>DC1 的 IP 是静态的 10.10.10.10</li>
+    <li>首选 DNS 指向 127.0.0.1</li>
+  </ol>
+  <h4>第二步：以管理员身份在 DC1 上运行</h4>
+<pre>$pw = ConvertTo-SecureString "P@ssw0rd2024!" -AsPlainText -Force
+
+Install-ADDSForest `
+    -DomainName "lab.local" -DomainNetbiosName "LAB" `
+    -ForestMode "WinThreshold" -DomainMode "WinThreshold" `
+    -InstallDns:$true -SafeModeAdministratorPassword $pw -Force:$true</pre>
+  <div class="tip">反引号 ` 是续行符，后面绝对不能再有空格，否则命令会被截断报语法错误。整条命令也可以不续行、写成一长行，效果一样。</div>
+  <h4>第三步：等待自动重启</h4>
+  <p>约 3–5 分钟，期间屏幕会提示正在配置 AD DS，完成后自动重启，不需要人工干预。</p>
+  <h4>第四步：重新登录</h4>
+  <p>重启后登录界面选择"其他用户"，输入 <code>LAB\Administrator</code>，密码不变（仍是本地 Administrator 原来的密码）。</p>
+</template>
+<template id="pop-l17-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>ConvertTo-SecureString ... -AsPlainText -Force</code></td><td>Install-ADDSForest 要求密码参数是 SecureString 类型，不能直接传明文字符串，这一步把明文转成安全字符串对象。</td></tr>
+    <tr><td><code>-ForestMode / -DomainMode "WinThreshold"</code></td><td>功能级别，决定这个林/域可以使用哪些新特性，WinThreshold 对应 Windows Server 2016 及以上的功能级别，是常用的新建首选项。</td></tr>
+    <tr><td><code>-InstallDns:$true</code></td><td>域控上必须同时装 DNS 服务并建 lab.local 区域，否则其他机器找不到这台 DC 的 SRV 记录。</td></tr>
+    <tr><td><code>-Force:$true</code></td><td>跳过一些交互式确认提示，适合脚本化/非交互执行。</td></tr>
+    <tr><td>反引号 ` 续行</td><td>PowerShell 允许用反引号把一条长命令拆成多行写，但反引号后面必须立刻换行，不能有空格或 Tab，否则续行失效导致语法错误。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>命令报语法错误：检查每个反引号 ` 后面是不是多了空格</li>
+    <li>提升过程报网络相关警告：先确认 DC1 的 IP/DNS 配置（见前一页）</li>
+    <li>重启后登录不了：用户名要写 <code>LAB\Administrator</code>（带域前缀），密码不变</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 验证 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 2 验证</span><h2>DC1 已经是域控制器了吗？</h2></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Get-ADDomain | Select-Object DNSRoot, NetBIOSName
+nltest /dsgetdc:lab.local
+nslookup -type=srv _ldap._tcp.lab.local
+</code></pre>
+    <table class="tbl">
+      <tr><th>命令</th><th>看到这个说明成功</th></tr>
+      <tr><td><code>Get-ADDomain</code></td><td>DNSRoot = lab.local，NetBIOSName = LAB</td></tr>
+      <tr><td><code>nltest</code></td><td>DC: \\DC-01.lab.local，末尾显示"命令成功完成"<span class="small muted">（DC-01 换成你自己的 DC 计算机名，即第 1 课的 DC-学号）</span></td></tr>
+      <tr><td><code>nslookup</code></td><td>返回 dc1.lab.local，端口 389（就是概念 3 里的 SRV 记录）</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">nslookup 这一步把概念 3 和操作联系起来：学生亲眼看到 SRV 记录被自动注册了。如果 Get-ADDomain 报"无法找到默认服务器"，通常是 AD Web 服务还没启动，等 1–2 分钟再试。</aside>
+</section>
+
+<!-- 11 任务3 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 19′ · SVR2</span></span><h2>成员服务器加入域</h2><button class="more" data-pop="pop-l17-t3-steps">📋 详细步骤</button><button class="more" data-pop="pop-l17-t3-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>① 先检查两件事</h3>
+        <ul class="points">
+          <li>计算机名是 <code>SVR2</code></li>
+          <li>DNS 指向 <code>10.10.10.10</code> <span class="orange">← 最关键</span></li>
+        </ul>
+<pre><code class="language-powershell" data-trim>
+Resolve-DnsName lab.local
+</code></pre>
+      </div>
+      <div class="card blue">
+        <h3>② 加入域并重启</h3>
+<pre><code class="language-powershell" data-trim>
+Add-Computer -DomainName lab.local `
+  -Credential LAB\Administrator `
+  -Restart
+</code></pre>
+        <p class="small muted" style="margin-top:12px">弹出密码框时，输入域管理员密码</p>
+      </div>
+    </div>
+    <div class="callout"><b>重启后</b>，登录界面选择"其他用户"，输入 <code>LAB\Administrator</code>。</div>
+  </div>
+</div>
+<aside class="notes">Resolve-DnsName 能返回 10.10.10.10 才继续，否则先修 DNS。原文用的是 -Credential (Get-Credential)，这里直接写用户名，效果一样，会弹出密码框。加入域需要域管理员或有加域权限的账号。</aside>
+<template id="pop-l17-t3-steps">
+  <h3>📋 详细步骤：成员服务器加入域</h3>
+  <h4>第一步：在 SVR2 上检查两件事</h4>
+  <ol>
+    <li>计算机名是 <code>SVR2</code></li>
+    <li>DNS 指向 <code>10.10.10.10</code>（最关键）</li>
+  </ol>
+<pre>Resolve-DnsName lab.local</pre>
+  <p>必须能解析到 10.10.10.10，否则先去改 SVR2 的 DNS 设置，再继续下一步。</p>
+  <h4>第二步：加入域并重启</h4>
+<pre>Add-Computer -DomainName lab.local `
+  -Credential LAB\Administrator `
+  -Restart</pre>
+  <p>弹出密码框时，输入域管理员密码（即任务 2 中 LAB\Administrator 的密码）。</p>
+  <div class="tip">加域必须用域管理员或有加域权限的账号，本机本地管理员账号不行。</div>
+  <h4>第三步：重启后用域账号登录</h4>
+  <p>登录界面选择"其他用户"，输入 <code>LAB\Administrator</code>。</p>
+</template>
+<template id="pop-l17-t3-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Resolve-DnsName lab.local</code></td><td>加域的本质是通过 DNS 的 SRV 记录找到域控制器，SVR2 必须能用 DNS 解析出 lab.local，解析不到就一定加域失败。</td></tr>
+    <tr><td>DNS 指向 10.10.10.10</td><td>10.10.10.10 是 DC1 的 IP，DC1 同时也是本域的 DNS 服务器，公网 DNS（如 8.8.8.8）查不到 lab.local 这种私有域名。</td></tr>
+    <tr><td><code>Add-Computer -DomainName lab.local -Credential LAB\Administrator -Restart</code></td><td>把 SVR2 从"工作组成员"变成"域成员"，需要域里有权限的账号验证，-Restart 让改动在重启后生效（计算机需要重新获取域里的组策略和安全上下文）。</td></tr>
+    <tr><td>加域后计算机对象出现在 AD 中</td><td>这是 check18.ps1/check17.ps1 判定加域是否成功的硬依据——AD 里能查到对应的计算机账户（Get-ADComputer），比"看起来加成功了"更可靠。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>"找不到域 lab.local"：DNS 没指向 10.10.10.10，先改 DNS 再 <code>ipconfig /flushdns</code></li>
+    <li>"用户名或密码不正确"：忘了写域前缀，要写成 <code>LAB\Administrator</code></li>
+    <li>加域成功但 AD 里查不到：在 DC1 上 <code>Get-ADComputer -Filter *</code> 确认，没有的话重新执行一次加域</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 任务4 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 4 <span class="t">· 11′ · CLIENT1</span></span><h2>Win10 客户端加入域（图形界面）</h2><button class="more" data-pop="pop-l17-t4-steps">📋 详细步骤</button><button class="more" data-pop="pop-l17-t4-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p class="muted">先把 CLIENT1 的 DNS 改为 10.10.10.10，然后：</p>
+    <div class="crumb"><span>设置</span><i>›</i><span>账户</span><i>›</i><span>访问工作或学校</span><i>›</i><span>连接</span><i>›</i><span>将此设备加入本地 AD 域</span></div>
+    <div class="grid3">
+      <div class="card"><h3>域名</h3><code>lab.local</code></div>
+      <div class="card"><h3>账号</h3><code>LAB\Administrator</code></div>
+      <div class="card"><h3>完成后</h3>按提示重启</div>
+    </div>
+    <div class="callout"><b>想一想：</b>为什么服务器用命令加域、客户端用图形界面？企业里 100 台客户端，你会选哪种？</div>
+  </div>
+</div>
+<aside class="notes">用这页引出批量部署的话题：实际企业中客户端通常在装机镜像或脚本里自动加域。CLIENT1 是 DHCP 获取 IP，如果 DHCP 下发的 DNS 不是 10.10.10.10，需要手动改，或者回到 DC1 修改 DHCP 作用域选项 006。</aside>
+<template id="pop-l17-t4-steps">
+  <h3>📋 详细步骤：Win10 客户端加入域（图形界面）</h3>
+  <h4>第一步：确认 DNS</h4>
+  <p>先把 CLIENT1 的 DNS 改为 10.10.10.10。CLIENT1 是 DHCP 获取 IP，如果 DHCP 下发的 DNS 不是 10.10.10.10，需要手动改网卡 DNS，或回到 DC1 修改 DHCP 作用域选项 006（DNS 服务器）。</p>
+  <h4>第二步：打开加域入口</h4>
+  <p>按路径：设置 › 账户 › 访问工作或学校 › 连接 › 将此设备加入本地 AD 域</p>
+  <h4>第三步：填入信息</h4>
+  <ol>
+    <li>域名：<code>lab.local</code></li>
+    <li>账号：<code>LAB\Administrator</code>（及其密码）</li>
+  </ol>
+  <h4>第四步：重启</h4>
+  <p>完成后按提示重启，重启后登录界面可以选择域账号登录。</p>
+</template>
+<template id="pop-l17-t4-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>先改 DNS 为 10.10.10.10</td><td>和 SVR2 加域一样，客户端必须能通过 DNS 的 SRV 记录找到域控制器，否则图形界面会提示"找不到域"。</td></tr>
+    <tr><td>域名填 <code>lab.local</code></td><td>和服务器加域一致，用的是 DNS 域名而不是 NetBIOS 名 LAB。</td></tr>
+    <tr><td>账号用 <code>LAB\Administrator</code></td><td>图形界面的加域账号验证本质和命令行 <code>Add-Computer -Credential</code> 一样，需要域里有加域权限的账号。</td></tr>
+    <tr><td>服务器用命令行、客户端用图形界面</td><td>服务器加域通常是自动化脚本/批量部署的一部分，命令行更利于脚本化；客户端数量多但单台操作简单，企业里也常见镜像部署时预先写好加域脚本，图形界面更适合课堂演示单台操作的完整流程。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>提示"找不到域"：CLIENT1 的 DNS 不是 10.10.10.10，先改网卡 DNS 设置</li>
+    <li>账号密码错误：要带域前缀写成 <code>LAB\Administrator</code></li>
+    <li>加域成功但登录不了域账号：确认已重启，且登录界面点"其他用户"</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>加域失败？按这个顺序查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>"找不到域 lab.local"</td><td>DNS 没指向 DC1</td><td>把 DNS 改为 10.10.10.10，<code>ipconfig /flushdns</code></td></tr>
+      <tr><td>用户名或密码不正确</td><td>没写域前缀</td><td>写成 <code>LAB\Administrator</code></td></tr>
+      <tr><td>计算机名已存在</td><td>重做实验留下旧账户</td><td>在 DC1 上删除旧的计算机对象</td></tr>
+      <tr><td>时间差太大</td><td>Kerberos 要求时差 &lt; 5 分钟</td><td>同步各 VM 的时间</td></tr>
+    </table>
+    <div class="callout warn">这四种故障覆盖了课堂上 90% 的情况，<b>先查 DNS</b>。</div>
+  </div>
+</div>
+<aside class="notes">建议讲解时先让学生自己说出可能的原因，再翻出这一页。Kerberos 的时间要求会在第 33 课详细讲解，这里只需知道"时间要一致"。</aside>
+</section>
+
+<!-- 14 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>对照清单自查</h2><button class="more" data-pop="pop-l17-14-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>DC1 是 lab.local 的域控制器</li>
+        <li>DNS 区域 lab.local 存在</li>
+        <li>SVR2 已加入域</li>
+        <li>CLIENT1 已加入域</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>三台 VM 都拍快照<br><code>Lesson17-Done</code></p>
+        <p class="small muted" style="margin-top:8px">下节课从这个快照开始</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对清单，远程确认 SVR2 和 CLIENT1 的域成员身份。清单达成后运行 check17.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。快照非常重要：域环境搭错了很难修，第 18 课必须从这里开始。</aside>
+
+<template id="pop-l17-14-check">
+<h3>🧪 运行检查脚本 check17.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check17.ps1</pre>
+<h4>脚本检查什么（在 DC1 上跑）</h4>
+<ul>
+  <li><b>任务 2：</b>本机是域控制器（ProductType=LanmanNT）、NTDS 服务运行、域为 lab.local / LAB、nltest DC 定位器正常</li>
+  <li><b>DNS：</b>区域 lab.local 存在、DC1 的 DNS 指向本机</li>
+  <li><b>任务 3/4：</b>SVR2 已加入域、CLIENT1 已加入域——脚本从 DC 查 AD 计算机账户硬判定（加域后 PASS，未加域 FAIL）</li>
+</ul>
+<div class="tip">任务 3/4 需要 SVR2、CLIENT1 真实加入域才会 PASS；只有 DC1 的单机环境里这两项会如实 FAIL。全部 PASS 后拍快照 <code>Lesson17-Done</code>。</div>
+</template>
+</section>
+
+<!-- 15 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">域把账号和策略集中到 DC，替代逐台管理</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">装角色 → <code>Install-ADDSForest</code> → <code>Add-Computer</code></p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">加域靠 DNS 找到 DC：DNS 必须指向 10.10.10.10</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 18 课：</b>域用户与组织单元（OU）。在 lab.local 里建部门 OU、批量创建域用户。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check17.ps1" download>check17.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 DC1 以管理员身份运行 <code>check17.ps1</code> 生成检查报告，连同报告一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 加域时报"找不到域"，第一步查什么？2. DSRM 密码是干什么用的？3. 登录域账号时，用户名应该怎么写？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>
