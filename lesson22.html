@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第22课 · Windows Defender 与恶意软件防护</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 7 · Windows 应用安全　|　第 22 次课 · 学时 43–44</p>
+  <h1>Windows Defender 与恶意软件防护</h1>
+  <p class="muted">防火墙管"谁能连进来"，Defender 管"落地的东西能不能跑"</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM2 + VM3</span></div>
+</div>
+<aside class="notes">开场提问：上节课防火墙挡住了端口，可如果用户自己从邮件里下载了一个木马并双击运行，防火墙还管得了吗？这就是终端防护要解决的问题。本课由你一人依次完成：先在 DC1 上配置 GPO，再切到 SVR2 配置本地 Defender 设置，然后自己用 EICAR 安全样本生成测试文件验证防护是否生效，最后记录检测结果和事件日志。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:13"><span class="t">13′</span><b>概念</b>防护层次<br>排除项 · 集中管理</div>
+      <div class="seg" style="flex:27"><span class="t">27′</span><b>任务 1</b>Defender 本地配置<br>状态 · 扫描 · 排除</div>
+      <div class="seg" style="flex:22"><span class="t">22′</span><b>任务 2</b>GPO 集中管理<br>攻击面减少规则</div>
+      <div class="seg" style="flex:18"><span class="t">18′</span><b>任务 3</b>EICAR 测试<br>威胁记录与日志</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>用 <code>Get-MpComputerStatus</code> 判断一台机器的防护是否正常</li>
+        <li>配置扫描计划、排除项，并说出排除项带来的风险</li>
+        <li>用 GPO 统一下发 Defender 策略，用 EICAR 验证检测与日志</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">任务 1 和任务 3 都在同一台机器上做（建议 SVR2），任务 2 在 DC1 上做 GPO。实验网是隔离的，Update-MpSignature 很可能联网失败，这是正常现象，不要在这一步卡太久。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境与分工</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1<br>GPO Defender-Policy</div></div>
+      <div class="host"><div class="ic">🗄️</div><b>SVR2</b><div class="ip">10.10.10.20</div><div class="role">VM2<br>本地配置 · EICAR</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3<br>验证策略 · 记录</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>本课不用 Kali：</b>用 EICAR 标准测试文件模拟"恶意文件落地"</div>
+      <div class="callout warn"><b>边界：</b>只用 EICAR，禁止下载或传播真实病毒样本</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">EICAR 是反病毒行业公认的测试字符串，本身不含任何恶意代码，所有杀软都会把它当病毒报。强调授权与合法边界：即使在实验网，也不允许从互联网获取真实恶意软件。全程准备一张记录表：时间、机器、事件 ID、处理动作。</aside>
+</section>
+
+<!-- 04 概念：防护层次 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>Defender 的几道防线</h2></div>
+  <div class="body">
+    <p class="muted">一个可疑文件从"落地"到"运行"，要依次经过：</p>
+    <div class="flow">
+      <div class="node"><b>① 实时保护</b>文件写入磁盘<br>立即扫描</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 特征库</b>与病毒定义<br>比对</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>③ 行为监视</b>运行时看<br>"它在做什么"</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>④ 攻击面减少</b>ASR 规则<br>直接禁止危险行为</div>
+    </div>
+    <table class="tbl">
+      <tr><th>防线</th><th>挡得住</th><th>挡不住</th></tr>
+      <tr><td>特征库 + 计划扫描</td><td>已知病毒</td><td>新变种、特征库过期</td></tr>
+      <tr><td>行为监视 / ASR</td><td>未知样本的危险动作</td><td>被排除项放行的文件</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">纵深防御的思想：任何一层都会漏，所以要多层叠加。特征库靠 Update-MpSignature 更新，隔离网里会失败，所以生产环境要有内部更新源（WSUS 或共享目录），这里只提一下。提问：特征库三个月没更新，哪一层还能起作用？</aside>
+</section>
+
+<!-- 05 概念：排除项 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>排除项：性能和安全的交换</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>危险的排除</h3>
+        <ul class="points">
+          <li>排除整个 <code>C:\</code> 或用户下载目录</li>
+          <li>排除 <code>.exe</code>、<code>.ps1</code> 这类可执行扩展名</li>
+          <li>排除 <code>powershell.exe</code> 等通用进程</li>
+          <li>攻击者最爱：往被排除的目录里放木马</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>合理的排除</h3>
+        <ul class="points">
+          <li>业务数据目录，且普通用户不可写</li>
+          <li>频繁写入的日志扩展名，如 <code>.log</code></li>
+          <li>厂商明确建议的服务进程，如 <code>w3wp.exe</code></li>
+          <li>每条排除都要记录原因、定期复查</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout warn"><b>一句话：</b>每加一条排除，就是给 Defender 开了一个"盲区"。</div>
+  </div>
+</div>
+<aside class="notes">本课任务 1 会排除 C:\LabFiles，而任务 3 恰好把 EICAR 写进 C:\LabFiles——请学生先预测结果，这是本课最重要的思考题（见任务 3 页）。可以顺带思考：如果拿到了普通用户权限，能不能查到排除项列表？</aside>
+</section>
+
+<!-- 06 概念：集中管理 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>本地设置 vs GPO 下发</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">域 lab.local</div>
+        <div class="nest">
+          <div class="lbl">OU Company ← 链接 Defender-Policy</div>
+          <div class="grid2" style="gap:14px">
+            <div class="nest"><div class="lbl">OU Servers</div><span class="obj">🗄️ SVR2</span></div>
+            <div class="nest"><div class="lbl">OU IT-Dept</div><span class="obj">💻 计算机</span></div>
+          </div>
+        </div>
+      </div>
+      <table class="tbl">
+        <tr><th>方式</th><th>特点</th></tr>
+        <tr><td><b>Set-MpPreference</b></td><td>只改当前这台机器，适合测试</td></tr>
+        <tr><td><b>GPO</b></td><td>OU 内所有计算机统一生效</td></tr>
+        <tr><td><b>冲突时</b></td><td>GPO 优先，本地改动会被覆盖</td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+<aside class="notes">联系第 18、19 课：GPO 只对 OU 里的计算机对象生效，计算机必须在 Company 或其子 OU 下才会收到策略。CLIENT1 如果还在默认的 Computers 容器里，就收不到 Defender-Policy，这是任务 2 最常见的"策略不生效"原因。</aside>
+</section>
+
+<!-- 07 任务1 状态与扫描 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 27′ · SVR2</span></span><h2>查看状态，配置扫描计划</h2><button class="more" data-pop="pop-l22-t1a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l22-t1a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">1.1–1.3 在 SVR2 上，以管理员身份运行 PowerShell</div>
+<pre><code class="language-powershell" data-trim>
+$p = 'AntivirusEnabled','RealTimeProtectionEnabled',
+     'AntivirusSignatureLastUpdated','QuickScanEndTime'
+Get-MpComputerStatus | Select-Object $p
+Update-MpSignature
+Set-MpPreference -ScanScheduleDay 1 `
+    -ScanScheduleTime "02:00:00"
+Set-MpPreference -ScanParameters FullScan
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>ScanScheduleDay 1</b> = 每周日；0 表示每天</div>
+      <div class="callout warn"><b>Update-MpSignature 报错？</b>实验网不通外网，属正常，记录即可</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 SVR2 上操作，把四个字段的值抄进记录表。两个 Enabled 都必须是 True；如果是 False，可能是第三方杀软接管或被策略关闭。$p 只是把要显示的属性放进数组，效果和原文一行写完相同。常见错误：没有用管理员身份运行，Set-MpPreference 会报"拒绝访问"。</aside>
+<template id="pop-l22-t1a-steps">
+  <h3>📋 详细步骤：查看状态，配置扫描计划</h3>
+  <h4>第一步：以管理员身份打开 PowerShell</h4>
+  <ol>
+    <li>在 SVR2 上右键「开始」→ <b>Windows PowerShell(管理员)</b>，否则 Set-MpPreference 会报"拒绝访问"</li>
+  </ol>
+  <h4>第二步：查看当前防护状态</h4>
+<pre>$p = 'AntivirusEnabled','RealTimeProtectionEnabled',
+     'AntivirusSignatureLastUpdated','QuickScanEndTime'
+Get-MpComputerStatus | Select-Object $p</pre>
+  <p>重点看 AntivirusEnabled 和 RealTimeProtectionEnabled 两项，都应该是 True。把四个字段的值抄进记录表。</p>
+  <h4>第三步：尝试更新特征库</h4>
+<pre>Update-MpSignature</pre>
+  <div class="tip">实验网不通外网，这一步很可能报错，这是正常现象，记录现象即可，不影响后面任务。</div>
+  <h4>第四步：设置每周扫描计划</h4>
+<pre>Set-MpPreference -ScanScheduleDay 1 `
+    -ScanScheduleTime "02:00:00"
+Set-MpPreference -ScanParameters FullScan</pre>
+  <p>ScanScheduleDay 1 = 每周日凌晨 2 点做完整扫描；0 表示每天。</p>
+</template>
+<template id="pop-l22-t1a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>AntivirusEnabled</code> / <code>RealTimeProtectionEnabled</code></td><td>最基础的两个开关，必须都是 True。如果是 False，可能是第三方杀软接管了防护，或者被组策略关闭了。</td></tr>
+    <tr><td><code>Update-MpSignature</code> 失败</td><td>生产环境里特征库会定期联网更新；隔离的实验网没有外网出口，所以这一步失败是环境限制而不是配置错误。</td></tr>
+    <tr><td><code>ScanScheduleDay 1</code>（周日）</td><td>把全盘扫描安排在业务量最小的周日凌晨，减少对正常使用的影响。</td></tr>
+    <tr><td><code>ScanParameters FullScan</code></td><td>区别于日常的快速扫描（只查常被利用的位置），完整扫描会检查整个磁盘，更彻底但更慢，适合定期做而不是随时跑。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check22.ps1 用 <code>Get-MpComputerStatus</code> 核对 RealTimeProtectionEnabled 是否为 True，用 <code>Get-MpPreference</code> 核对 ScanScheduleDay=1 且 ScanScheduleTime 匹配 02:00:00</li>
+    <li>Set-MpPreference 报"拒绝访问"：PowerShell 没有以管理员身份运行</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务1 排除项与快速扫描 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 27′ · SVR2</span></span><h2>配置排除项，执行快速扫描</h2><button class="more" data-pop="pop-l22-t1b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l22-t1b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">1.4–1.5 三类排除：路径、扩展名、进程</div>
+<pre><code class="language-powershell" data-trim>
+Add-MpPreference -ExclusionPath "C:\LabFiles"
+Add-MpPreference -ExclusionExtension ".log"
+Add-MpPreference -ExclusionProcess "w3wp.exe"
+Get-MpPreference | Select-Object Exclusion*
+Start-MpScan -ScanType QuickScan
+Get-MpThreatDetection
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>Add-</b> 是追加；<b>Set-</b> 会整体覆盖原有列表</div>
+      <div class="callout"><b>无输出</b>的 Get-MpThreatDetection = 暂无检测记录</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">强调 Add-MpPreference 与 Set-MpPreference 的区别：用 Set 配排除项会把之前的排除全部替换掉。w3wp.exe 是 IIS 工作进程，联系第 10–13 课的网站管理。快速扫描约 1–3 分钟，等待时可以想一想：知道了排除列表，攻击者会把文件放在哪里？</aside>
+<template id="pop-l22-t1b-steps">
+  <h3>📋 详细步骤：配置排除项，执行快速扫描</h3>
+  <h4>第一步：添加三类排除项</h4>
+<pre>Add-MpPreference -ExclusionPath "C:\LabFiles"
+Add-MpPreference -ExclusionExtension ".log"
+Add-MpPreference -ExclusionProcess "w3wp.exe"</pre>
+  <p>分别排除一个路径（C:\LabFiles）、一种扩展名（.log）、一个进程（w3wp.exe，IIS 工作进程）。</p>
+  <div class="tip">一定用 <code>Add-</code> 不要用 <code>Set-</code>：Add 是追加，Set 会把之前已有的排除列表整体覆盖掉。</div>
+  <h4>第二步：确认排除项已生效</h4>
+<pre>Get-MpPreference | Select-Object Exclusion*</pre>
+  <p>应该能看到 ExclusionPath 含 C:\LabFiles、ExclusionExtension 含 log、ExclusionProcess 含 w3wp.exe。</p>
+  <h4>第三步：执行快速扫描</h4>
+<pre>Start-MpScan -ScanType QuickScan
+Get-MpThreatDetection</pre>
+  <p>快速扫描约 1-3 分钟。扫描完 <code>Get-MpThreatDetection</code> 没有任何输出，说明暂无检测记录，这是正常的（还没放 EICAR）。</p>
+</template>
+<template id="pop-l22-t1b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Add-MpPreference</code> vs <code>Set-MpPreference</code></td><td>Add 是在现有排除列表上追加一条，Set 是整体替换——如果误用 Set，之前的排除项全部丢失，这是很容易踩的坑。</td></tr>
+    <tr><td><code>-ExclusionPath "C:\LabFiles"</code></td><td>排除本课实验目录，避免扫描干扰测试，但代价是这个目录以后对恶意文件也"看不见"——这是下一个任务要验证的"盲区"效果。</td></tr>
+    <tr><td><code>-ExclusionExtension ".log"</code></td><td>日志文件通常频繁写入、体量大，持续扫描会消耗性能，是业界常见的合理排除项之一。</td></tr>
+    <tr><td><code>-ExclusionProcess "w3wp.exe"</code></td><td>IIS 工作进程读写频繁，微软官方文档建议把它排除以提升性能，前提是这个进程本身受信任（联系第 10-13 课的网站管理）。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check22.ps1 用 <code>Get-MpPreference</code> 核对 ExclusionPath 含 C:\LabFiles、ExclusionExtension（去掉开头的点后）含 log、ExclusionProcess（转小写后）含 w3wp.exe，三项都要满足才 PASS</li>
+    <li>排除项没生效：确认用的是 Add- 而不是 Set-，并且字符串写法和检查脚本的匹配规则一致（比如扩展名不用带点也行，脚本会自动去掉开头的点比较）</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 GPO -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 22′ · DC1</span></span><h2>创建 GPO "Defender-Policy"</h2><button class="more" data-pop="pop-l22-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l22-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>gpmc.msc</span><i>›</i><span>计算机配置</span><i>›</i><span>策略</span><i>›</i><span>管理模板</span><i>›</i><span>Windows 组件</span><i>›</i><span>Microsoft Defender</span></div>
+    <table class="tbl">
+      <tr><th>位置</th><th>设置</th><th>值</th></tr>
+      <tr><td>根节点</td><td>关闭 Microsoft Defender</td><td>未配置（保持启用）</td></tr>
+      <tr><td>实时保护</td><td>启用行为监视</td><td>已启用</td></tr>
+      <tr><td>实时保护</td><td>扫描所有下载的文件和附件</td><td>已启用</td></tr>
+      <tr><td>扫描</td><td>指定每周扫描日</td><td>1（周日）</td></tr>
+    </table>
+    <div class="callout"><b>链接到：</b><code>Company</code> OU，然后在 CLIENT1 上执行 <code>gpupdate /force</code></div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上操作。不同系统版本里这个节点可能叫"Windows Defender 防病毒"或"Microsoft Defender 防病毒"，找名字相近的即可。注意"关闭 Microsoft Defender"是反向表述：选"已启用"反而是关掉防护，所以保持未配置。配置完后切到 CLIENT1 刷新策略，用 gpresult /r 确认 Defender-Policy 出现在已应用列表中。</aside>
+<template id="pop-l22-t2a-steps">
+  <h3>📋 详细步骤：创建 GPO "Defender-Policy"</h3>
+  <h4>第一步：打开组策略管理</h4>
+  <ol>
+    <li>在 DC1 上运行 <code>gpmc.msc</code></li>
+    <li>右键「组策略对象」→「新建」，命名为 <code>Defender-Policy</code></li>
+    <li>右键编辑，进入「计算机配置」→「策略」→「管理模板」→「Windows 组件」→「Microsoft Defender」（有的版本显示为 "Windows Defender 防病毒"）</li>
+  </ol>
+  <h4>第二步：按下表逐项设置</h4>
+  <table>
+    <tr><th>位置</th><th>设置</th><th>值</th></tr>
+    <tr><td>根节点</td><td>关闭 Microsoft Defender</td><td>未配置（保持启用）</td></tr>
+    <tr><td>实时保护</td><td>启用行为监视</td><td>已启用</td></tr>
+    <tr><td>实时保护</td><td>扫描所有下载的文件和附件</td><td>已启用</td></tr>
+    <tr><td>扫描</td><td>指定每周扫描日</td><td>1（周日）</td></tr>
+  </table>
+  <div class="tip">「关闭 Microsoft Defender」是反向表述的设置：如果误选"已启用"，意思是"启用关闭 Defender"，等于把防护关掉了！这里保持「未配置」才是对的。</div>
+  <h4>第三步：链接到 Company OU</h4>
+  <ol>
+    <li>在 gpmc.msc 里找到 Company OU，右键「链接现有 GPO」，选择 Defender-Policy</li>
+  </ol>
+  <h4>第四步：在 CLIENT1 上刷新策略并验证</h4>
+<pre>gpupdate /force
+gpresult /r</pre>
+  <p>确认 Defender-Policy 出现在 gpresult 的"已应用的组策略对象"列表中。</p>
+</template>
+<template id="pop-l22-t2a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>GPO 而不是逐台 Set-MpPreference</td><td>GPO 可以让 OU 下所有计算机统一生效，不用登录每台机器手动改；冲突时 GPO 优先于本地设置，本地改动会被覆盖。</td></tr>
+    <tr><td>链接到 Company OU</td><td>GPO 只对所在 OU（及子 OU）里的计算机对象生效。如果计算机还在默认的 Computers 容器里，不属于 Company OU，就收不到这条策略——这是任务里最常见的"策略不生效"原因。</td></tr>
+    <tr><td>「关闭 Microsoft Defender」保持未配置</td><td>这个设置名字容易让人误解，"启用"这项设置 = 真正把 Defender 关掉。保持未配置才是让 Defender 继续工作。</td></tr>
+    <tr><td><code>gpupdate /force</code> + <code>gpresult /r</code></td><td>手动触发策略立即生效（默认要等 90-120 分钟自动刷新），再用 gpresult 确认策略真的被应用，而不是靠猜。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check22.ps1 用 <code>Get-GPO -Name "Defender-Policy"</code> 确认 GPO 存在，再用 <code>Get-GPInheritance -Target "OU=Company,DC=lab,DC=local"</code> 确认它真的链接在 Company OU 下</li>
+    <li>CLIENT1 策略未生效：先确认 CLIENT1 的计算机对象确实移到了 Company OU（或其子 OU）下，再 gpupdate /force</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 ASR -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 22′ · SVR2</span></span><h2>攻击面减少（ASR）规则</h2><button class="more" data-pop="pop-l22-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l22-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p>ASR 不看"文件是不是病毒"，而是<b class="orange">直接禁止某类危险行为</b>。</p>
+<pre><code class="language-powershell" data-trim>
+$id = "BE9BA2D9-53EA-4CDC-84E5-9B1EEEE46550"
+Set-MpPreference -AttackSurfaceReductionRules_Ids $id `
+    -AttackSurfaceReductionRules_Actions Enabled
+# 查看已配置的规则
+$m = Get-MpPreference
+$m.AttackSurfaceReductionRules_Ids
+</code></pre>
+    <table class="tbl">
+      <tr><th>本规则</th><th>作用</th></tr>
+      <tr><td><code>BE9BA2D9-…</code></td><td>阻止来自电子邮件客户端和 Web 邮件的可执行内容</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">ASR 规则用 GUID 标识，抄错一位就无效，建议复制粘贴。Actions 除了 Enabled 还有 AuditMode（只记录不阻止），生产环境通常先审计一两周再启用，避免误伤业务。想一想：这条规则封堵的是哪一种常见的初始入侵方式？答案是钓鱼邮件附件。</aside>
+<template id="pop-l22-t2b-steps">
+  <h3>📋 详细步骤：攻击面减少（ASR）规则</h3>
+  <h4>第一步：启用 ASR 规则</h4>
+<pre>$id = "BE9BA2D9-53EA-4CDC-84E5-9B1EEEE46550"
+Set-MpPreference -AttackSurfaceReductionRules_Ids $id `
+    -AttackSurfaceReductionRules_Actions Enabled</pre>
+  <div class="tip">GUID 建议复制粘贴，手抄容易抄错一位导致规则无效且不会报错提示。</div>
+  <h4>第二步：确认规则已配置</h4>
+<pre># 查看已配置的规则
+$m = Get-MpPreference
+$m.AttackSurfaceReductionRules_Ids</pre>
+  <p>输出应包含刚才设置的那个 GUID（BE9BA2D9-…）。</p>
+  <table>
+    <tr><th>本规则</th><th>作用</th></tr>
+    <tr><td><code>BE9BA2D9-…</code></td><td>阻止来自电子邮件客户端和 Web 邮件的可执行内容</td></tr>
+  </table>
+</template>
+<template id="pop-l22-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>ASR 与特征库扫描的区别</td><td>ASR 不判断"这是不是病毒"，而是直接禁止某类危险行为（比如邮件客户端生成可执行文件），对未知新型威胁也有效，是特征库扫描之外的另一道防线。</td></tr>
+    <tr><td><code>BE9BA2D9-53EA-4CDC-84E5-9B1EEEE46550</code></td><td>阻止来自电子邮件客户端和 Web 邮件的可执行内容——这是钓鱼邮件附件这种常见初始入侵方式最直接的克星。</td></tr>
+    <tr><td><code>-Actions Enabled</code> vs <code>AuditMode</code></td><td>Enabled 真正阻止该行为；AuditMode 只记录不阻止，生产环境通常先用 AuditMode 跑一两周观察有没有误伤正常业务，再切到 Enabled，课堂直接用 Enabled 是为了方便演示效果。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check22.ps1 核对 <code>Get-MpPreference</code> 返回的 AttackSurfaceReductionRules_Ids 里是否含 BE9BA2D9 开头的 GUID，且对应 Actions 为 1 或 Enabled</li>
+    <li>规则没生效：检查 GUID 是否抄错，大小写不影响匹配，但多/少字符或连字符位置错了就会失败</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务3 EICAR -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 18′ · SVR2</span></span><h2>EICAR：安全的"病毒"测试</h2><button class="more" data-pop="pop-l22-t3a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l22-t3a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">3.1 自己生成测试文件（单引号，字符串原样保留）</div>
+<pre><code class="language-powershell" data-trim>
+$a = 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR'
+$b = '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'
+$eicar = $a + $b
+[IO.File]::WriteAllText("C:\LabFiles\eicar.com", $eicar)
+</code></pre>
+    <div class="callout warn"><b>先预测：</b>任务 1 已把 <code>C:\LabFiles</code> 加入排除项，Defender 还会报警吗？</div>
+  </div>
+</div>
+<aside class="notes">拆成两段只是为了排版，拼接后与原文的 EICAR 字符串完全相同；必须用单引号，双引号会把 $EICAR、$H 当成变量替换掉。先自己写下预测再执行。按原文预期 Defender 应立即检测并隔离；如果没反应，正是排除项在起作用，见下一页对比实验。</aside>
+<template id="pop-l22-t3a-steps">
+  <h3>📋 详细步骤：EICAR 测试</h3>
+  <h4>第一步：生成 EICAR 测试文件</h4>
+<pre>$a = 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR'
+$b = '-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*'
+$eicar = $a + $b
+[IO.File]::WriteAllText("C:\LabFiles\eicar.com", $eicar)</pre>
+  <div class="tip">必须用单引号！如果用双引号，PowerShell 会把字符串里的 <code>$EICAR</code>、<code>$H</code> 当成变量去替换，拼出来的内容就不是标准 EICAR 字符串了。拆成 $a/$b 两段只是为了排版整齐，拼接后与标准 EICAR 字符串完全一致。</div>
+  <h4>第二步：先自己预测结果</h4>
+  <p>任务 1 已经把 <code>C:\LabFiles</code> 加入排除项（<code>Add-MpPreference -ExclusionPath "C:\LabFiles"</code>），这里又把 EICAR 写进这个目录——Defender 还会报警吗？先写下预测，再执行观察。</p>
+  <h4>第三步：观察现象</h4>
+  <p>按标准预期 Defender 应立即检测并隔离；但由于写入的路径正好在排除列表里，很可能没有任何反应，文件原样留在 C:\LabFiles——这正是排除项带来的"盲区"效果。</p>
+</template>
+<template id="pop-l22-t3a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>EICAR 测试字符串</td><td>反病毒行业公认的标准测试字符串，本身不含任何恶意代码，但所有杀毒软件都会把它当作病毒识别出来，是验证防护"活不活"最安全的方式。</td></tr>
+    <tr><td>必须用单引号</td><td>字符串里含 <code>$EICAR</code>、<code>$H</code>，双引号字符串在 PowerShell 里会做变量插值，把这些当成变量名去替换（通常替换成空），破坏掉标准字符串，导致可能不被识别。</td></tr>
+    <tr><td>写入路径刻意选 C:\LabFiles</td><td>这正是上一个任务配置的排除路径，故意制造冲突，让学生亲眼看到"排除项 = 盲区"而不是停留在概念层面。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check22.ps1 用 <code>Get-MpThreat</code> 核对是否有 ThreatName 匹配 "EICAR" 的记录；如果写进了排除路径，这里会如实 FAIL，因为确实没有检测记录——这不是脚本或配置错误，而是排除项生效的真实证据</li>
+    <li>字符串写入后内容被改：检查是不是用了双引号而不是单引号</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 预期结果 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 3 验证</span><h2>检测到了吗？对比排除项的影响</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>情况</th><th>现象</th><th>说明</th></tr>
+      <tr><td>正常检测</td><td>右下角弹出威胁通知，文件消失</td><td>实时保护已隔离</td></tr>
+      <tr><td>没有反应</td><td>eicar.com 仍在 C:\LabFiles</td><td>排除项生效，形成盲区</td></tr>
+    </table>
+    <div class="code-cap">若没有反应：移除路径排除后重新执行 3.1</div>
+<pre><code class="language-powershell" data-trim>
+Remove-MpPreference -ExclusionPath "C:\LabFiles"
+</code></pre>
+    <div class="callout"><b>结论：</b>排除项不仅降低扫描开销，也同样放过了恶意文件。</div>
+  </div>
+</div>
+<aside class="notes">这是补充的对比实验，用来让学生亲眼看到"排除项 = 盲区"。移除排除后重写一次 EICAR，应立即被检测。实验结束后是否保留排除项，以检查脚本要求为准，可提醒学生跑完脚本再决定。把两次结果都记入记录表。</aside>
+</section>
+
+<!-- 13 任务3 记录与日志 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 18′ · SVR2</span></span><h2>威胁记录与 Defender 事件日志</h2><button class="more" data-pop="pop-l22-t3b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l22-t3b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">3.2–3.3 取证记录</div>
+<pre><code class="language-powershell" data-trim>
+Get-MpThreatDetection | Format-List
+Get-MpThreat | Format-List
+$log = "Microsoft-Windows-Windows Defender/Operational"
+Get-WinEvent -LogName $log -MaxEvents 10
+</code></pre>
+    <table class="tbl">
+      <tr><th>事件 ID</th><th>含义</th></tr>
+      <tr><td><b>1116</b></td><td>检测到恶意软件或可能不需要的软件</td></tr>
+      <tr><td><b>1117</b></td><td>已执行操作（隔离 / 删除）保护系统</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">Get-MpThreatDetection 是"每一次检测"的记录，Get-MpThreat 是"威胁种类"的汇总，EICAR 会显示为 Virus:DOS/EICAR_Test_File。1116、1117 是补充的常用事件 ID，第 29 课日志分析与入侵检测时会用到。提问：如果攻击者拿到了管理员权限，可能会怎样掩盖痕迹？引出日志集中收集的必要性。</aside>
+<template id="pop-l22-t3b-steps">
+  <h3>📋 详细步骤：威胁记录与 Defender 事件日志</h3>
+  <h4>第一步：查看检测记录</h4>
+<pre>Get-MpThreatDetection | Format-List</pre>
+  <p>这是"每一次检测"的详细记录，包含检测时间、动作、处理结果等。</p>
+  <h4>第二步：查看威胁种类汇总</h4>
+<pre>Get-MpThreat | Format-List</pre>
+  <p>这是按"威胁种类"的汇总视图，EICAR 测试文件会显示为 <code>Virus:DOS/EICAR_Test_File</code>。</p>
+  <h4>第三步：查 Defender 操作日志</h4>
+<pre>$log = "Microsoft-Windows-Windows Defender/Operational"
+Get-WinEvent -LogName $log -MaxEvents 10</pre>
+  <p>查最近 10 条 Defender 操作事件日志，留意下面两个事件 ID：</p>
+  <table>
+    <tr><th>事件 ID</th><th>含义</th></tr>
+    <tr><td><b>1116</b></td><td>检测到恶意软件或可能不需要的软件</td></tr>
+    <tr><td><b>1117</b></td><td>已执行操作（隔离 / 删除）保护系统</td></tr>
+  </table>
+  <h4>第四步：记录取证</h4>
+  <p>把两次 EICAR 测试的结果（有排除/无排除）、事件 ID、处理动作都记入记录表。</p>
+</template>
+<template id="pop-l22-t3b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Get-MpThreatDetection</code> vs <code>Get-MpThreat</code></td><td>Detection 是"事件流水账"（每次检测一条），Threat 是"按种类去重的汇总"，两者配合能既看到细节又看到全貌。</td></tr>
+    <tr><td>事件 ID 1116</td><td>标志"发现"阶段——Defender 判定某个对象是恶意软件，这是取证的第一个时间点。</td></tr>
+    <tr><td>事件 ID 1117</td><td>标志"处置"阶段——系统已经采取了隔离或删除动作，证明威胁已被处理而不只是被发现。这两个 ID 组合起来能完整还原一次检测-响应的时间线，第 29 课日志分析会用到。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check22.ps1 用 <code>Get-MpThreatDetection</code>（匹配 Resources 含 "eicar" 或 ThreatID=2147519003）和 <code>Get-MpThreat</code>（匹配 ThreatName 含 "EICAR"）两种方式交叉核对，只要任一有记录就 PASS</li>
+    <li>Get-WinEvent 查不到对应事件：确认 EICAR 文件写入的路径不在排除列表里，并且确实触发了实时保护扫描</li>
+  </ul>
+</template>
+</section>
+
+<!-- 14 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>Defender 不按预期工作？</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>Set-MpPreference 拒绝访问</td><td>未以管理员运行</td><td>右键"以管理员身份运行"</td></tr>
+      <tr><td>Update-MpSignature 失败</td><td>实验网无外网</td><td>记录现象，不影响后续任务</td></tr>
+      <tr><td>EICAR 未被检测</td><td>路径在排除项内 / 实时保护关闭</td><td>查 <code>Exclusion*</code> 与 RealTimeProtectionEnabled</td></tr>
+      <tr><td>CLIENT1 策略未生效</td><td>计算机不在 Company OU 下</td><td>移动计算机对象，<code>gpupdate /force</code></td></tr>
+      <tr><td>EICAR 写入后内容被改</td><td>用了双引号</td><td>改用单引号包住字符串</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">先自己把遇到的问题列出来，再对照表格排查。如果 Get-MpComputerStatus 显示 AntivirusEnabled 为 False，检查是否有组策略把"关闭 Microsoft Defender"设成了已启用。gpresult /r 是排查 GPO 的第一步。</aside>
+</section>
+
+<!-- 15 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>对照清单自查</h2><button class="more" data-pop="pop-l22-15-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>实时保护已启用，扫描计划为周日 02:00</li>
+        <li>三类排除项已配置（路径 / 扩展名 / 进程）</li>
+        <li>GPO Defender-Policy 已链接到 Company OU</li>
+        <li>ASR 规则已启用，EICAR 有检测记录</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>所有 VM 拍快照<br><code>Lesson22-Done</code></p>
+        <p class="small muted" style="margin-top:8px">若做过对比实验，先把排除项加回再逐项核对</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">原文未写明检查项，这里的 ✓ 项按本课 SOP 整理，以实际配置为准。清单达成后运行 check22.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。提交记录表：两次 EICAR 结果、事件 ID、处理动作。可以用两三句话总结一下"排除项被滥用的风险"。</aside>
+
+<template id="pop-l22-15-check">
+<h3>🧪 运行检查脚本 check22.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check22.ps1</pre>
+<h4>脚本检查什么（在被配置机上跑，本实验为 DC1）</h4>
+<ul>
+  <li><b>任务 1：</b>实时保护已启用、扫描计划 = 周日 02:00、三类排除项（路径 C:\LabFiles / 扩展名 .log / 进程 w3wp.exe）</li>
+  <li><b>任务 2：</b>GPO Defender-Policy 链接到 Company、ASR 规则 BE9BA2D9… = Enabled</li>
+  <li><b>任务 3：</b>EICAR 有检测记录（Virus:DOS/EICAR_Test_File）</li>
+</ul>
+<div class="tip">EICAR 一项需把测试文件写到<b>非排除路径</b>（如 C:\EicarTest）由实时保护检出；写进被排除的 C:\LabFiles 不会报警（排除项=盲区的直观演示）。全部 PASS 后拍快照 <code>Lesson22-Done</code>。</div>
+</template>
+</section>
+
+<!-- 16 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">防火墙挡网络，Defender 挡落地的恶意文件和危险行为</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small"><code>Set-MpPreference</code> 单机配置 → GPO 集中下发 → EICAR 验证</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">排除项就是盲区：越少越好、越窄越好</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 23 课：</b>证书服务（AD CS）。在 lab.local 中搭建企业 CA，为服务签发证书。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check22.ps1" download>check22.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），以管理员身份运行 <code>check22.ps1</code> 生成检查报告，连同记录表一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 为什么配置排除项要用 Add- 而不是 Set-？2. EICAR 写进 C:\LabFiles 为什么可能不报警？3. 1116 和 1117 事件分别代表什么？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

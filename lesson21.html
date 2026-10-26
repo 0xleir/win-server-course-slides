@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第21课 · Windows 防火墙高级配置</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 7 · 应用安全　|　第 21 次课 · 学时 41–42</p>
+  <h1>Windows 防火墙高级配置</h1>
+  <p class="muted">从"开关防火墙"到"精确控制谁能连、怎么连"</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM2 + VM3 + VM4</span></div>
+</div>
+<aside class="notes">本课涉及四台 VM：你依次在 DC1 上配规则，切到 SVR2 同步配置，再到 CLIENT1 上测试，最后用 Kali 扫描验证，全部由你一人完成。开场提问：防火墙"开着"就安全吗？如果规则写错了，开着的防火墙也可能什么都没挡住，或者把正常业务挡住了。强调：用 Kali 扫描时只能扫描实验网 10.10.10.0/24，对未授权目标扫描属于违法行为。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:13"><span class="t">13′</span><b>导入 · 概念</b>规则匹配<br>防火墙 vs IPsec</div>
+      <div class="seg" style="flex:27"><span class="t">27′</span><b>任务 1</b>高级防火墙规则<br>入站 · 出站 · 日志</div>
+      <div class="seg" style="flex:27"><span class="t">27′</span><b>任务 2</b>连接安全规则<br>DC1 ↔ SVR2 IPsec</div>
+      <div class="seg" style="flex:13"><span class="t">13′</span><b>任务 3</b>nmap 扫描<br>查看日志</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清三个配置文件的作用，以及"阻止规则优先"的匹配原则</li>
+        <li>用 PowerShell 创建按端口、地址、程序过滤的入站/出站规则并开启日志</li>
+        <li>在 DC1 与 SVR2 之间建立 IPsec 连接安全规则，并用 nmap 和日志验证效果</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">课前确认 VM4（Kali）已启动，IP 为 10.10.10.50。任务 1 你先在 DC1 上主做，再切到 SVR2 上同步；任务 2 两端必须依次都配置好；任务 3 你用 Kali 扫描之后，再去 DC1 上查看日志记录。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境与操作顺序</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1<br>入站/出站规则 · IPsec</div></div>
+      <div class="host"><div class="ic">🗄️</div><b>SVR2</b><div class="ip">10.10.10.20</div><div class="role">VM2<br>同步规则 · IPsec 对端</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3<br>测试规则 · 记录结果</div></div>
+      <div class="host"><div class="ic">🐉</div><b>Kali</b><div class="ip">10.10.10.50</div><div class="role">VM4<br>nmap 验证规则</div></div>
+    </div>
+    <div class="callout warn"><b>授权边界：</b>所有扫描只针对 <code>10.10.10.0/24</code> 实验网，不得扫描校园网或互联网主机。</div>
+  </div>
+</div>
+<aside class="notes">四台 VM 都由你一人依次操作：先在 DC1 配规则，切到 SVR2 同步，再到 CLIENT1 测试，最后用 Kali 验证。准备一张记录表：规则名、预期效果、实际效果。提醒自己：没有书面授权的扫描在现实中可能触犯《网络安全法》，课堂上的授权仅限本实验网。</aside>
+</section>
+
+<!-- 04 概念：配置文件与匹配 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>三个配置文件与规则匹配</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>配置文件</th><th>何时生效</th><th>本实验</th></tr>
+      <tr><td><b>域 Domain</b></td><td>网卡能联系到所属域的 DC</td><td>DC1、SVR2 的内网网卡</td></tr>
+      <tr><td><b>专用 Private</b></td><td>用户标记为"专用"的可信网络</td><td>家庭/小办公室</td></tr>
+      <tr><td><b>公用 Public</b></td><td>未知网络，默认最严格</td><td>咖啡馆、机场 Wi-Fi</td></tr>
+    </table>
+    <div class="flow">
+      <div class="node"><b>① 匹配阻止规则</b>命中即丢弃</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 匹配允许规则</b>命中即放行</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>③ 都没命中</b>入站默认阻止<br>出站默认允许</div>
+    </div>
+    <div class="callout warn"><b>关键：</b>规则没有"先后顺序"，<b>阻止规则永远优先</b>于允许规则。</div>
+  </div>
+</div>
+<aside class="notes">用 Get-NetConnectionProfile 可以查看网卡当前属于哪个配置文件。很多学生以为规则像路由器 ACL 一样从上到下匹配，Windows 防火墙不是这样：阻止优先。这一点直接影响任务 1 里 SMB 两条规则的效果，先埋个伏笔。提问：一条允许、一条阻止都匹配 445，结果是什么？</aside>
+</section>
+
+<!-- 05 概念：防火墙规则 vs 连接安全规则 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>防火墙规则 vs 连接安全规则</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card">
+        <h3>防火墙规则（门卫）</h3>
+        <ul class="points">
+          <li>决定流量<b>能不能进出</b>：允许 / 阻止</li>
+          <li>按端口、协议、IP、程序路径过滤</li>
+          <li>不关心对方是谁、数据是否被偷看</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>连接安全规则（IPsec）</h3>
+        <ul class="points">
+          <li>决定<b>怎么连</b>：先验证身份，再加密</li>
+          <li>本课用计算机身份 Kerberos V5</li>
+          <li>本身不放行流量，仍需防火墙规则允许</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>一句话：</b>防火墙规则管"能不能通"，连接安全规则管"通的时候安不安全"。</div>
+  </div>
+</div>
+<aside class="notes">打个比方：防火墙规则是门卫查是否允许进入大楼，IPsec 是进门后用加密的专用通道说话。两者是配合关系，不是替代关系。Kerberos V5 认证依赖域，这也是为什么要先完成第 17 课的域搭建。</aside>
+</section>
+
+<!-- 06 概念：IPsec 过程 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>IPsec 建立连接的两个阶段</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>DC1 发起</b>访问 10.10.10.20</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>主模式 Main Mode</b>互相认证身份<br>Kerberos V5</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>快速模式 Quick Mode</b>协商加密算法<br>和密钥</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>ESP 加密传输</b>抓包看不到明文</div>
+    </div>
+    <table class="tbl">
+      <tr><th>阶段</th><th>验证命令</th><th>SA 是什么</th></tr>
+      <tr><td>主模式</td><td><code>Get-NetIPsecMainModeSA</code></td><td>两台机器之间的"身份认证会话"</td></tr>
+      <tr><td>快速模式</td><td><code>Get-NetIPsecQuickModeSA</code></td><td>实际保护数据的"加密通道"</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">SA 即安全关联（Security Association），可以理解为双方协商好的"约定"。只有两端规则都配好并且产生了流量，SA 才会出现；没有流量时查询结果为空是正常的。ESP 是 IP 协议号 50，Wireshark 里过滤 esp 即可看到。</aside>
+</section>
+
+<!-- 07 任务1 SMB -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 27′ · DC1</span></span><h2>精细入站规则：限制 SMB</h2><button class="more" data-pop="pop-l21-t1a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l21-t1a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>Win+R</span><i>›</i><span>wf.msc</span><i>›</i><span>入站规则</span><i>›</i><span>审查三个配置文件的现有规则</span></div>
+<pre><code class="language-powershell" data-trim>
+New-NetFirewallRule -DisplayName "SMB-IT-Only" `
+  -Direction Inbound -Protocol TCP -LocalPort 445 `
+  -RemoteAddress 10.10.10.0/24 -Action Allow
+New-NetFirewallRule -DisplayName "SMB-Block-Others" `
+  -Direction Inbound -Protocol TCP -LocalPort 445 `
+  -Action Block
+</code></pre>
+    <div class="callout warn"><b>想一想：</b>第二条没写 <code>-RemoteAddress</code>，结合"阻止优先"，10.10.10.0/24 还能访问 445 吗？切到 CLIENT1 测试：<code>Test-NetConnection 10.10.10.10 -Port 445</code></div>
+  </div>
+</div>
+<aside class="notes">你在 DC1 上执行，然后切到 SVR2 上同步执行同样的配置。再到 CLIENT1 测试，结果会是 TcpTestSucceeded 为 False：阻止规则覆盖所有地址，优先于允许规则。这是本课最重要的"坑"，让学生自己发现再解释。观察完后按下一页的方法停用阻止规则，否则 DC1 的 SYSVOL、组策略和任务 2 的文件传输都会失败。</aside>
+<template id="pop-l21-t1a-steps">
+  <h3>📋 详细步骤：精细入站规则限制 SMB</h3>
+  <h4>第一步：先看现有规则</h4>
+  <ol>
+    <li>在 DC1 上 <code>Win+R</code> → <code>wf.msc</code></li>
+    <li>展开「入站规则」，分别切到域/专用/公用三个配置文件看一眼默认规则</li>
+  </ol>
+  <h4>第二步：创建允许规则（IT 子网可访问 445）</h4>
+<pre>New-NetFirewallRule -DisplayName "SMB-IT-Only" `
+  -Direction Inbound -Protocol TCP -LocalPort 445 `
+  -RemoteAddress 10.10.10.0/24 -Action Allow</pre>
+  <p>只允许来自 10.10.10.0/24 这个网段访问 445 端口（SMB 文件共享）。</p>
+  <h4>第三步：再创建阻止规则（不限地址）</h4>
+<pre>New-NetFirewallRule -DisplayName "SMB-Block-Others" `
+  -Direction Inbound -Protocol TCP -LocalPort 445 `
+  -Action Block</pre>
+  <div class="tip">注意这条没写 <code>-RemoteAddress</code>，等于匹配所有地址，包括刚才允许的 10.10.10.0/24。</div>
+  <h4>第四步：从 CLIENT1 测试</h4>
+<pre>Test-NetConnection 10.10.10.10 -Port 445</pre>
+  <p>结果是 <code>TcpTestSucceeded : False</code>——因为"阻止规则永远优先于允许规则"，两条规则都命中 445 时，阻止生效。</p>
+  <div class="tip">别忘了去 SVR2 上也同步创建这两条规则。</div>
+</template>
+<template id="pop-l21-t1a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>-LocalPort 445</code></td><td>445 是 SMB（文件共享）端口，DC1 上的 SYSVOL、组策略都靠它分发，是攻击者常扫描的高价值端口。</td></tr>
+    <tr><td><code>SMB-IT-Only</code>（允许 445，限 10.10.10.0/24）</td><td>只信任本实验网段访问文件共享，体现"按地址缩小暴露面"的思路。</td></tr>
+    <tr><td><code>SMB-Block-Others</code>（阻止 445，不限地址）</td><td>故意不写 <code>-RemoteAddress</code>，用来演示 Windows 防火墙"阻止规则优先于允许规则"的匹配原则——这不是 bug，是设计。</td></tr>
+    <tr><td><code>Test-NetConnection ... -Port 445</code></td><td>验证实际效果最直接的方式：不看规则列表猜，而是真的发一次连接测试。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check21.ps1 用 <code>Get-NetFirewallPortFilter</code>/<code>Get-NetFirewallAddressFilter</code> 核对 SMB-IT-Only 的 Action/Port/RemoteAddress 是否真的是 Allow/445/10.10.10.0/24</li>
+    <li>如果 10.10.10.0/24 也连不上 445：说明 SMB-Block-Others 还处于启用状态，没按下一页任务做停用</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务1 程序/出站/日志 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 27′ · DC1</span></span><h2>按程序限制 · 出站规则 · 日志</h2><button class="more" data-pop="pop-l21-t1b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l21-t1b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Disable-NetFirewallRule -DisplayName "SMB-Block-Others"
+$iis = "C:\Windows\System32\inetsrv\w3wp.exe"
+New-NetFirewallRule -DisplayName "Allow-IIS" `
+  -Direction Inbound -Program $iis -Action Allow
+New-NetFirewallRule -DisplayName "Block-Outbound-Social" `
+  -Direction Outbound -Protocol TCP -RemotePort 443 `
+  -RemoteAddress "0.0.0.0/0" -Action Block -Enabled False
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>-Program：</b>只放行这个程序监听的端口，换了程序就不通。</div>
+      <div class="callout"><b>-Enabled False：</b>出站规则先不启用，仅作演示，避免断网。</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">第一行是在原文基础上补充的：停用而不是删除 SMB-Block-Others，保留规则供检查和对比。按程序路径放行比按端口更精细：即使别的程序占用 80 端口也不会被放行。出站规则若启用，DC1 将无法访问任何 HTTPS 站点，所以原文要求先不启用；可在 wf.msc 出站规则里看到它呈灰色。</aside>
+<template id="pop-l21-t1b-steps">
+  <h3>📋 详细步骤：按程序限制 / 出站规则 / 日志</h3>
+  <h4>第一步：停用上一步的 SMB-Block-Others</h4>
+<pre>Disable-NetFirewallRule -DisplayName "SMB-Block-Others"</pre>
+  <p>保留规则本身（供后面检查脚本确认它"存在且已停用"），只是不再生效，避免挡住 SYSVOL/组策略和任务 2 的 IPsec 流量。</p>
+  <h4>第二步：按程序路径放行 IIS</h4>
+<pre>$iis = "C:\Windows\System32\inetsrv\w3wp.exe"
+New-NetFirewallRule -DisplayName "Allow-IIS" `
+  -Direction Inbound -Program $iis -Action Allow</pre>
+  <p>只要是 w3wp.exe 这个进程发起/监听的流量就放行，不管它用了哪个端口。</p>
+  <h4>第三步：创建一条禁用状态的出站规则（演示用）</h4>
+<pre>New-NetFirewallRule -DisplayName "Block-Outbound-Social" `
+  -Direction Outbound -Protocol TCP -RemotePort 443 `
+  -RemoteAddress "0.0.0.0/0" -Action Block -Enabled False</pre>
+  <div class="tip">这条规则创建时就带 <code>-Enabled False</code>，先不启用。真的启用会让 DC1 无法访问任何 HTTPS 站点，这里只是为了让学生看到"按端口+全地址阻止出站"的写法。</div>
+  <h4>第四步：在 wf.msc 核对</h4>
+  <ol>
+    <li>打开「出站规则」，找到 Block-Outbound-Social，确认它显示为灰色（已禁用）</li>
+  </ol>
+</template>
+<template id="pop-l21-t1b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Disable-NetFirewallRule</code> 而非删除</td><td>保留规则定义，方便检查脚本核对"存在且已停用"，也方便以后对比启用/禁用的效果，而不用重新敲一遍创建命令。</td></tr>
+    <tr><td><code>-Program $iis</code></td><td>按程序路径过滤比按端口更精细：换一个程序抢占同一端口不会被放行，只有真正的 w3wp.exe 才通过。</td></tr>
+    <tr><td><code>Block-Outbound-Social</code> 带 <code>-Enabled False</code></td><td>出站规则一旦启用影响面很大（所有 443 出站流量），课堂上只演示语法不实际启用，避免整台机器断网。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check21.ps1 检查 SMB-Block-Others 的 Enabled 是否为 False、Allow-IIS 的 Program 是否含 "w3wp"、Block-Outbound-Social 存在且 Enabled 为 False</li>
+    <li>如果任务 2 配置 IPsec 后仍连不上 SVR2，先确认 SMB-Block-Others 真的已停用（<code>Get-NetFirewallRule -DisplayName "SMB-Block-Others" | Select Enabled</code>）</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务1 日志 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 27′ · DC1</span></span><h2>开启防火墙日志</h2><button class="more" data-pop="pop-l21-t1c-steps">📋 详细步骤</button><button class="more" data-pop="pop-l21-t1c-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$log = "C:\Windows\System32\LogFiles\Firewall\pfirewall.log"
+Set-NetFirewallProfile -Profile Domain `
+  -LogAllowed True -LogBlocked True `
+  -LogFileName $log -LogMaxSizeKilobytes 16384
+Get-NetFirewallProfile -Profile Domain |
+  Select-Object Name, LogAllowed, LogBlocked, LogFileName
+</code></pre>
+    <table class="tbl">
+      <tr><th>参数</th><th>含义</th></tr>
+      <tr><td><code>-Profile Domain</code></td><td>只对域配置文件记录，DC1 内网网卡属于此文件</td></tr>
+      <tr><td><code>-LogBlocked True</code></td><td>记录被丢弃的包，排障和发现扫描最有用</td></tr>
+      <tr><td><code>-LogMaxSizeKilobytes 16384</code></td><td>日志上限 16 MB，写满后滚动</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">最后两行是补充的确认命令。日志不是实时显示的，要有流量才会写入，任务 3 中你用 Kali 扫描后就能看到大量 DROP 记录。常见错误：网卡实际处于公用配置文件，只给 Domain 开日志就什么都看不到，可用 Get-NetConnectionProfile 确认。</aside>
+<template id="pop-l21-t1c-steps">
+  <h3>📋 详细步骤：开启防火墙日志</h3>
+  <h4>第一步：确认 DC1 内网网卡属于域配置文件</h4>
+<pre>Get-NetConnectionProfile</pre>
+  <p>NetworkCategory 应该是 DomainAuthenticated。如果是 Public，下面只给 Domain 开日志就会什么都看不到。</p>
+  <h4>第二步：对域配置文件开启日志</h4>
+<pre>$log = "C:\Windows\System32\LogFiles\Firewall\pfirewall.log"
+Set-NetFirewallProfile -Profile Domain `
+  -LogAllowed True -LogBlocked True `
+  -LogFileName $log -LogMaxSizeKilobytes 16384</pre>
+  <p>同时记录"放行"和"丢弃"的流量，日志文件固定路径，上限 16MB（16384 KB）。</p>
+  <h4>第三步：确认配置生效</h4>
+<pre>Get-NetFirewallProfile -Profile Domain |
+  Select-Object Name, LogAllowed, LogBlocked, LogFileName</pre>
+  <p>输出应显示 LogAllowed=True、LogBlocked=True、LogFileName 为上面设置的路径。</p>
+  <div class="tip">日志不是实时弹出来的——必须真的有流量经过才会写入文件，没内容是正常的，等任务 3 nmap 扫描后再去看。</div>
+</template>
+<template id="pop-l21-t1c-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>-Profile Domain</code></td><td>DC1 内网网卡属于域配置文件，三个配置文件（域/专用/公用）各自独立开关日志，配错配置文件就等于白开。</td></tr>
+    <tr><td><code>-LogBlocked True</code></td><td>记录被丢弃的包，是发现扫描和排障最有用的一项——任务 3 你用 Kali 扫描后，这里会出现一堆 DROP 记录。</td></tr>
+    <tr><td><code>-LogAllowed True</code></td><td>记录被放行的包，用来确认"规则真的生效了"，而不是靠猜测。</td></tr>
+    <tr><td><code>-LogMaxSizeKilobytes 16384</code></td><td>日志上限 16MB，写满后自动滚动，避免无限增长占满磁盘。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check21.ps1 用 <code>Get-NetFirewallProfile -Profile Domain</code> 核对 LogAllowed/LogBlocked 是否都为 True</li>
+    <li>日志文件读不到内容：先用 <code>Get-NetConnectionProfile</code> 确认网卡确实在域配置文件下，再确认有没有真实流量经过（比如先 Test-NetConnection 一下）</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 创建连接安全规则 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 27′ · DC1 + SVR2</span></span><h2>创建连接安全规则</h2><button class="more" data-pop="pop-l21-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l21-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>wf.msc</span><i>›</i><span>连接安全规则</span><i>›</i><span>新建规则</span><i>›</i><span>服务器到服务器</span></div>
+    <table class="tbl">
+      <tr><th>向导页</th><th>DC1</th><th>SVR2</th></tr>
+      <tr><td>终结点 1（本端）</td><td>10.10.10.10</td><td>10.10.10.20</td></tr>
+      <tr><td>终结点 2（远端）</td><td>10.10.10.20</td><td>10.10.10.10</td></tr>
+      <tr><td>要求</td><td colspan="2">要求入站和出站连接进行身份验证</td></tr>
+      <tr><td>身份验证方法</td><td colspan="2">计算机（Kerberos V5）</td></tr>
+    </table>
+    <div class="callout warn"><b>两端必须都配</b>，而且方向相反。只配一端，两台机器之间会直接断开。</div>
+  </div>
+</div>
+<aside class="notes">在 DC1 和 SVR2 上依次操作，填完一端立刻核对终结点是否对调。"要求入站和出站"意味着未经 IPsec 认证的流量全部被拒绝，所以先配好的一端会暂时连不上另一端，这是正常现象，等两端都配置完就恢复。配置文件页保持勾选"域"，名称可写 DC1-SVR2-IPsec 便于检查。</aside>
+<template id="pop-l21-t2a-steps">
+  <h3>📋 详细步骤：创建连接安全规则</h3>
+  <h4>第一步：打开连接安全规则向导</h4>
+  <ol>
+    <li>DC1 和 SVR2 上都执行：<code>wf.msc</code> → 「连接安全规则」→ 右键「新建规则」→ 选择「服务器到服务器」</li>
+  </ol>
+  <h4>第二步：按下表填终结点（两端方向相反）</h4>
+  <table>
+    <tr><th>向导页</th><th>DC1</th><th>SVR2</th></tr>
+    <tr><td>终结点 1（本端）</td><td>10.10.10.10</td><td>10.10.10.20</td></tr>
+    <tr><td>终结点 2（远端）</td><td>10.10.10.20</td><td>10.10.10.10</td></tr>
+  </table>
+  <div class="tip">两端配的终结点刚好要对调——DC1 的本端是 SVR2 的远端，反过来也一样。配前一定互相核对一遍，填反是最常见的错误。</div>
+  <h4>第三步：选择要求和身份验证方法</h4>
+  <ol>
+    <li>要求：选「要求入站和出站连接进行身份验证」</li>
+    <li>身份验证方法：选「计算机（Kerberos V5）」</li>
+    <li>配置文件页：保持勾选「域」</li>
+    <li>名称建议写 <code>DC1-SVR2-IPsec</code>，两端用同一个名字方便检查核对</li>
+  </ol>
+  <h4>第四步：两端都配完，先别慌</h4>
+  <p>只配好一端时，两台机器之间会暂时连不上（因为一端已经要求认证，另一端还没准备好应答）。这是正常现象，两端都配完就会恢复。</p>
+</template>
+<template id="pop-l21-t2a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>终结点 1/2 两端对调</td><td>连接安全规则描述的是"从我这边看，谁是本端谁是远端"，两台机器各自站在自己的角度配置，所以数值刚好互换。</td></tr>
+    <tr><td>要求入站和出站都认证</td><td>双向都强制认证，防止只有单向加密导致的中间人篡改另一方向流量。</td></tr>
+    <tr><td>计算机（Kerberos V5）</td><td>依赖域环境，两台机器都是域成员，用计算机账户互相证明身份，不需要额外证书或预共享密钥。</td></tr>
+    <tr><td>名称统一为 DC1-SVR2-IPsec</td><td>check21.ps1 用 <code>Get-NetIPsecRule -DisplayName "DC1-SVR2-IPsec"</code> 按这个名字查规则，名字不对检查会判定"不存在"。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check21.ps1 核对该规则的 LocalAddress 含 10.10.10.10、RemoteAddress 含 10.10.10.20、InboundSecurity=Require</li>
+    <li>配完一端后另一端突然连不上：先确认不是故障，是预期现象，等两端都配完</li>
+    <li>两端配完还是不通：互相核对一下终结点是不是真的对调了，而不是两边都填了一样的值</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务2 验证 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 27′ · DC1 + SVR2</span></span><h2>验证 IPsec：SA 与 ESP</h2><button class="more" data-pop="pop-l21-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l21-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+# 先在 DC1 上产生流量（访问 SVR2）
+Test-NetConnection 10.10.10.20 -Port 445
+Get-NetIPsecMainModeSA
+Get-NetIPsecQuickModeSA
+</code></pre>
+    <div class="grid2">
+      <div class="card blue">
+        <h3>预期</h3>
+        <ul class="points check">
+          <li>两条命令都返回 10.10.10.10 ↔ 10.10.10.20 的 SA</li>
+          <li>主模式认证方式显示 Kerberos</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>Wireshark 观察</h3>
+        <p class="small">在 DC1 与 SVR2 之间复制文件，抓包过滤 <code>esp</code>，只见 ESP 包，看不到 SMB 明文</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">Test-NetConnection 一行是补充的，用来先产生流量，否则 SA 可能为空。Wireshark 在 C:\Tools\ 下，环境搭建时已下载。若 Wireshark 里仍能看到 SMB 内容，到 wf.msc 根节点属性 → IPsec 设置 → 自定义 → 数据保护，确认选的是"完整性和加密"而非仅完整性，这是很好的讨论点。</aside>
+<template id="pop-l21-t2b-steps">
+  <h3>📋 详细步骤：验证 IPsec SA 与 ESP</h3>
+  <h4>第一步：先产生一次流量</h4>
+<pre># 先在 DC1 上产生流量（访问 SVR2）
+Test-NetConnection 10.10.10.20 -Port 445</pre>
+  <p>SA 只有在真的有流量经过时才会建立，没有流量查出来的结果为空是正常的，所以先手动连一下。</p>
+  <h4>第二步：查主模式和快速模式 SA</h4>
+<pre>Get-NetIPsecMainModeSA
+Get-NetIPsecQuickModeSA</pre>
+  <p>两条命令都应该返回 10.10.10.10 ↔ 10.10.10.20 之间的 SA 记录，主模式的认证方式应显示 Kerberos。</p>
+  <h4>第三步：用 Wireshark 验证实际加密效果</h4>
+  <ol>
+    <li>打开 C:\Tools\ 下的 Wireshark</li>
+    <li>在 DC1 与 SVR2 之间复制一个文件</li>
+    <li>抓包过滤 <code>esp</code>，应只看到 ESP 包，看不到 SMB 明文内容</li>
+  </ol>
+  <div class="tip">如果 Wireshark 里仍能看到 SMB 内容：到 wf.msc 根节点属性 → IPsec 设置 → 自定义 → 数据保护，确认选的是"完整性和加密"而不是仅完整性。</div>
+</template>
+<template id="pop-l21-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Test-NetConnection ... -Port 445</code></td><td>主动产生一次流量，触发 IPsec 的主模式/快速模式协商，否则 SA 列表可能是空的，让人误以为规则没生效。</td></tr>
+    <tr><td><code>Get-NetIPsecMainModeSA</code></td><td>查"身份认证会话"——两台机器是否已经互相验证了身份（Kerberos）。</td></tr>
+    <tr><td><code>Get-NetIPsecQuickModeSA</code></td><td>查"加密通道"——实际保护数据传输的那一层，有这个才说明流量真的被加密了。</td></tr>
+    <tr><td>Wireshark 过滤 <code>esp</code></td><td>从网络层面肉眼验证效果：ESP 是 IP 协议号 50，看到的应该全是加密后的 ESP 包，而不是裸的 SMB 协议数据。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check21.ps1 用 <code>Get-NetIPsecMainModeSA</code> 核对是否存在 RemoteEndpoint/LocalEndpoint 含 10.10.10.20 的 SA；单机环境（SVR2 没真的配对端）这一项会如实 FAIL</li>
+    <li>SA 查出来是空：先确认两端规则都配了，再 Test-NetConnection 产生一次流量后重新查</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 任务3 nmap -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 13′ · Kali + DC1</span></span><h2>用 Kali 扫描，回 DC1 看日志</h2><button class="more" data-pop="pop-l21-t3-steps">📋 详细步骤</button><button class="more" data-pop="pop-l21-t3-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 Kali（10.10.10.50）上</div>
+<pre><code class="language-bash" data-trim>
+nmap -sT 10.10.10.10 -p 21,80,443,445,3389,3390,5985,5986
+</code></pre>
+    <div class="code-cap">切回 DC1 上</div>
+<pre><code class="language-powershell" data-trim>
+$log = "C:\Windows\System32\LogFiles\Firewall\pfirewall.log"
+Get-Content $log -Tail 20
+</code></pre>
+    <div class="callout"><b>-sT：</b>完整 TCP 三次握手扫描，会在目标日志里留下明显记录。</div>
+  </div>
+</div>
+<aside class="notes">再次强调授权：nmap 只对 10.10.10.10 扫描。把每个端口的 nmap 状态填入记录表，并与本课规则对照。日志里 DROP 行的源地址应是 10.10.10.50，这就是"防守方发现扫描"的第一手证据。若读取日志提示拒绝访问，确认 PowerShell 以管理员身份运行。</aside>
+<template id="pop-l21-t3-steps">
+  <h3>📋 详细步骤：用 Kali 扫描，回 DC1 看日志</h3>
+  <h4>第一步：在 Kali（10.10.10.50）上扫描</h4>
+<pre>nmap -sT 10.10.10.10 -p 21,80,443,445,3389,3390,5985,5986</pre>
+  <div class="tip">只允许扫描 10.10.10.10（本实验网内的 DC1），不得扫描实验网之外的任何主机。</div>
+  <h4>第二步：切回 DC1，以管理员身份读取日志</h4>
+<pre>$log = "C:\Windows\System32\LogFiles\Firewall\pfirewall.log"
+Get-Content $log -Tail 20</pre>
+  <p>查看日志最后 20 行，日志里 DROP 的行源地址应是 10.10.10.50（Kali），这是"防守方发现扫描"的直接证据。</p>
+  <h4>第三步：对照 nmap 状态记录表</h4>
+  <ol>
+    <li>把每个端口的 nmap 状态（open/closed/filtered）填入记录表</li>
+    <li>与本课创建的规则对照：445 的结果取决于 SMB-Block-Others 当前是否启用</li>
+  </ol>
+</template>
+<template id="pop-l21-t3-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>-sT</code></td><td>完整 TCP 三次握手扫描，比 SYN 扫描更"显眼"，一定会在目标的防火墙日志里留下明显记录，适合课堂演示"扫描会留痕"。</td></tr>
+    <tr><td><code>-p 21,80,443,445,3389,3390,5985,5986</code></td><td>覆盖本课程涉及的常见端口：FTP、Web、SMB、RDP（含第 14 课改过的 3390）、WinRM。</td></tr>
+    <tr><td><code>Get-Content $log -Tail 20</code></td><td>日志是追加写入的文本文件，只看最后几行就够了，不用整个打开。</td></tr>
+    <tr><td>DROP 行源地址 = 10.10.10.50</td><td>防守方不需要猜"有没有被扫描"，日志会直接给出攻击方的 IP，这是取证和事件响应的基础。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>读取日志提示"拒绝访问"：PowerShell 没有以管理员身份运行</li>
+    <li>日志里完全没有内容：先确认任务 1 已经给域配置文件开了 LogAllowed/LogBlocked，并且 DC1 网卡确实在域配置文件下</li>
+    <li>nmap 全部显示 filtered：先在 Kali 上 <code>ip a</code> 确认自己确实在 10.10.10.0/24 网段（10.10.10.50）</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 预期结果 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">预期结果</span><h2>nmap 状态怎么读</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>nmap 状态</th><th>含义</th><th>日志里看到</th></tr>
+      <tr><td><b>open</b></td><td>防火墙放行，且有服务在监听</td><td>ALLOW TCP 10.10.10.50 → 10.10.10.10</td></tr>
+      <tr><td><b>closed</b></td><td>放行了，但没有服务监听（收到 RST）</td><td>ALLOW</td></tr>
+      <tr><td><b>filtered</b></td><td>被防火墙丢弃，没有任何回应</td><td>DROP TCP 10.10.10.50 → 10.10.10.10</td></tr>
+    </table>
+    <div class="callout"><b>对照记录：</b>445 的结果取决于 SMB-Block-Others 此时是否启用；3389 与 3390 对照第 14 课改端口后的规则。</div>
+  </div>
+</div>
+<aside class="notes">自己总结：哪些端口和预期不一致？为什么？例如 IPsec 规则只在 DC1 与 SVR2 之间要求认证，不影响 Kali 的扫描结果。结果因前面课程的配置而异，重点不是标准答案，而是能用规则和日志解释每一个状态。</aside>
+</section>
+
+<!-- 14 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>规则不按预期工作？</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>IT 子网也连不上 445</td><td>阻止规则优先于允许</td><td>停用 SMB-Block-Others</td></tr>
+      <tr><td>DC1 与 SVR2 互相不通</td><td>只有一端配了 IPsec 规则</td><td>两端都配，终结点对调</td></tr>
+      <tr><td>SA 查询为空</td><td>两端之间还没有流量</td><td>先 <code>Test-NetConnection</code> 再查</td></tr>
+      <tr><td>pfirewall.log 没内容</td><td>网卡不在域配置文件</td><td><code>Get-NetConnectionProfile</code> 确认</td></tr>
+      <tr><td>nmap 全部 filtered</td><td>Kali 不在 10.10.10.0/24</td><td>Kali 上 <code>ip a</code> 确认 10.10.10.50</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">先让学生自己猜原因再翻出这一页。IPsec 配错导致 DC1 与 SVR2 断开时，最快的恢复方法是在 wf.msc 里先禁用一端的连接安全规则，而不是删除。规则太多分不清时，用 Get-NetFirewallRule -DisplayName "SMB*" 只看本课创建的规则。</aside>
+</section>
+
+<!-- 15 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>对照清单自查</h2><button class="more" data-pop="pop-l21-15-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>SMB-IT-Only、SMB-Block-Others 规则存在</li>
+        <li>Allow-IIS 与 Block-Outbound-Social（未启用）存在</li>
+        <li>域配置文件已开启允许/阻止日志</li>
+        <li>DC1 ↔ SVR2 连接安全规则存在，有 IPsec SA</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>四台 VM 都拍快照<br><code>Lesson21-Done</code></p>
+        <p class="small muted" style="margin-top:8px">提交记录表</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对清单。清单达成后运行 check21.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。检查项是根据本课 SOP 列出的，以实际配置为准。记录表包括规则名、预期、nmap 实际结果和日志证据，作为过程性成绩的一部分。</aside>
+
+<template id="pop-l21-15-check">
+<h3>🧪 运行检查脚本 check21.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check21.ps1</pre>
+<h4>脚本检查什么（在 DC1 上跑）</h4>
+<ul>
+  <li><b>任务 1：</b>SMB-IT-Only（允许 445/10.10.10.0/24）、SMB-Block-Others（存在且已停用）、Allow-IIS（按程序）、Block-Outbound-Social（存在且未启用）、域配置文件允许+阻止日志</li>
+  <li><b>任务 2：</b>DC1↔SVR2 连接安全规则存在（Require/Kerberos）、IPsec 主模式 SA 已建立</li>
+</ul>
+<div class="tip">IPsec SA 一项需要 SVR2 真实配好对端规则并产生流量才会 PASS；只有 DC1 的单机环境里这项会如实 FAIL（规则本身仍 PASS）。全部达成后拍快照 <code>Lesson21-Done</code>。</div>
+</template>
+</section>
+
+<!-- 16 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">开着防火墙不等于安全，规则要精确到端口、地址、程序</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small"><code>New-NetFirewallRule</code> → 开日志 → 连接安全规则 → nmap 验证</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">阻止优先；IPsec 两端都配；用日志证明规则生效</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 22 课：</b>Windows Defender 与恶意软件防护。配置 Defender、排除项和扫描策略。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check21.ps1" download>check21.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 DC1 以管理员身份运行 <code>check21.ps1</code> 生成检查报告，连同记录表一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 允许和阻止规则同时匹配，结果是什么？2. 连接安全规则能单独放行流量吗？3. nmap 显示 filtered，日志里应该看到什么？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>
