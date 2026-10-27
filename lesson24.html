@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第24课 · 系统加固与安全基线</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 7 · Windows 应用安全　|　第 24 次课 · 学时 47–48</p>
+  <h1>系统加固与安全基线</h1>
+  <p class="muted">把"装好能用"的服务器，变成"按标准关好门"的服务器</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM2 + VM3 + VM4</span></div>
+</div>
+<aside class="notes">开场提问：前三节课我们做了防火墙、Defender、证书，服务器现在算安全了吗？默认安装里还开着 SMBv1、远程注册表、空会话这些"老门"。今天按微软官方基线逐项检查并关掉它们，这也是项目 7 的收官课，课后要拍关键快照 S7-AppSec。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:9"><span class="t">9′</span><b>概念</b>什么是基线<br>加固清单</div>
+      <div class="seg" style="flex:27"><span class="t">27′</span><b>任务 1</b>微软安全基线<br>对照检查</div>
+      <div class="seg" style="flex:26"><span class="t">26′</span><b>任务 2</b>手动加固<br>协议 · 服务 · 注册表 · 审计</div>
+      <div class="seg" style="flex:18"><span class="t">18′</span><b>任务 3</b>安全检查报告</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清楚"安全基线"是什么，以及每个加固项防的是哪类攻击</li>
+        <li>用 PowerShell 禁用 SMBv1、多余服务，设置 LSA 注册表和审计策略</li>
+        <li>写出一份能反复运行的安全检查报告脚本</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">概念只讲 10 分钟，重点是"每一项加固对应一种攻击"，后面项目 8 的攻击课会逐一印证。任务 2 改的东西最多，提醒先在 DC1 上做完、确认无误后再切到 SVR2 上同步执行同样的加固。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境与操作顺序</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · DC1<br>基线导入 · 主加固</div></div>
+      <div class="host"><div class="ic">🗄️</div><b>SVR2</b><div class="ip">10.10.10.20</div><div class="role">VM2 · SVR2<br>同步服务加固</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3 · CLIENT1<br>对照基线 · 记录报告</div></div>
+      <div class="host"><div class="ic">🐉</div><b>Kali</b><div class="ip">10.10.10.50</div><div class="role">VM4 · Kali<br>加固前后复核</div></div>
+    </div>
+    <div class="callout"><b>本课主战场是 DC1：</b>报告脚本要检查 CA 服务（CertSvc），它装在 DC1 上（第 23 课）。</div>
+  </div>
+</div>
+<aside class="notes">你先在 DC1 上导入基线、执行全部加固；接着切到 SVR2 上同步执行 SMBv1 和服务加固；再在 CLIENT1 上逐项对照基线、填写加固前后对比表；最后切到 Kali，在加固前后各扫一次 10.10.10.10，验证 SMBv1 是否真的关了。提醒：用 Kali 扫描时只能扫描本实验网 10.10.10.0/24，这是授权范围。</aside>
+</section>
+
+<!-- 04 概念：什么是基线 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>默认安装 vs 安全基线</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>默认安装（兼容优先）</h3>
+        <ul class="points">
+          <li>为了兼容老设备，保留旧协议</li>
+          <li>很多服务默认开启，不管用不用</li>
+          <li>允许匿名查询部分账号信息</li>
+          <li>审计只记录最基本的事件</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>安全基线（安全优先）</h3>
+        <ul class="points">
+          <li>一份<b>经过验证的推荐配置清单</b></li>
+          <li>微软官方发布，按系统版本分别提供</li>
+          <li>以 GPO 形式提供，可整批导入</li>
+          <li>是"加固"和"检查"的共同标准</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>一句话：</b>基线回答"应该是什么样"，检查回答"现在是什么样"，加固就是消除两者的差距。</div>
+  </div>
+</div>
+<aside class="notes">类比：基线就像装修验收标准，没有标准就谈不上验收。微软的 Security Compliance Toolkit（SCT）里包含 Windows Server 2022 的基线 GPO。提问：为什么微软不直接把默认配置做成最安全的？引导出"兼容性与安全的取舍"。</aside>
+</section>
+
+<!-- 05 概念：每项加固防什么 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>今天每一项加固，防的是哪种攻击</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:30%">加固项</th><th style="width:36%">如果不做</th><th>对应后续课程</th></tr>
+      <tr><td>禁用 SMBv1</td><td>可被"永恒之蓝"类漏洞远程利用</td><td>第 27 课 端口扫描与漏洞发现</td></tr>
+      <tr><td>RestrictAnonymous / SAM</td><td>匿名枚举用户名和共享</td><td>第 27 课 信息收集</td></tr>
+      <tr><td>LmCompatibilityLevel=5</td><td>LM / NTLMv1 哈希容易被破解</td><td>第 28 课 密码攻击与防御</td></tr>
+      <tr><td>停用多余服务</td><td>多一个服务就多一个攻击面</td><td>项目 8 内网渗透</td></tr>
+      <tr><td>增强审计策略</td><td>被攻击了也查不到痕迹</td><td>第 29 课 日志分析与入侵检测</td></tr>
+    </table>
+    <div class="callout warn"><b>原则：</b>不认识的设置先查清楚再改，加固改错了一样会造成"自己把自己锁在门外"。</div>
+  </div>
+</div>
+<aside class="notes">这张表是整节课的主线，拍下来作为报告的"加固理由"一栏。可以简单介绍：这些都是攻击方最先探测的点。强调本课程所有攻击演示只在实验网内进行，对外网或他人系统做同样的事是违法的。</aside>
+</section>
+
+<!-- 07 任务1 基线 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 27′ · DC1</span></span><h2>Microsoft 安全基线（SCT）</h2><button class="more" data-pop="pop-l24-t1a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l24-t1a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p>教师已把 Security Compliance Toolkit 预置到 <code>C:\Tools\SCT\</code>，内含 <b>Windows Server 2022 Security Baseline</b>。</p>
+    <div class="code-cap">在 DC1 上，以域管理员身份运行 PowerShell</div>
+<pre><code class="language-powershell" data-trim>
+C:\Tools\SCT\Scripts\Baseline-ADImport.ps1
+</code></pre>
+    <div class="crumb"><span>服务器管理器</span><i>›</i><span>工具</span><i>›</i><span>组策略管理</span><i>›</i><span>lab.local</span><i>›</i><span>组策略对象</span></div>
+    <div class="callout"><b>浏览导入的基线 GPO</b>，右键 → 编辑，看看"推荐安全设置"都改了哪些地方。流程：取基线 → 对照检查 → 加固 → 出报告 → 定期复查。</div>
+  </div>
+</div>
+<aside class="notes">Baseline-ADImport.ps1 会把基线 GPO 导入到域里，但只是"导入"，不会链接到任何 OU，所以不会立即生效，可以放心浏览。重点看"计算机配置 → 安全设置 → 本地策略 → 安全选项"，那里能找到今天要手动改的几项。你边操作边记录看到的设置名称；若执行策略报错，用 Set-ExecutionPolicy -Scope Process RemoteSigned 仅对当前窗口放行。</aside>
+<template id="pop-l24-t1a-steps">
+  <h3>📋 详细步骤：导入 Microsoft 安全基线（SCT）</h3>
+  <h4>第一步：确认账号和脚本位置</h4>
+  <ol>
+    <li>在 DC1 上以域管理员身份打开 PowerShell</li>
+    <li>教师已预置 Security Compliance Toolkit 到 <code>C:\Tools\SCT\</code>，内含 Windows Server 2022 Security Baseline</li>
+  </ol>
+  <h4>第二步：运行导入脚本</h4>
+<pre>C:\Tools\SCT\Scripts\Baseline-ADImport.ps1</pre>
+  <div class="tip">如果提示脚本被执行策略阻止，用 <code>Set-ExecutionPolicy -Scope Process RemoteSigned</code> 仅对当前窗口放行，不要改全局策略。</div>
+  <h4>第三步：在组策略管理里查看导入结果</h4>
+<pre>服务器管理器 › 工具 › 组策略管理 › lab.local › 组策略对象</pre>
+  <p>应该能看到新导入的基线 GPO（Windows Server 2022 相关的几个策略对象）。</p>
+  <h4>第四步：浏览但不要链接</h4>
+  <ol>
+    <li>右键基线 GPO › 编辑，重点看"计算机配置 → 安全设置 → 本地策略 → 安全选项"</li>
+    <li>这里能找到今天任务 2 要手动改的几项（LSA 相关设置）</li>
+    <li><b>只是导入，不要链接到任何 OU</b>——链接后会立即生效，影响全域，本课按手动方式逐项加固更利于理解每一项的含义</li>
+  </ol>
+</template>
+<template id="pop-l24-t1a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>Security Compliance Toolkit（SCT）</td><td>微软官方发布的"经过验证的推荐配置清单"，按系统版本分别提供，以 GPO 形式打包，是业界公认的加固起点，不用自己从零摸索该关哪些设置。</td></tr>
+    <tr><td>Baseline-ADImport.ps1 只导入不链接</td><td>导入会把基线包含的 GPO 对象创建到域里，但不自动链接到任何 OU，所以不会立即改变任何机器的配置——这样可以安全地先浏览内容，再决定手动还是整批应用。</td></tr>
+    <tr><td>浏览"安全设置 → 本地策略 → 安全选项"</td><td>这正是任务 2 要手动改的 LSA 三项（RestrictAnonymousSAM、RestrictAnonymous、LmCompatibilityLevel）在基线 GPO 里对应的位置，先看基线怎么建议，再手动在本机对照落实。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>运行脚本报"无法加载，因为在此系统上禁止运行脚本"：用 <code>Set-ExecutionPolicy -Scope Process RemoteSigned</code> 放行当前窗口</li>
+    <li>组策略管理里看不到新 GPO：确认脚本是以域管理员身份、在 DC1 上运行的（本地账号权限不够）</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务1 对照检查 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 27′ · DC1 / SVR2</span></span><h2>对照基线检查当前配置</h2><button class="more" data-pop="pop-l24-t1b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l24-t1b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>① SMBv1 与远程注册表</h3>
+<pre><code class="language-powershell" data-trim>
+Get-SmbServerConfiguration |
+  Select-Object EnableSMB1Protocol
+Get-Service RemoteRegistry |
+  Select-Object Status, StartType
+</code></pre>
+      </div>
+      <div class="card blue">
+        <h3>② TLS 1.0 / 1.1</h3>
+<pre><code class="language-powershell" data-trim>
+$p = "HKLM:\SYSTEM\CurrentControlSet" +
+  "\Control\SecurityProviders\SCHANNEL\Protocols"
+Get-ChildItem $p
+</code></pre>
+      </div>
+    </div>
+    <ul class="points">
+      <li>④ Windows 自动更新：<b>设置 › 更新和安全</b>，看是否已配置更新策略</li>
+      <li>把四项的<b>"加固前"</b>状态填入对比表</li>
+    </ul>
+  </div>
+</div>
+<aside class="notes">SMBv1 显示 True 就是不合规。SCHANNEL\Protocols 下如果没有 "TLS 1.0" 子项，表示使用系统默认值，并不等于已禁用，这一点学生常误判。在 DC1 做完检查后，切到 SVR2 上做同样的检查。然后再切到 Kali，用 nmap --script smb-protocols -p 445 10.10.10.10 记录"加固前"的协议列表，只扫实验网地址。</aside>
+<template id="pop-l24-t1b-steps">
+  <h3>📋 详细步骤：对照基线检查当前配置</h3>
+  <h4>第一步：检查 SMBv1 与远程注册表</h4>
+<pre>Get-SmbServerConfiguration |
+  Select-Object EnableSMB1Protocol
+Get-Service RemoteRegistry |
+  Select-Object Status, StartType</pre>
+  <p>记录当前值：SMBv1 是否为 True（表示仍开着）；RemoteRegistry 的 Status/StartType。</p>
+  <h4>第二步：检查 TLS 1.0/1.1 配置</h4>
+<pre>$p = "HKLM:\SYSTEM\CurrentControlSet" +
+  "\Control\SecurityProviders\SCHANNEL\Protocols"
+Get-ChildItem $p</pre>
+  <div class="tip">如果输出里没有"TLS 1.0"这个子项，表示用的是系统默认值，<b>不等于已禁用</b>——这是最容易误判的一点，没配置≠禁用。</div>
+  <h4>第三步：检查自动更新策略</h4>
+  <ol>
+    <li>打开"设置 › 更新和安全"</li>
+    <li>看是否已配置更新策略（本课不强制改，先记录现状）</li>
+  </ol>
+  <h4>第四步：切到 SVR2 上重复第一、二步</h4>
+  <p>两台机器的检查结果都记下来，作为"加固前"基线。</p>
+  <h4>第五步：填写对比表</h4>
+  <p>把四项的"加固前"状态填入对比表，等任务 2 加固完成后再填"加固后"状态做对照。</p>
+  <div class="tip">这些检查做完后，可以先切到 Kali 上用 <code>nmap --script smb-protocols -p 445 10.10.10.10</code> 记录"加固前"看到的 SMB 协议列表，只扫实验网 10.10.10.0/24 地址。</div>
+</template>
+<template id="pop-l24-t1b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Get-SmbServerConfiguration</code></td><td>查看 SMB 服务端的协议配置，<code>EnableSMB1Protocol=True</code> 说明 SMBv1（永恒之蓝漏洞利用的协议）仍开着，这是本课要修复的第一个高危项。</td></tr>
+    <tr><td><code>Get-Service RemoteRegistry</code></td><td>远程注册表服务允许远程读写本机注册表，默认开启是为了兼容老的远程管理工具，但攻击者拿到凭据后能用它远程探测配置，没有正当理由就该关掉。</td></tr>
+    <tr><td>SCHANNEL\Protocols 下没有子项</td><td>这是 Windows 的"约定"：没有显式写入对应协议（如 TLS 1.0）的键，表示沿用系统默认启用状态，不是禁用。要真正禁用必须显式创建子键并写入 <code>Enabled=0</code>。</td></tr>
+    <tr><td>先记录"加固前"再加固</td><td>没有基线对比，就说不清"加固做了什么改变"；这张对比表也是任务 3 报告脚本输出项的来源（SMBv1、LmCompatibilityLevel 等都要能看出前后变化）。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>SMBv1 一项显示空白/报错：确认当前系统有没有装 SMB1Protocol 功能（<code>Get-WindowsOptionalFeature -Online -FeatureName SMB1Protocol</code>）</li>
+    <li>SVR2 上检查结果和 DC1 不一致：这是正常的，两台机器可能默认配置不同，分别记录即可</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 SMBv1 + 服务 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 26′ · DC1 / SVR2</span></span><h2>禁用 SMBv1 与多余服务</h2><button class="more" data-pop="pop-l24-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l24-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">2.1 禁用 SMBv1（服务端开关 + 卸载组件）</div>
+<pre><code class="language-powershell" data-trim>
+Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force
+Disable-WindowsOptionalFeature -Online `
+  -FeatureName SMB1Protocol -NoRestart
+</code></pre>
+    <div class="code-cap">2.2 服务加固</div>
+<pre><code class="language-powershell" data-trim>
+Set-Service -Name "RemoteRegistry" -StartupType Disabled `
+  -Status Stopped
+Set-Service -Name "Spooler" -StartupType Disabled `
+  -Status Stopped        # 如不需要打印
+Set-Service -Name "lmhosts" -StartupType Disabled
+</code></pre>
+  </div>
+</div>
+<aside class="notes">SMBv1 要两步都做：第一行关掉服务端协议，第二行把组件卸掉，-NoRestart 表示稍后再重启，完全生效需要重启一次。Spooler 是打印后台服务，"打印噩梦"漏洞就出在它身上，DC 上一般不需要打印；如果有打印实验就跳过这一行。你在 DC1 做完后，再切到 SVR2 上做同样的加固。</aside>
+<template id="pop-l24-t2a-steps">
+  <h3>📋 详细步骤：禁用 SMBv1 与多余服务</h3>
+  <h4>第一步：关闭 SMBv1 服务端协议</h4>
+<pre>Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force</pre>
+  <p>这只是关掉协议开关，组件本身还装着。</p>
+  <h4>第二步：卸载 SMBv1 组件</h4>
+<pre>Disable-WindowsOptionalFeature -Online `
+  -FeatureName SMB1Protocol -NoRestart</pre>
+  <p><code>-NoRestart</code> 表示先不重启，等所有任务做完再统一重启一次让卸载完全生效。</p>
+  <h4>第三步：禁用远程注册表服务</h4>
+<pre>Set-Service -Name "RemoteRegistry" -StartupType Disabled `
+  -Status Stopped</pre>
+  <h4>第四步：禁用打印后台服务（如不需要打印）</h4>
+<pre>Set-Service -Name "Spooler" -StartupType Disabled `
+  -Status Stopped</pre>
+  <div class="tip">Spooler 是"打印噩梦"（PrintNightmare）漏洞所在的服务，DC 上一般不需要打印。如果有打印实验，这一行可以跳过。</div>
+  <h4>第五步：禁用 lmhosts 服务</h4>
+<pre>Set-Service -Name "lmhosts" -StartupType Disabled</pre>
+  <h4>第六步：切到 SVR2 上同步执行以上全部命令</h4>
+  <div class="tip">所有步骤做完先不要重启，等任务 3 的报告脚本也写完、全部确认无误后，统一重启让 SMBv1 卸载真正生效。</div>
+</template>
+<template id="pop-l24-t2a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>SMBv1 要两步禁用</td><td>第一行只是关掉服务端协议开关（已经能防住大部分利用），第二行把 SMB1Protocol 这个 Windows 可选功能组件整个卸掉，更彻底。两步都做才算"真正关闭"，check24.ps1 只检查第一步的开关状态（EnableSMB1Protocol）。</td></tr>
+    <tr><td><code>-NoRestart</code></td><td>卸载 Windows 可选功能通常需要重启才完全生效，但课堂上每做完一步就重启太低效，所以先标记稍后统一重启。</td></tr>
+    <tr><td>禁用 RemoteRegistry</td><td>允许远程读写注册表的服务，默认开启是为了兼容老的远程管理工具，攻击者拿到凭据后可以用它远程探测系统配置，没有正当用途就该关闭。check24.ps1 要求 StartType=Disabled 且 Status=Stopped，两者都满足才算 PASS。</td></tr>
+    <tr><td>禁用 Spooler（打印服务）</td><td>打印后台处理程序服务多次爆出严重提权漏洞（如 PrintNightmare），DC 上通常不需要本机打印功能，关掉能直接消除这整类攻击面。</td></tr>
+    <tr><td>禁用 lmhosts</td><td>NetBIOS 名称解析的遗留服务，现代网络基本靠 DNS，留着它只是增加一个不必要的攻击面。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li><code>Set-Service</code> 报"无法停止服务"：用 <code>Get-Service 名称 -DependentServices</code> 查看有没有依赖它的服务还在运行，先停依赖服务</li>
+    <li>SMBv1 卸载后 check24.ps1 仍显示 True：确认是否已经重启过一次（Disable-WindowsOptionalFeature 的 -NoRestart 需要后续重启才完全生效）</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 注册表 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 26′ · DC1</span></span><h2>注册表加固：LSA 三项</h2><button class="more" data-pop="pop-l24-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l24-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$lsa = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
+# 禁用匿名 SID 枚举
+Set-ItemProperty $lsa -Name RestrictAnonymousSAM -Value 1
+# 禁用空会话
+Set-ItemProperty $lsa -Name RestrictAnonymous -Value 1
+# LAN Manager 身份验证级别（仅 NTLMv2）
+Set-ItemProperty $lsa -Name LmCompatibilityLevel -Value 5
+</code></pre>
+    <table class="tbl">
+      <tr><th>值名称</th><th>设为</th><th>含义</th></tr>
+      <tr><td><code>RestrictAnonymousSAM</code></td><td>1</td><td>匿名用户不能枚举 SAM 账户</td></tr>
+      <tr><td><code>RestrictAnonymous</code></td><td>1</td><td>匿名用户不能枚举账户和共享</td></tr>
+      <tr><td><code>LmCompatibilityLevel</code></td><td>5</td><td>只发 NTLMv2，拒绝 LM 和 NTLMv1</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">用变量 $lsa 代替原文中重复的长路径，效果完全相同。改注册表前提醒：只改这三个值，不要动 Lsa 下的其他项，改错可能导致无法登录。LmCompatibilityLevel=5 是 阶段考核 4 的 B3 考点，也和第 28 课的哈希破解直接相关。</aside>
+<template id="pop-l24-t2b-steps">
+  <h3>📋 详细步骤：注册表加固 LSA 三项</h3>
+  <h4>第一步：定位注册表路径</h4>
+<pre>$lsa = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"</pre>
+  <div class="tip">只改下面这三个值，不要动 Lsa 下的其他项——这个键里有很多安全敏感设置，改错可能导致无法登录。</div>
+  <h4>第二步：禁用匿名 SID/SAM 枚举</h4>
+<pre>Set-ItemProperty $lsa -Name RestrictAnonymousSAM -Value 1</pre>
+  <h4>第三步：禁用空会话（匿名枚举账户和共享）</h4>
+<pre>Set-ItemProperty $lsa -Name RestrictAnonymous -Value 1</pre>
+  <h4>第四步：设置 LAN Manager 身份验证级别</h4>
+<pre>Set-ItemProperty $lsa -Name LmCompatibilityLevel -Value 5</pre>
+  <p>5 = 只发送 NTLMv2 响应，拒绝 LM 和 NTLMv1（最严格的级别）。</p>
+  <h4>第五步：验证</h4>
+<pre>Get-ItemProperty $lsa | Select-Object RestrictAnonymousSAM, RestrictAnonymous, LmCompatibilityLevel</pre>
+  <p>应分别显示 1、1、5。</p>
+</template>
+<template id="pop-l24-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>RestrictAnonymousSAM = 1</code></td><td>默认情况下，未经身份验证的用户可以通过空连接枚举出本机 SAM 数据库里的账户名，攻击者据此知道有哪些用户名可以尝试密码攻击；设为 1 后匿名用户不能再枚举 SAM 账户。</td></tr>
+    <tr><td><code>RestrictAnonymous = 1</code></td><td>比 RestrictAnonymousSAM 更进一步，禁止匿名用户枚举账户和共享列表（空会话枚举），对应"概念 2"表格里"匿名枚举用户名和共享"这条风险。</td></tr>
+    <tr><td><code>LmCompatibilityLevel = 5</code></td><td>控制网络身份验证时发送哪种哈希。LM 和 NTLMv1 哈希算法弱、容易被彩虹表或暴力破解；设为 5 后系统只接受/发送 NTLMv2，直接对应第 28 课要讲的密码哈希攻击与防御。</td></tr>
+    <tr><td>用变量 <code>$lsa</code> 代替重复路径</td><td>只是教学/脚本上的简化写法，三条命令实际写入注册表的路径和值完全相同，check24.ps1 直接用 <code>Get-ItemProperty $lsa</code> 读取同一路径核对。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>设置后业务系统报"无法通过网络访问"：说明有系统还依赖 LM/NTLMv1，先确认是否可以升级，再考虑是否要临时放宽（不建议为单台设备回退整域基线）</li>
+    <li>check24.ps1 显示值未设置：确认命令里的参数名拼写（RestrictAnonymousSAM 和 RestrictAnonymous 是两个不同的值，容易搞混）</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务2 审计 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 26′ · DC1</span></span><h2>审计策略（增强）</h2><button class="more" data-pop="pop-l24-t2c-steps">📋 详细步骤</button><button class="more" data-pop="pop-l24-t2c-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$ok = "/success:enable"
+$on = $ok, "/failure:enable"
+auditpol /set /subcategory:"{0CCE923F-69AE-11D9-BED3-505054503030}" $on  # 凭据验证
+auditpol /set /subcategory:"{0CCE922B-69AE-11D9-BED3-505054503030}" $ok  # 进程创建
+auditpol /set /subcategory:"{0CCE9215-69AE-11D9-BED3-505054503030}" $on  # 登录
+auditpol /set /subcategory:"{0CCE921B-69AE-11D9-BED3-505054503030}" $ok  # 特殊登录
+</code></pre>
+    <table class="tbl">
+      <tr><th>子类别</th><th>记录</th><th>典型事件 ID</th></tr>
+      <tr><td>凭据验证 Credential Validation</td><td>成功 + 失败</td><td>4776 凭据验证</td></tr>
+      <tr><td>进程创建 Process Creation</td><td>成功</td><td>4688 新进程创建</td></tr>
+      <tr><td>登录 Logon</td><td>成功 + 失败</td><td>4624 登录成功 / 4625 登录失败</td></tr>
+      <tr><td>特殊登录 Special Logon</td><td>成功</td><td>4672 分配特权登录</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">PowerShell 会把数组变量 $on 展开成两个独立参数，等价于原文的 /success:enable /failure:enable；$ok 就是 /success:enable。验证用 auditpol /get /category:* 查看。中文系统只认中文子类别名，写英文名（Logon 等）会报 0x57，所以这里统一用 GUID（任何语言通用），GUID 必须加引号。这些事件 ID 要记住，第 29 课日志分析时要靠它们找出暴力破解痕迹。</aside>
+<template id="pop-l24-t2c-steps">
+  <h3>📋 详细步骤：审计策略（增强）</h3>
+  <h4>第一步：准备好参数变量</h4>
+<pre>$ok = "/success:enable"
+$on = $ok, "/failure:enable"</pre>
+  <p>PowerShell 会把数组变量 <code>$on</code> 自动展开成两个独立参数，等价于直接写 <code>/success:enable /failure:enable</code>。</p>
+  <h4>第二步：逐个设置四个子类别</h4>
+<pre>auditpol /set /subcategory:"{0CCE923F-69AE-11D9-BED3-505054503030}" $on  # 凭据验证
+auditpol /set /subcategory:"{0CCE922B-69AE-11D9-BED3-505054503030}" $ok  # 进程创建
+auditpol /set /subcategory:"{0CCE9215-69AE-11D9-BED3-505054503030}" $on  # 登录
+auditpol /set /subcategory:"{0CCE921B-69AE-11D9-BED3-505054503030}" $ok  # 特殊登录</pre>
+  <div class="tip">GUID 必须加引号（<code>"{GUID}"</code>），裸写 <code>{GUID}</code> 会被 PowerShell 当成脚本块，报 0x57 参数错误。中文系统的 auditpol 只认中文子类别名，不认英文名（如 Logon），所以统一用 GUID——任何语言系统通用。</div>
+  <h4>第三步：逐个验证（不要一条命令里列多个 GUID）</h4>
+<pre>auditpol /get /subcategory:"{0CCE9215-69AE-11D9-BED3-505054503030}"</pre>
+  <div class="tip">多个 GUID 用逗号列在一条命令里会报 0x57 参数错误，必须逐个 GUID 单独查询。</div>
+  <p>中文系统输出里应看到"成功"（或"成功和失败"），而非"无审核"。</p>
+</template>
+<template id="pop-l24-t2c-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">子类别</th><th>意义</th></tr>
+    <tr><td>凭据验证（成功+失败）</td><td>记录账户密码验证尝试，对应事件 ID 4776；失败记录能发现暴力破解尝试，这是第 28 课密码攻击课的日志来源之一。</td></tr>
+    <tr><td>进程创建（成功）</td><td>记录每个新启动的进程及其命令行，对应事件 ID 4688；攻击者在系统上执行工具/脚本时都会留下记录。</td></tr>
+    <tr><td>登录（成功+失败）</td><td>对应事件 ID 4624（登录成功）/ 4625（登录失败），是检测暴力破解和异常登录的核心日志源，第 29 课日志分析会重点用它。</td></tr>
+    <tr><td>特殊登录（成功）</td><td>对应事件 ID 4672，记录被分配了管理员等特殊权限的登录会话，能发现权限提升或异常的管理员登录。</td></tr>
+    <tr><td>用 GUID 而不是名称</td><td>auditpol 在中文系统下只认中文子类别名，用英文名（如 Logon）会报 0x57 参数错误；GUID 不受系统语言影响，是唯一通用的写法，但必须加引号。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>设置报 0x57：检查 GUID 有没有加引号，以及是不是把多个 GUID 列在了一条命令里</li>
+    <li>check24.ps1 显示某子类别未启用：用 <code>auditpol /get /subcategory:"{GUID}"</code> 单独核对该子类别的当前状态，中文系统看"成功"/"失败"字样，不是英文 Success/Failure</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 任务3 采集 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 18′ · DC1</span></span><h2>安全检查报告 ①：采集数据</h2><button class="more" data-pop="pop-l24-t3a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l24-t3a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p class="muted">在 ISE 或记事本中新建 <code>C:\Scripts\SecurityReport.ps1</code>，先写采集部分：</p>
+<pre><code class="language-powershell" data-trim>
+$key = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
+$smb = (Get-SmbServerConfiguration).EnableSMB1Protocol
+$fw  = Get-NetFirewallProfile -Profile Domain |
+  Select-Object -ExpandProperty DefaultInboundAction
+$mp  = (Get-MpComputerStatus).RealTimeProtectionEnabled
+$ca  = (Get-Service CertSvc).Status
+$aud = auditpol /get /subcategory:"{0CCE9215-69AE-11D9-BED3-505054503030}" 2>&1
+$lm  = (Get-ItemProperty $key).LmCompatibilityLevel
+</code></pre>
+    <div class="callout warn"><b>为什么不照抄原文的 <code>@" … "@ | Out-File</code>：</b>双引号里的 <code>$(…)</code> 会在生成文件时就被求值，文件里写进去的是"当时的结果"，以后再运行也不会变。</div>
+  </div>
+</div>
+<aside class="notes">检查项与原文完全一致：SMBv1、域配置文件默认入站动作、Defender 实时保护、CA 服务、登录审计、LmCompatibilityLevel，只是改成先存变量、再输出，便于阅读。如果坚持用 here-string 生成，要改成单引号 @' '@，内容才会原样写入。写完脚本后对照检查每一行的拼写。</aside>
+<template id="pop-l24-t3a-steps">
+  <h3>📋 详细步骤：安全检查报告 ① 采集数据</h3>
+  <h4>第一步：新建脚本文件</h4>
+  <ol>
+    <li>打开 PowerShell ISE 或记事本</li>
+    <li>新建文件，保存为 <code>C:\Scripts\SecurityReport.ps1</code>（先建好目录）</li>
+  </ol>
+  <h4>第二步：写采集部分的六行代码</h4>
+<pre>$key = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
+$smb = (Get-SmbServerConfiguration).EnableSMB1Protocol
+$fw  = Get-NetFirewallProfile -Profile Domain |
+  Select-Object -ExpandProperty DefaultInboundAction
+$mp  = (Get-MpComputerStatus).RealTimeProtectionEnabled
+$ca  = (Get-Service CertSvc).Status
+$aud = auditpol /get /subcategory:"{0CCE9215-69AE-11D9-BED3-505054503030}" 2>&1
+$lm  = (Get-ItemProperty $key).LmCompatibilityLevel</pre>
+  <p>这六行分别采集：SMBv1 状态、域防火墙默认入站动作、Defender 实时保护、CA 服务状态、登录审计子类别状态、LmCompatibilityLevel 值。</p>
+  <h4>第三步：先保存，不要急着运行</h4>
+  <p>这部分只是采集，还没有输出，下一个任务（任务 3b）接着写输出部分，两部分写进同一个文件。</p>
+  <div class="tip">不要用原来可能见过的 <code>@" … "@ | Out-File</code> 写法：双引号 here-string 里的 <code>$(…)</code> 会在生成文件的那一刻就被求值，写进文件的是"当时的结果"，以后重新运行这个文件也不会再变化，报告就失去了"能反复运行"的意义。本课统一改成先存变量再在任务 3b 里用 Write-Host 输出。</div>
+</template>
+<template id="pop-l24-t3a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">采集项</th><th>意义</th></tr>
+    <tr><td><code>$smb</code> SMBv1 状态</td><td>对应任务 2a 禁用的协议，check24.ps1 同样读取这个值判定 PASS/FAIL。</td></tr>
+    <tr><td><code>$fw</code> 域防火墙默认入站</td><td>来自更早课程（防火墙配置课）的加固项，报告里一起检查能看出整个加固链条是否完整。</td></tr>
+    <tr><td><code>$mp</code> Defender 实时保护</td><td>第 22 课配置的 Defender 实时保护，报告检查它有没有被意外关闭。</td></tr>
+    <tr><td><code>$ca</code> CA 服务状态</td><td>第 23 课装的证书服务，必须在 DC1 上运行才有意义——report 脚本本身也要求在 DC1 上跑，这也是任务 3 排障表里提到的"在 SVR2 上运行找不到 CertSvc"的原因。</td></tr>
+    <tr><td><code>$aud</code> 登录审计</td><td>对应任务 2c 设置的 Logon 子类别，直接把 auditpol 的原始输出存起来，供后面肉眼核对"成功和失败"字样。</td></tr>
+    <tr><td><code>$lm</code> LmCompatibilityLevel</td><td>对应任务 2b 设置的注册表值，期望值是 5。</td></tr>
+    <tr><td>先存变量再输出，不用 <code>@"..."@|Out-File</code></td><td>这是一份"能反复运行"的检查脚本，而不是"生成一次性快照文件"；用变量+Write-Host（下一任务）每次运行都会重新采集当前真实状态，这正是任务目标里强调的"写出一份能反复运行的安全检查报告脚本"。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>某一行报错变量为空：先单独在命令行跑一下这行等号右边的命令，确认服务/功能是否存在（比如 SVR2 上没有 CertSvc）</li>
+    <li>LmCompatibilityLevel 读出来是空：说明任务 2b 的注册表加固没做或路径不对，回头检查 <code>$key</code> 路径拼写</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 任务3 输出 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 18′ · DC1</span></span><h2>安全检查报告 ②：输出并运行</h2><button class="more" data-pop="pop-l24-t3b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l24-t3b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$t = "=== Windows Server Security Check ==="
+Write-Host $t -ForegroundColor Cyan
+Write-Host "SMBv1: $smb"
+Write-Host "Firewall Default Inbound: $fw"
+Write-Host "Defender Real-time: $mp"
+Write-Host "CA Service: $ca"
+Write-Host "Audit Logon: $aud"
+Write-Host "LmCompatibilityLevel: $lm"
+</code></pre>
+    <div class="callout">保存后运行：<code>C:\Scripts\SecurityReport.ps1</code></div>
+  </div>
+</div>
+<aside class="notes">把这 8 行接在上一页的采集代码后面，保存为同一个文件。运行时如果提示脚本被执行策略阻止（在此系统上禁止执行脚本），用 Set-ExecutionPolicy -Scope Process RemoteSigned 对当前窗口放行即可。下一页给出加固后应该看到的结果。</aside>
+<template id="pop-l24-t3b-steps">
+  <h3>📋 详细步骤：安全检查报告 ② 输出并运行</h3>
+  <h4>第一步：接着上一个任务的采集代码，继续写输出部分</h4>
+<pre>$t = "=== Windows Server Security Check ==="
+Write-Host $t -ForegroundColor Cyan
+Write-Host "SMBv1: $smb"
+Write-Host "Firewall Default Inbound: $fw"
+Write-Host "Defender Real-time: $mp"
+Write-Host "CA Service: $ca"
+Write-Host "Audit Logon: $aud"
+Write-Host "LmCompatibilityLevel: $lm"</pre>
+  <p>这 8 行要接在上一个任务的 6 行采集代码<b>后面</b>，保存为<b>同一个文件</b> <code>C:\Scripts\SecurityReport.ps1</code>。</p>
+  <h4>第二步：保存文件</h4>
+  <h4>第三步：运行</h4>
+<pre>C:\Scripts\SecurityReport.ps1</pre>
+  <div class="tip">如果提示脚本被执行策略阻止（提示"在此系统上禁止执行脚本"），用 <code>Set-ExecutionPolicy -Scope Process RemoteSigned</code> 对当前窗口放行即可，不用改全局策略。</div>
+  <h4>第四步：核对输出</h4>
+  <p>运行后应看到标题 "=== Windows Server Security Check ===" 和六行报告项，和前面"预期结果"页逐项对照。</p>
+</template>
+<template id="pop-l24-t3b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>Write-Host $t -ForegroundColor Cyan</code></td><td>只是让标题行有颜色，方便肉眼区分报告的开始，不影响脚本逻辑。</td></tr>
+    <tr><td>六行 <code>Write-Host "标签: $变量"</code></td><td>把任务 3a 采集到的六个变量逐一输出成人类可读的一行文字，字符串插值 <code>$smb</code> 等会在<b>运行时</b>才被求值，这正是"能反复运行"的关键——每次运行都重新读取当前真实状态，不是写死的旧值。</td></tr>
+    <tr><td>check24.ps1 怎么检查这个脚本</td><td>脚本检查两件事：文件是否存在（<code>Test-Path</code>）、内容是否语法正确可运行（<code>[ScriptBlock]::Create($content)</code> 不报错）。它不会检查输出内容对不对，只保证这是一个能跑起来的报告脚本。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>运行报执行策略错误：<code>Set-ExecutionPolicy -Scope Process RemoteSigned</code> 对当前窗口放行</li>
+    <li>某一行输出是空的：回到任务 3a 检查对应变量的采集命令是否正确执行（比如 CertSvc 必须在 DC1 上才存在）</li>
+    <li>check24.ps1 显示脚本"存在但语法有误"：检查有没有漏抄某一行或括号/引号不配对</li>
+  </ul>
+</template>
+</section>
+
+<!-- 14 预期结果 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">预期结果</span><h2>加固后，报告应该显示</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">报告项</th><th style="width:30%">期望值</th><th>不是这个值说明</th></tr>
+      <tr><td>SMBv1</td><td><span class="green">False</span></td><td>2.1 没执行或执行失败</td></tr>
+      <tr><td>Firewall Default Inbound</td><td><span class="green">Block</span> 或 NotConfigured</td><td>值为 Allow：入站默认被放行</td></tr>
+      <tr><td>Defender Real-time</td><td><span class="green">True</span></td><td>第 22 课实时保护被关闭</td></tr>
+      <tr><td>CA Service</td><td><span class="green">Running</span></td><td>第 23 课 CA 服务未启动</td></tr>
+      <tr><td>Audit Logon</td><td><span class="green">Success and Failure</span></td><td>2.4 的 Logon 子类别未生效</td></tr>
+      <tr><td>LmCompatibilityLevel</td><td><span class="green">5</span></td><td>2.3 注册表值写错</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">Audit Logon 一行会输出 auditpol 的整段文字，只要其中 Logon 后面是"Success and Failure"（中文系统显示"成功和失败"）就对。防火墙一项显示 NotConfigured 表示未单独配置，系统默认就是阻止入站，也算合格。做完加固后，切到 Kali 再跑一次 nmap --script smb-protocols -p 445 10.10.10.10，列表里不应再出现 NT LM 0.12（SMBv1），与加固前的记录对比。</aside>
+</section>
+
+<!-- 15 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>加固出问题？按这个表查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:30%">原因</th><th>处理</th></tr>
+      <tr><td>SMBv1 仍显示 True</td><td>命令未以管理员身份运行</td><td>用"以管理员身份运行"重开 PowerShell</td></tr>
+      <tr><td>Disable-WindowsOptionalFeature 提示需重启</td><td>组件卸载要重启才完成</td><td>做完全部任务、拍快照前统一重启</td></tr>
+      <tr><td>Set-Service 报"无法停止"</td><td>有依赖服务仍在运行</td><td>用 <code>Get-Service 名称 -DependentServices</code> 查看</td></tr>
+      <tr><td>Get-Service CertSvc 找不到</td><td>在 SVR2 上运行了报告</td><td>CA 在 DC1 上，报告在 DC1 运行</td></tr>
+      <tr><td>旧客户端连不上共享</td><td>它只会 SMBv1 或 NTLMv1</td><td>升级客户端，<b>不要</b>为它回退基线</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">最后一行是生产环境最常见的冲突：加固后某台老打印机或老系统连不上了。正确的做法是评估风险、升级或隔离那台设备，而不是把整个域的基线降回去。先自查，再把遇到的问题汇总记录。</aside>
+</section>
+
+<!-- 16 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>对照清单自查</h2><button class="more" data-pop="pop-l24-16-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>SMBv1 已禁用</li>
+        <li>RemoteRegistry 已禁用并停止</li>
+        <li>RestrictAnonymous / SAM = 1，LmCompatibilityLevel = 5</li>
+        <li>四个审计子类别已启用</li>
+        <li><code>C:\Scripts\SecurityReport.ps1</code> 存在且能运行</li>
+      </ul>
+      <div class="card">
+        <h3>📸 关键快照</h3>
+        <p>四台 VM 都拍快照<br><code>S7-AppSec</code></p>
+        <p class="small muted" style="margin-top:8px">项目 7 完成的里程碑，阶段考核 4 之后的内容依赖它</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">先统一重启 DC1 和 SVR2 让 SMBv1 卸载生效，再逐项核对清单，全部达成后拍快照。清单达成后运行 check24.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。S7-AppSec 是关键快照，项目 8 的攻防实验都会基于加固后的环境，务必命名准确。提交内容：整理好的加固前后对比表 + 用 Kali 两次扫描（加固前/加固后）的结果。</aside>
+
+<template id="pop-l24-16-check">
+<h3>🧪 运行检查脚本 check24.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check24.ps1</pre>
+<h4>脚本检查什么（在 DC1 上跑）</h4>
+<ul>
+  <li><b>协议/服务：</b>SMBv1 已禁用、RemoteRegistry 已禁用并停止</li>
+  <li><b>LSA 注册表：</b>RestrictAnonymousSAM / RestrictAnonymous = 1、LmCompatibilityLevel = 5</li>
+  <li><b>审计：</b>凭据验证 / 进程创建 / 登录 / 特殊登录 四个子类别已启用</li>
+  <li><b>报告脚本：</b>C:\Scripts\SecurityReport.ps1 存在且语法可运行</li>
+</ul>
+<div class="tip">审计查询用单个 GUID 逐项查（多个 GUID 用逗号列在一条命令里会报 0x57 参数错误）。全部 PASS 后统一重启再拍关键快照 <code>S7-AppSec</code>（项目 7 里程碑）。</div>
+</template>
+</section>
+
+<!-- 17 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">默认配置兼容优先，基线把"该关的门"列成清单</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">SCT 基线 → 对照检查 → SMBv1 · 服务 · LSA · 审计 → 报告脚本</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">每项加固都对应一种攻击；加固后用脚本反复复查</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 阶段考核 4：</b>创新模块A考核（80 分钟），防火墙 + 系统加固 + 证书管理，从快照 <code>CR4-Start</code> 开始。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check24.ps1" download>check24.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 DC1 以管理员身份运行 <code>check24.ps1</code> 生成检查报告，连同加固前后对比表一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. LmCompatibilityLevel=5 防的是什么攻击？2. 禁用 SMBv1 为什么要两条命令？3. 用 @" "@ 生成脚本有什么坑？提醒下节课考核覆盖今天的全部加固项，回去复习每一步。</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>

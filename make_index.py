@@ -17,7 +17,7 @@ GROUPS = [
     ("进阶模块", "项目 5 · Windows 服务器远程管理", [14, 15, 16]),
     ("进阶模块", "项目 6 · Windows 服务器域管理", [17, 18, 19]),
     ("阶段考核", "阶段考核 3 · 进阶模块 B", [20]),
-    ("安全模块", "项目 7 · Windows 服务器安全管理", [21, 22]),
+    ("安全模块", "项目 7 · Windows 服务器安全管理", [21, 22, 23, 24]),
 ]
 MOD_COLOR = {"基础模块": "var(--accent)", "进阶模块": "var(--green)", "阶段考核": "var(--red)", "安全模块": "#e88a3a"}
 
@@ -145,7 +145,7 @@ def main():
   <header>
     <div class="bar"></div>
     <h1>Windows 服务器配置与安全管理</h1>
-    <p>Windows Server 2022 · 红蓝对抗防御　|　已上完 第 1–22 次课（阶段考核不提供课件，持续更新中）</p>
+    <p>Windows Server 2022 · 红蓝对抗防御　|　已上完 第 1–24 次课（阶段考核不提供课件，持续更新中）</p>
     <div class="stats">
       <span><b>{total_pages}</b> 页幻灯片</span><span><b>{n_pop}</b> 课有详细步骤弹窗</span><span><b>{n_chk}</b> 课有检查脚本</span>
     </div>

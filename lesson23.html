@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第23课 · 证书服务 AD CS</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 7 · 应用安全　|　第 23 次课 · 学时 45–46</p>
+  <h1>证书服务 AD CS</h1>
+  <p class="muted">从"浏览器警告的自签名证书"到"全域自动信任的企业 CA"</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM2 + VM3 + VM4</span></div>
+</div>
+<aside class="notes">开场回顾第 11 课：当时用 New-SelfSignedCertificate 给 CompanySite 配了 HTTPS，浏览器一直报警告。提问：为什么访问银行网站不会报警告？今天就在 lab.local 里建一个"自己的证书颁发机构"。先用 5 分钟理清本课顺序：先在 DC1 装 CA 和改 GPO，再去 SVR2 负责 IIS 申请与绑定，然后在 CLIENT1 验证信任，最后切到 Kali 旁观证书链。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:9"><span class="t">9′</span><b>晨会</b>任务顺序<br>PKI 概念</div>
+      <div class="seg" style="flex:22"><span class="t">22′</span><b>任务 1</b>安装 AD CS<br>企业根 CA</div>
+      <div class="seg" style="flex:27"><span class="t">27′</span><b>任务 2</b>证书模板<br>为 IIS 申请证书</div>
+      <div class="seg" style="flex:18"><span class="t">18′</span><b>任务 3</b>GPO 自动注册<br>分发根证书</div>
+      <div class="seg" style="flex:4"><span class="t">4′</span><b>收尾</b>快照</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说清楚"根 CA → 服务器证书 → 客户端信任"这条信任链</li>
+        <li>用 PowerShell 部署企业根 CA <code>Lab-Root-CA</code>，并复制发布证书模板</li>
+        <li>为 <code>www.lab.local</code> 申请域证书，用 GPO 让全域自动信任和自动注册</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">任务 1 中 CA 配置只需 1–2 分钟，但装角色要几分钟，可利用等待时间讲概念 2、3。任务 2 是重点，涉及三个控制台：certtmpl.msc、certsrv.msc、IIS 管理器，提醒学生别在窗口之间迷路。最后 4 分钟统一拍快照。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1 · AD CS 企业根 CA</div></div>
+      <div class="host"><div class="ic">🗄️</div><b>SVR2</b><div class="ip">10.10.10.20</div><div class="role">VM2 · Web 服务管理</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3 · 访问 HTTPS 验证信任</div></div>
+      <div class="host"><div class="ic">🐉</div><b>Kali</b><div class="ip">10.10.10.50</div><div class="role">VM4 · 最后查看证书链</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>课前：</b>CompanySite 用自签名证书，浏览器报"不安全"</div>
+      <div class="callout"><b>课后：</b>证书由 <code>Lab-Root-CA</code> 签发，域内电脑自动信任</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">CA 必须装在 DC1 上（企业 CA 需要 AD）。CompanySite 是第 9–11 课建的站点，按原文 CA 地址为 DC-01.lab.local\Lab-Root-CA；请先确认 CompanySite 跑在哪台机器上，再去那台的 IIS 管理器里操作。本课最后用 Kali 只做观察不做攻击，体会"攻击者眼中的 HTTPS"。</aside>
+</section>
+
+<!-- 04 概念1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>自签名证书 vs CA 签发证书</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>自签名（第 11 课的做法）</h3>
+        <ul class="points">
+          <li>服务器"自己给自己作保"</li>
+          <li>客户端没有理由相信它</li>
+          <li>浏览器报警告，用户习惯点"继续"</li>
+          <li>中间人伪造证书时，用户也分不出来</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>企业 CA 签发（今天）</h3>
+        <ul class="points">
+          <li>由受信任的 Lab-Root-CA 作保</li>
+          <li>客户端信任根 CA → 自动信任它签的证书</li>
+          <li>没有警告；一旦出现警告就值得警惕</li>
+          <li>证书可集中颁发、续订、吊销</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>一句话：</b>证书的价值不在加密本身，而在"谁为它担保"。</div>
+  </div>
+</div>
+<aside class="notes">自签名证书一样能加密，问题是无法证明身份。提问：如果用户已经习惯点"继续访问"，攻击者在中间伪造一张证书，用户会发现吗？这就是为什么企业要建 CA：让正常情况没有警告，异常情况才有警告。</aside>
+</section>
+
+<!-- 05 概念2 信任链 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>信任链：浏览器如何判断证书可信</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node hl"><b>根 CA</b>Lab-Root-CA<br>自签名 · 10 年</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>签发</b>服务器证书<br>www.lab.local · 1 年</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>IIS 绑定</b>HTTPS 443 端口<br>出示证书</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>客户端校验</b>根 CA 在"受信任的<br>根证书颁发机构"中？</div>
+    </div>
+    <table class="tbl">
+      <tr><th>浏览器检查项</th><th>不满足时</th></tr>
+      <tr><td>签发者能一路追溯到受信任的根</td><td>"证书颁发机构不受信任"</td></tr>
+      <tr><td>证书中的名称 = 地址栏的域名</td><td>"证书名称不匹配"</td></tr>
+      <tr><td>当前时间在有效期内</td><td>"证书已过期"</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">信任链的起点是根 CA 证书，所以任务 3 要用 GPO 把它推到每台域电脑的"受信任的根证书颁发机构"。三个检查项正好对应后面的排障表。企业通常用"离线根 CA + 在线从属 CA"两级结构，本实验为简化只建一级根 CA。</aside>
+</section>
+
+<!-- 06 概念3 企业 CA 与模板 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 3</span><h2>企业 CA 与证书模板</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">企业根 CA：Lab-Root-CA（DC1）</div>
+        <div class="nest"><div class="lbl">已发布的证书模板</div><span class="obj">📄 Lab Web Server</span><span class="obj">📄 Computer</span><span class="obj">📄 User</span></div>
+        <div class="nest"><div class="lbl">模板的"安全"选项卡</div><span class="obj">👥 Domain Computers：注册</span></div>
+      </div>
+      <table class="tbl">
+        <tr><th>类型</th><th>特点</th></tr>
+        <tr><td><b>企业 CA</b></td><td>集成 AD，用模板 + 权限控制颁发，支持自动注册</td></tr>
+        <tr><td><b>独立 CA</b></td><td>不依赖 AD，申请需手工审批</td></tr>
+        <tr><td><b>模板</b></td><td>规定证书用途、有效期、谁能申请</td></tr>
+      </table>
+    </div>
+    <div class="callout warn">模板要经过 <b>复制 → 设置权限 → 发布到 CA</b> 三步，漏掉任何一步都申请不到。</div>
+  </div>
+</div>
+<aside class="notes">把模板类比成"证件申请表格"：CA 只受理已发布的表格，表格上写明谁有资格申请。不要直接修改预定义的 Web Server 模板，而是复制一份，这样出错可以回退。模板权限配置过宽是现实中 AD CS 被攻击的常见原因，可以课后了解，但实验中不做利用。</aside>
+</section>
+
+<!-- 07 任务1 安装角色 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 22′ · DC1</span></span><h2>安装 AD CS 角色</h2><button class="more" data-pop="pop-l23-t1a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l23-t1a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p>和 AD DS 一样分两步：先装"程序文件"，<b class="orange">再配置成 CA</b>。</p>
+    <div class="code-cap">在 DC1 上，以 LAB\Administrator 运行 PowerShell</div>
+<pre><code class="language-powershell" data-trim>
+Install-WindowsFeature AD-Certificate `
+    -IncludeManagementTools -IncludeAllSubFeature
+
+# 确认结果：Install State 应为 Installed
+Get-WindowsFeature AD-Certificate
+</code></pre>
+    <div class="callout"><b>-IncludeAllSubFeature</b>：连同 Web 注册等子角色一起装；<b>-IncludeManagementTools</b>：装上 certsrv.msc 等控制台。</div>
+  </div>
+</div>
+<aside class="notes">必须用域管理员（企业管理员）登录，企业 CA 要往 AD 配置分区写信息，本地账号会失败。Get-WindowsFeature 这一行是补充的确认命令。等待安装时，可以先在浏览器打开 https://www.lab.local，记下现在看到的证书警告，作为"课前"对照。</aside>
+<template id="pop-l23-t1a-steps">
+  <h3>📋 详细步骤：安装 AD CS 角色</h3>
+  <h4>第一步：确认账号</h4>
+  <ol>
+    <li>在 DC1 上以 <code>LAB\Administrator</code>（域/企业管理员）登录，不能用本地账号</li>
+    <li>打开 PowerShell（企业 CA 要往 AD 配置分区写信息，本地账号权限不够会失败）</li>
+  </ol>
+  <h4>第二步：安装角色和管理工具</h4>
+<pre>Install-WindowsFeature AD-Certificate `
+    -IncludeManagementTools -IncludeAllSubFeature</pre>
+  <p>等待安装完成，这一步不需要重启。</p>
+  <h4>第三步：确认安装结果</h4>
+<pre>Get-WindowsFeature AD-Certificate</pre>
+  <p>输出中 <b>Install State</b> 这一列应为 <code>Installed</code>。</p>
+  <div class="tip">等待安装的同时，可以先打开 https://www.lab.local，记下现在的证书警告内容，作为"课前"对照。</div>
+</template>
+<template id="pop-l23-t1a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>AD-Certificate</code></td><td>AD CS（证书服务）在 Windows Server 功能里的内部名，和 AD-Domain-Services 的命名方式一致。</td></tr>
+    <tr><td><code>-IncludeAllSubFeature</code></td><td>连同 Web 注册、在线响应程序等子角色服务一起装，本课只用核心 CA 功能，但一起装不影响后续任务。</td></tr>
+    <tr><td><code>-IncludeManagementTools</code></td><td>装上 <code>certsrv.msc</code>（证书颁发机构控制台）、<code>certtmpl.msc</code>（证书模板控制台）等管理工具，任务 2/3 都要用到。</td></tr>
+    <tr><td>必须用域管理员账号</td><td>企业 CA（EnterpriseRootCA）要往 AD 的配置分区写入信息（发布 CA 对象），本地账号没有这个权限，装的时候不会报错，但后续 <code>Install-AdcsCertificationAuthority</code> 会失败。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li><code>Get-WindowsFeature AD-Certificate</code> 的 Install State 不是 Installed：重新运行安装命令，检查有没有报错信息</li>
+    <li>后续配置 CA 时报权限不足：回头检查当前登录账号是不是 LAB\Administrator（域账号）</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务1 配置 CA -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 22′ · DC1</span></span><h2>配置企业根 CA 并验证</h2><button class="more" data-pop="pop-l23-t1b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l23-t1b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$ksp = "RSA#Microsoft Software Key Storage Provider"
+$ca = @{
+  CAType = "EnterpriseRootCA"; CryptoProviderName = $ksp
+  KeyLength = 2048; HashAlgorithmName = "SHA256"
+  CACommonName = "Lab-Root-CA"; ValidityPeriod = "Years"
+  ValidityPeriodUnits = 10
+}
+Install-AdcsCertificationAuthority @ca -Force
+</code></pre>
+    <table class="tbl">
+      <tr><th>验证命令</th><th>看到这个说明成功</th></tr>
+      <tr><td><code>certutil -ping</code></td><td>显示 DC-01.lab.local\Lab-Root-CA，接口处于活动状态<span class="small muted">（DC-01 换成你自己的 DC 计算机名，即第 1 课的 DC-学号）</span></td></tr>
+      <tr><td><code>Get-Service CertSvc</code></td><td>Status = Running</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">这里用 @splatting 把原文的长命令拆成哈希表，参数和取值与原文完全一致。CA 名称一旦确定就不能改，打错只能卸载重装，执行前再核对一遍 Lab-Root-CA 拼写。参数要点：EnterpriseRootCA 与 AD 集成才支持模板和自动注册；SHA256 替代已不安全的 SHA1；根证书 10 年要长于它签发的 1 年证书。提醒：谁拿到 CA 私钥就能给任何名字签"真证书"，所以生产环境根 CA 通常离线保存。</aside>
+<template id="pop-l23-t1b-steps">
+  <h3>📋 详细步骤：配置企业根 CA 并验证</h3>
+  <h4>第一步：核对 CA 名称</h4>
+  <ol>
+    <li>CA 名称一旦确定就不能改，打错只能卸载重装</li>
+    <li>执行前再核对一遍 <code>CACommonName = "Lab-Root-CA"</code> 拼写无误</li>
+  </ol>
+  <h4>第二步：用 splatting 配置并安装 CA</h4>
+<pre>$ksp = "RSA#Microsoft Software Key Storage Provider"
+$ca = @{
+  CAType = "EnterpriseRootCA"; CryptoProviderName = $ksp
+  KeyLength = 2048; HashAlgorithmName = "SHA256"
+  CACommonName = "Lab-Root-CA"; ValidityPeriod = "Years"
+  ValidityPeriodUnits = 10
+}
+Install-AdcsCertificationAuthority @ca -Force</pre>
+  <p>命令执行后会初始化 CertSvc 服务并生成 CA 自签名证书（10 年有效期）。</p>
+  <h4>第三步：验证</h4>
+<pre>certutil -ping</pre>
+  <p>应显示 <code>DC-01.lab.local\Lab-Root-CA</code>，接口处于活动状态。</p>
+<pre>Get-Service CertSvc</pre>
+  <p>Status 应为 <code>Running</code>。</p>
+  <div class="tip">谁拿到 CA 私钥就能给任何名字签发"真证书"，所以生产环境的根 CA 通常离线保存，本实验为教学简化在线保存在 DC1 上。</div>
+</template>
+<template id="pop-l23-t1b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>CAType = "EnterpriseRootCA"</code></td><td>企业 CA 与 AD 集成，才能支持证书模板和 GPO 自动注册；独立 CA 不依赖 AD，但申请要手工审批，本课要用模板所以必须选企业 CA。</td></tr>
+    <tr><td><code>HashAlgorithmName = "SHA256"</code></td><td>替代已不安全的 SHA1，SHA256 是目前通用的安全哈希算法，签名证书的完整性依赖它。</td></tr>
+    <tr><td><code>CACommonName = "Lab-Root-CA"</code></td><td>CA 的名称一旦确定不能修改，check23.ps1 直接通过注册表路径 <code>HKLM:\SYSTEM\CurrentControlSet\Services\CertSvc\Configuration</code> 的子键名核对这个名称，必须和这里完全一致。</td></tr>
+    <tr><td><code>ValidityPeriodUnits = 10</code>（年）</td><td>根证书有效期要明显长于它签发的服务器证书（任务 2 的 1 年期），否则根证书先过期会导致所有下级证书失效。</td></tr>
+    <tr><td><code>-Force</code></td><td>跳过交互确认，直接执行安装（适合脚本化/课堂演示）。</td></tr>
+    <tr><td><code>certutil -ping</code></td><td>测试证书服务的 RPC/DCOM 接口是否可用，是最快确认 CA 正常对外服务的方法。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li><code>Get-Service CertSvc</code> 不是 Running：检查安装过程有没有报错，必要时重新运行 Install-AdcsCertificationAuthority</li>
+    <li>certutil -ping 显示不出 Lab-Root-CA：很可能名称打错或安装未完成，check23.ps1 会从注册表读取真实 CA 名核对</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务2 模板 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 27′ · DC1</span></span><h2>复制并发布模板 Lab Web Server</h2><button class="more" data-pop="pop-l23-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l23-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+certutil -CATemplates  # 查看 CA 已发布的模板
+certtmpl.msc           # 打开"证书模板"控制台
+</code></pre>
+    <div class="crumb"><span>certtmpl.msc</span><i>›</i><span>右键 Web Server</span><i>›</i><span>复制模板</span></div>
+    <div class="grid3">
+      <div class="card"><h3>① 常规</h3>名称 <code>Lab Web Server</code><br>有效期 1 年</div>
+      <div class="card"><h3>② 安全</h3>添加 <code>Domain Computers</code><br>勾选"注册"</div>
+      <div class="card"><h3>③ 发布到 CA</h3>certsrv.msc › 右键"证书模板" › 新建 › 选 Lab Web Server</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上完成这三步。发布后再运行一次 certutil -CATemplates，列表中应出现新模板（显示的是模板内部名，通常不带空格），这就是"复制—权限—发布"三步都完成的证据。常见错误：在 certtmpl.msc 改完就去申请，忘了在 certsrv.msc 里发布。</aside>
+<template id="pop-l23-t2a-steps">
+  <h3>📋 详细步骤：复制并发布模板 Lab Web Server</h3>
+  <h4>第一步：看当前已发布的模板</h4>
+<pre>certutil -CATemplates</pre>
+  <p>先记一下现有列表，等任务完成后再跑一次做对比。</p>
+  <h4>第二步：复制 Web Server 模板</h4>
+<pre>certtmpl.msc</pre>
+  <ol>
+    <li>打开"证书模板"控制台，找到内置的 <b>Web Server</b> 模板</li>
+    <li>右键 › <b>复制模板</b>（不要直接改原模板，复制一份出错可以回退）</li>
+  </ol>
+  <h4>第三步：常规选项卡</h4>
+  <ol>
+    <li>模板显示名称填 <code>Lab Web Server</code></li>
+    <li>有效期设为 <b>1 年</b></li>
+  </ol>
+  <h4>第四步：安全选项卡</h4>
+  <ol>
+    <li>添加 <code>Domain Computers</code> 组</li>
+    <li>勾选"<b>注册</b>"权限（不是"自动注册"——任务 3 会讨论两者区别）</li>
+  </ol>
+  <h4>第五步：发布到 CA</h4>
+  <ol>
+    <li>打开 <code>certsrv.msc</code></li>
+    <li>右键"证书模板"文件夹 › 新建 › 要颁发的证书模板</li>
+    <li>选择刚才复制的 <b>Lab Web Server</b>，确定</li>
+  </ol>
+  <h4>第六步：验证</h4>
+<pre>certutil -CATemplates</pre>
+  <p>列表中应出现新模板（显示的是模板内部名，通常不带空格，如 LabWebServer）。</p>
+  <div class="tip">常见错误：在 certtmpl.msc 改完就去申请，忘了在 certsrv.msc 里发布——这样模板还不能被用来申请证书。</div>
+</template>
+<template id="pop-l23-t2a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>复制而不是改原模板</td><td>把模板类比成"证件申请表格"，先复制一份再改，万一配置出错可以直接删掉重做，不影响系统内置的 Web Server 模板。</td></tr>
+    <tr><td>添加 Domain Computers + "注册"</td><td>模板的"安全"选项卡决定谁能用这个模板申请证书。只给"注册"（不给"自动注册"）意味着仍需手工申请——任务 3 的自动注册讨论会提到升级方法。</td></tr>
+    <tr><td>certsrv.msc 发布模板</td><td>CA 只受理"已发布"的模板，复制和改权限只是改了模板对象本身，必须额外在 CA 上发布才能真正生效，这是最容易漏掉的一步。</td></tr>
+    <tr><td>check23.ps1 的判定逻辑</td><td>脚本用 <code>certutil -CATemplates</code> 的输出匹配 <code>WebServer|Web Server|LabWebServer|Lab Web Server</code>，接受内置模板或你复制的模板，两者都算"已发布 Web 服务器模板"。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>certutil -CATemplates 看不到新模板：回头检查有没有在 certsrv.msc 里完成"新建 › 要颁发的证书模板"这一步</li>
+    <li>任务 2 后面申请证书时提示没有可用模板：检查模板"安全"选项卡的 Domain Computers 权限是否正确勾选了"注册"</li>
+  </ul>
+</template>
+</section>
+
+<!-- 10 任务2 IIS 申请 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 27′ · IIS 服务器</span></span><h2>为 IIS 申请域证书</h2><button class="more" data-pop="pop-l23-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l23-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>IIS 管理器</span><i>›</i><span>服务器节点</span><i>›</i><span>服务器证书</span><i>›</i><span>创建域证书</span></div>
+    <table class="tbl">
+      <tr><th style="width:36%">向导字段</th><th>填写</th></tr>
+      <tr><td>通用名称</td><td><code>www.lab.local</code> <span class="orange">← 必须与访问地址一致</span></td></tr>
+      <tr><td>组织</td><td><code>Lab Company</code></td></tr>
+      <tr><td>联机证书颁发机构</td><td><code>DC-01.lab.local\Lab-Root-CA</code>（点"选择"）</td></tr>
+      <tr><td>友好名称</td><td><code>Lab-Web-Cert</code></td></tr>
+    </table>
+    <div class="callout">"创建域证书"会直接向企业 CA 在线申请，<b>不用</b>手工导出 CSR 再提交。</div>
+  </div>
+</div>
+<aside class="notes">在 SVR2 的 IIS 管理器里操作。"服务器证书"图标在左侧树的服务器节点（不是站点节点）下。通用名称填错是最常见错误，填成 DC1 或 IP 地址会导致"名称不匹配"。完成后列表里应出现 Lab-Web-Cert，颁发者为 Lab-Root-CA。</aside>
+<template id="pop-l23-t2b-steps">
+  <h3>📋 详细步骤：为 IIS 申请域证书</h3>
+  <h4>第一步：打开服务器证书</h4>
+  <ol>
+    <li>打开 IIS 管理器，在左侧树点击<b>服务器节点</b>（不是具体站点节点）</li>
+    <li>双击中间的"<b>服务器证书</b>"图标</li>
+  </ol>
+  <h4>第二步：创建域证书</h4>
+  <ol>
+    <li>右侧操作栏点"<b>创建域证书</b>"</li>
+    <li>按下表填写向导：</li>
+  </ol>
+<pre>通用名称：www.lab.local   （必须与访问地址一致，不能填 DC1 或 IP）
+组织：Lab Company
+联机证书颁发机构：DC-01.lab.local\Lab-Root-CA（点"选择"按钮选取）
+友好名称：Lab-Web-Cert</pre>
+  <h4>第三步：确认申请成功</h4>
+  <ol>
+    <li>向导走完后回到"服务器证书"列表</li>
+    <li>应该能看到 <b>Lab-Web-Cert</b>，颁发者为 <code>Lab-Root-CA</code></li>
+  </ol>
+  <div class="tip">"创建域证书"是直接在线向企业 CA 申请，不需要像以前（独立 CA 场景）那样手工导出 CSR 再提交审批。</div>
+</template>
+<template id="pop-l23-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>通用名称 = www.lab.local</td><td>证书里的通用名称（CN）要和浏览器地址栏访问的域名完全一致，否则浏览器会报"证书名称不匹配"；填成 DC1 或 IP 地址是最常见的错误。</td></tr>
+    <tr><td>联机证书颁发机构选 Lab-Root-CA</td><td>"创建域证书"功能需要在线联系一台企业 CA，由它当场签发证书，所以这里要指定具体的 CA（服务器名\CA名）。</td></tr>
+    <tr><td>友好名称 Lab-Web-Cert</td><td>只是方便在证书列表、绑定界面里辨认这张证书，不影响证书本身的内容。check23.ps1 用证书的 Subject/Issuer 字段判定，不依赖友好名称。</td></tr>
+    <tr><td>check23.ps1 的判定逻辑</td><td>脚本在 <code>Cert:\LocalMachine\My</code> 里查找 Subject 含 <code>www.lab.local</code> 且 Issuer 含 <code>Lab-Root-CA</code> 的证书，两者都要满足才算成功。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>向导报错找不到 CA：确认 CertSvc 在 DC1 上正常运行、且用的是域账号登录</li>
+    <li>申请成功但没有可选模板：回到任务 2a 确认 Web Server 模板已经发布到 CA</li>
+  </ul>
+</template>
+</section>
+
+<!-- 11 任务2 绑定 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 27′ · IIS + CLIENT1</span></span><h2>绑定新证书并验证</h2><button class="more" data-pop="pop-l23-t2c-steps">📋 详细步骤</button><button class="more" data-pop="pop-l23-t2c-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>CompanySite</span><i>›</i><span>绑定</span><i>›</i><span>编辑 https 443</span><i>›</i><span>SSL 证书：Lab-Web-Cert</span></div>
+    <div class="grid2">
+      <div class="card blue">
+        <h3>确认绑定（补充）</h3>
+<pre><code class="language-powershell" data-trim>
+Get-WebBinding -Name CompanySite `
+    -Protocol https
+</code></pre>
+      </div>
+      <div class="card blue">
+        <h3>在 CLIENT1 访问</h3>
+        <p><code>https://www.lab.local</code></p>
+        <p class="small muted">点地址栏锁图标 › 证书 › 证书路径，应看到 Lab-Root-CA</p>
+      </div>
+    </div>
+    <div class="callout warn">此时仍有警告是正常的：CLIENT1 还没信任 Lab-Root-CA，<b>任务 3</b> 用 GPO 解决。</div>
+  </div>
+</div>
+<aside class="notes">原文写"如果 CA 证书已分发"才不再有警告。企业根 CA 安装时会把根证书发布到 AD，域成员刷新组策略后通常会自动信任，所以此时有的环境已无警告，有的还有，两种都正常。等 DC1、SVR2、CLIENT1 都做完之后，最后再切到 Kali 上用浏览器访问同一地址：Kali 不是域成员，会一直看到"不受信任"，讨论这说明了什么。</aside>
+<template id="pop-l23-t2c-steps">
+  <h3>📋 详细步骤：绑定新证书并验证</h3>
+  <h4>第一步：在 IIS 管理器里绑定</h4>
+  <ol>
+    <li>选中 <b>CompanySite</b> 站点 › 右侧"绑定…"</li>
+    <li>编辑 https 443 这条绑定</li>
+    <li>SSL 证书下拉框选 <b>Lab-Web-Cert</b>，确定</li>
+  </ol>
+  <h4>第二步：用 PowerShell 确认绑定</h4>
+<pre>Get-WebBinding -Name CompanySite `
+    -Protocol https</pre>
+  <p>检查输出里的证书哈希对应的是刚申请的 Lab-Web-Cert（可用 IIS 管理器里"服务器证书"列表核对指纹）。</p>
+  <h4>第三步：在 CLIENT1 上访问验证</h4>
+  <ol>
+    <li>浏览器打开 <code>https://www.lab.local</code></li>
+    <li>点地址栏锁图标 › 证书 › 证书路径，应看到 <b>Lab-Root-CA</b></li>
+  </ol>
+  <div class="tip">此时浏览器仍显示警告是正常的：CLIENT1 还没信任 Lab-Root-CA，下一个任务（任务 3）用 GPO 解决这个问题，不用现在排查。</div>
+</template>
+<template id="pop-l23-t2c-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>编辑 https 443 绑定而不是新建</td><td>CompanySite 在第 9-11 课已经有 https 443 绑定（用的是自签名证书），本任务只是把绑定的证书换成新申请的 Lab-Web-Cert，站点和端口都不变。</td></tr>
+    <tr><td><code>Get-WebBinding</code></td><td>用对象方式确认绑定状态，比在 IIS 管理器里肉眼核对更可靠，适合写进验证记录。</td></tr>
+    <tr><td>任务完成后仍有警告</td><td>浏览器信任证书，靠的是信任"签发它的根 CA"，而不是信任"这台服务器"。CLIENT1 这时还没把 Lab-Root-CA 加入"受信任的根证书颁发机构"，所以即使证书本身没问题，仍会报不受信任——这正是任务 3 要解决的。</td></tr>
+    <tr><td>check23.ps1 的判定逻辑</td><td>脚本用 <code>Get-WebBinding -Name CompanySite -Protocol https</code> 的 <code>certificateHash</code>（或 IIS:\SslBindings 下 443 端口绑定的 Thumbprint）与 www.lab.local 证书的指纹比对，一致才算 PASS。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>绑定后访问看到的还是旧证书：浏览器可能缓存了旧连接，关闭所有浏览器窗口再试，或检查是不是改错了站点/绑定</li>
+    <li>Kali 访问同一地址一直警告：Kali 不是域成员，不会信任 Lab-Root-CA，这是预期行为，用来对比"域内 vs 域外"的信任差异</li>
+  </ul>
+</template>
+</section>
+
+<!-- 12 任务3 自动注册 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 18′ · DC1</span></span><h2>GPO：证书自动注册</h2><button class="more" data-pop="pop-l23-t3a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l23-t3a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p class="muted">gpmc.msc › 编辑 <b>Default Domain Policy</b>：</p>
+    <div class="crumb"><span>计算机配置</span><i>›</i><span>策略</span><i>›</i><span>Windows 设置</span><i>›</i><span>安全设置</span><i>›</i><span>公钥策略</span></div>
+    <div class="grid2">
+      <div class="card"><h3>双击"证书服务客户端 - 自动注册"</h3>
+        <ul class="points check">
+          <li>配置模型：已启用</li>
+          <li>续订过期证书……</li>
+          <li>更新使用证书模板的证书</li>
+        </ul>
+      </div>
+      <div class="card"><h3>效果</h3>
+        <p class="small">域内计算机刷新策略后，会按模板权限<b>自动申请、自动续订</b>证书，管理员不必逐台操作。</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上操作。自动注册只对勾选了"自动注册"权限的模板生效；本课模板只给了"注册"权限，所以 Lab Web Server 仍需手工申请——可以作为思考题：如果要让所有服务器自动拿到 Web 证书，模板安全选项卡还要改什么？答案是给 Domain Computers 再勾"自动注册"。</aside>
+<template id="pop-l23-t3a-steps">
+  <h3>📋 详细步骤：GPO 证书自动注册</h3>
+  <h4>第一步：打开组策略管理</h4>
+  <ol>
+    <li>在 DC1 上打开 <code>gpmc.msc</code></li>
+    <li>找到并编辑 <b>Default Domain Policy</b></li>
+  </ol>
+  <h4>第二步：找到自动注册策略</h4>
+<pre>计算机配置 › 策略 › Windows 设置 › 安全设置 › 公钥策略</pre>
+  <p>双击"<b>证书服务客户端 - 自动注册</b>"。</p>
+  <h4>第三步：配置</h4>
+  <ol>
+    <li>配置模型选"<b>已启用</b>"</li>
+    <li>勾选"<b>续订过期证书，更新未决证书并删除已吊销的证书</b>"</li>
+    <li>勾选"<b>更新使用证书模板的证书</b>"</li>
+  </ol>
+  <h4>第四步：等待生效</h4>
+  <p>域内计算机下次刷新组策略（或运行 <code>gpupdate /force</code>）后，会按模板权限自动申请、自动续订证书。</p>
+  <div class="tip">自动注册只对勾选了"自动注册"权限的模板生效；本课的 Lab Web Server 模板只给了"注册"权限，所以仍需手工申请，这是有意设计的对比，不是遗漏。</div>
+</template>
+<template id="pop-l23-t3a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td>配置模型"已启用"</td><td>这是整个自动注册功能的总开关，check23.ps1 直接读取对应的注册表值 <code>AEPolicy</code> 来判定。</td></tr>
+    <tr><td>"续订过期证书…"选项</td><td>对应 AEPolicy 的续订位，让即将过期的证书能自动续期，不需要管理员逐台重新申请。</td></tr>
+    <tr><td>"更新使用证书模板的证书"</td><td>对应 AEPolicy 的更新位，模板内容变化（比如改了有效期）后，已发出的证书能跟着更新。check23.ps1 判定 <code>AEPolicy&gt;=1</code>，若三个选项全勾则 AEPolicy=7（1+2+4）。</td></tr>
+    <tr><td>自动注册只对特定模板生效</td><td>自动注册生效的前提是模板"安全"选项卡给了"自动注册"权限（不只是"注册"），本课模板只给了"注册"，这是故意设计用来讲清两种权限的区别。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>check23.ps1 报 AEPolicy 未配置：用 <code>Get-GPRegistryValue -Name "Default Domain Policy" -Key "HKLM\Software\Policies\Microsoft\Cryptography\AutoEnrollment" -ValueName "AEPolicy"</code> 直接查看，确认 GPO 已链接并生效</li>
+    <li>域内电脑没有自动拿到证书：先确认模板权限是不是"自动注册"而不是"注册"</li>
+  </ul>
+</template>
+</section>
+
+<!-- 13 任务3 分发根证书 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 18′ · DC1 + CLIENT1</span></span><h2>GPO：分发根 CA 证书</h2><button class="more" data-pop="pop-l23-t3b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l23-t3b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>同一 GPO</span><i>›</i><span>公钥策略</span><i>›</i><span>受信任的根证书颁发机构</span><i>›</i><span>右键 导入</span></div>
+    <div class="grid2">
+      <div class="card blue">
+        <h3>先导出根证书（补充）</h3>
+<pre><code class="language-powershell" data-trim>
+certutil "-ca.cert" C:\Lab-Root-CA.cer
+</code></pre>
+        <p class="small muted">-ca.cert 必须加引号（PowerShell 会把带点的参数拆成两个）；然后在导入向导中选这个 .cer 文件</p>
+      </div>
+      <div class="card blue">
+        <h3>CLIENT1 上刷新验证</h3>
+<pre><code class="language-powershell" data-trim>
+gpupdate /force
+</code></pre>
+        <p class="small muted">再次访问 https://www.lab.local，应无警告</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">原文只写"导入 Lab-Root-CA 证书"，没说证书文件从哪里来；certutil -ca.cert 是补充的导出方法，只读不改 CA。实测在 PowerShell 里不加引号会报"参数太多"、不生成文件：PowerShell 把 -ca.cert 拆成了 -ca 和 .cert 两个参数，所以课件写成 certutil "-ca.cert"（在 cmd 里则不用引号）。导入时证书存储区保持"受信任的根证书颁发机构"。在 CLIENT1 上可运行 certlm.msc 查看本地计算机的受信任根列表中是否出现 Lab-Root-CA。</aside>
+<template id="pop-l23-t3b-steps">
+  <h3>📋 详细步骤：GPO 分发根 CA 证书</h3>
+  <h4>第一步：导出根证书</h4>
+<pre>certutil "-ca.cert" C:\Lab-Root-CA.cer
+Test-Path C:\Lab-Root-CA.cer      # 应为 True</pre>
+  <p>这条命令只读取 CA 的根证书并保存为文件，不会修改 CA 本身。</p>
+  <div class="tip">在 PowerShell 里 <code>-ca.cert</code> 一定要加引号，否则 PowerShell 会把它拆成 <code>-ca</code> 和 <code>.cert</code>，certutil 报"参数太多"、不生成文件。在 cmd 窗口里可以不加。</div>
+  <h4>第二步：在同一 GPO 里导入</h4>
+<pre>公钥策略 › 受信任的根证书颁发机构 › 右键 导入</pre>
+  <ol>
+    <li>仍在编辑 <b>Default Domain Policy</b>（和任务 3a 同一个 GPO）</li>
+    <li>右键"受信任的根证书颁发机构" › 导入</li>
+    <li>选中 <code>C:\Lab-Root-CA.cer</code> 文件完成导入向导</li>
+    <li>证书存储区保持默认的"受信任的根证书颁发机构"，不要改</li>
+  </ol>
+  <h4>第三步：在 CLIENT1 上刷新验证</h4>
+<pre>gpupdate /force</pre>
+  <ol>
+    <li>刷新完成后再次访问 <code>https://www.lab.local</code>，应无警告</li>
+    <li>可运行 <code>certlm.msc</code> 查看本地计算机的"受信任的根证书颁发机构"列表中是否出现 Lab-Root-CA</li>
+  </ol>
+</template>
+<template id="pop-l23-t3b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">命令/配置项</th><th>意义</th></tr>
+    <tr><td><code>certutil "-ca.cert"</code></td><td>导出 CA 的根证书（公钥部分），不涉及私钥，是获取 .cer 文件最简单的方式；原文没写这一步，是教学补充的来源说明。引号是给 PowerShell 看的：不加引号时 PowerShell 把带点的参数拆开传给 certutil。</td></tr>
+    <tr><td>导入到"受信任的根证书颁发机构"</td><td>这正是信任链的起点：浏览器判断证书是否可信，第一步就是检查签发者能否一路追溯到本机"受信任的根证书颁发机构"列表里的某张证书。</td></tr>
+    <tr><td>用 GPO 而不是逐台导入</td><td>手工在每台机器导入根证书效率太低，GPO 下发到 Default Domain Policy 之后，域内所有计算机刷新策略时都会自动获得这张根证书。</td></tr>
+    <tr><td>check23.ps1 的判定逻辑</td><td>脚本检查两处：企业存储 <code>certutil -store -enterprise Root</code>（AD 层面的企业信任存储，由企业 CA 安装时自动写入）和本机 <code>Cert:\LocalMachine\Root</code>，只要任一处能找到 Lab-Root-CA 就算分发成功；"证书链可信"用本机 <code>$cert.Verify()</code> 做诚实代理，真实课堂仍需在 CLIENT1 加域后实测。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>CLIENT1 刷新后仍警告"颁发机构不受信任"：先确认 GPO 已正确链接到域，<code>gpresult /r</code> 查看应用了哪些策略</li>
+    <li>certlm.msc 里看不到 Lab-Root-CA：说明 GPO 还没推送到本机，等一个刷新周期或再跑一次 gpupdate /force</li>
+  </ul>
+</template>
+</section>
+
+<!-- 14 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>证书问题按这个顺序查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:32%">现象</th><th style="width:32%">原因</th><th>处理</th></tr>
+      <tr><td>向导里找不到 Lab-Root-CA</td><td>CertSvc 未运行 / 非域账号</td><td><code>certutil -ping</code>；用 LAB\Administrator</td></tr>
+      <tr><td>申请时无可用模板</td><td>模板未发布或无注册权限</td><td>certsrv.msc 发布；查模板"安全"页</td></tr>
+      <tr><td>"证书名称不匹配"</td><td>通用名称 ≠ 访问地址</td><td>以 www.lab.local 重新申请</td></tr>
+      <tr><td>"颁发机构不受信任"</td><td>根证书未到客户端</td><td>CLIENT1 上 <code>gpupdate /force</code></td></tr>
+      <tr><td>绑定后仍是旧证书</td><td>改错了站点或绑定</td><td>编辑 CompanySite 的 https 绑定</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">把这个表当成遇到问题时的排查顺序，再对照本表。名称不匹配与不受信任是两种不同警告，要看清浏览器提示的具体内容。浏览器可能缓存旧证书，必要时关闭所有浏览器窗口再试。</aside>
+</section>
+
+<!-- 15 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>对照清单自查</h2><button class="more" data-pop="pop-l23-15-check">🧪 运行检查脚本</button></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>CertSvc 运行中，CA 名为 Lab-Root-CA</li>
+        <li>模板 Lab Web Server 已发布到 CA</li>
+        <li>CompanySite 的 https 绑定使用 Lab-Web-Cert</li>
+        <li>GPO 已启用自动注册并分发根证书</li>
+        <li>CLIENT1 访问 https://www.lab.local 无警告</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>全部 VM 都拍快照<br><code>Lesson23-Done</code></p>
+        <p class="small muted" style="margin-top:8px">下节课安全基线在此基础上加固</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对清单，再分别截图 SVR2、CLIENT1、Kali 上的验证结果，整理进自己的验证记录。清单达成后运行 check23.ps1 生成 PDF 报告提交（见本页「运行检查脚本」）。复盘环节：回顾一遍申请流程，看看证书路径截图，再对比一下 Kali 上看到的差异。快照一定要拍，CA 名称错了重装成本很高。</aside>
+
+<template id="pop-l23-15-check">
+<h3>🧪 运行检查脚本 check23.ps1</h3>
+<pre>cd C:\LabFiles\checks
+powershell -ExecutionPolicy Bypass -File .\check23.ps1</pre>
+<h4>脚本检查什么（在 DC1 上跑）</h4>
+<ul>
+  <li><b>任务 1：</b>CertSvc 运行、CA 名 = Lab-Root-CA（企业根 CA）</li>
+  <li><b>任务 2：</b>CA 已发布 Web 服务器模板、CompanySite https 绑定使用 Lab-Root-CA 签发的 www.lab.local 证书</li>
+  <li><b>任务 3：</b>GPO 自动注册（AEPolicy）、根 CA 已分发（AD 企业存储/受信任根）、证书链可信</li>
+</ul>
+<div class="tip">脚本接受内置 <code>WebServer</code> 模板或你复制的 <code>Lab Web Server</code> 模板（两者都算"已发布 Web 服务器模板"）。"CLIENT1 无警告"一项在单机环境用"本机证书链验证"作诚实代理；真实课堂需在 CLIENT1 加域 + gpupdate 后实测。全部 PASS 后拍快照 <code>Lesson23-Done</code>。</div>
+</template>
+</section>
+
+<!-- 16 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">自签名证书无人担保；企业 CA 让域内电脑自动信任</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">装 AD CS → 根 CA → 复制并发布模板 → IIS 申请绑定 → GPO 分发</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">信任链 + 名称匹配 + 有效期，三者缺一都会警告</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 24 课：</b>系统加固与安全基线。应用 Microsoft 安全基线，全面加固 Windows Server。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check23.ps1" download>check23.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 DC1 以管理员身份运行 <code>check23.ps1</code> 生成检查报告，连同各台机器上的验证截图一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 模板要经过哪三步才能被申请？2. 浏览器报"名称不匹配"和"不受信任"分别怎么处理？3. 为什么说 CA 私钥是全域最敏感的资产之一？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+<script src="assets/popup.js"></script>
+</body>
+</html>
