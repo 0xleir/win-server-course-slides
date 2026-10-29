@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第27课 · 端口扫描与漏洞发现</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 8 · 内网安全　|　第 27 次课 · 学时 53–54</p>
+  <h1>端口扫描与漏洞发现</h1>
+  <p class="muted">先像攻击者一样看自己的网络，再从日志里把他找出来</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM4</span></div>
+</div>
+<aside class="notes">开场提问：攻击者进入内网后做的第一件事是什么？答案几乎总是"侦察"：找活着的主机、开着的端口、跑着的服务。今天由你自己先切到 Kali 用 Nmap 扫描 DC1，记录活跃主机和服务清单；再切回 DC1 找扫描痕迹；最后自己汇总"发现-风险-加固建议"表——攻击方和防御方都是你一个人依次完成。必须强调：扫描只针对实验网 10.10.10.0/24，对未授权目标扫描违反《网络安全法》，可能承担法律责任。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:13"><span class="t">13′</span><b>概念</b>扫描原理<br>授权边界</div>
+      <div class="seg" style="flex:27"><span class="t">27′</span><b>任务 1</b>Nmap 基础扫描<br>主机 · 端口 · 版本 · OS</div>
+      <div class="seg" style="flex:22"><span class="t">22′</span><b>任务 2</b>NSE 脚本<br>漏洞 · 枚举 · 报告</div>
+      <div class="seg" style="flex:18"><span class="t">18′</span><b>任务 3</b>DC1 上找痕迹<br>防御讨论</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说出 -sT、-sS、-sU 三种扫描的区别和适用场景</li>
+        <li>用 NSE 脚本做漏洞和服务枚举，并用 <code>-oA</code> 输出报告</li>
+        <li>在 DC1 的防火墙日志和安全日志中找到 10.10.10.50 的扫描痕迹</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">任务 1、2 在 Kali 上进行，自己操作并记录每条命令的结果；任务 3 切回 DC1，自己查日志找痕迹并汇总报告。全端口扫描耗时长，可以放在后台跑，或者直接跳过。</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host"><div class="ic">🐉</div><b>Kali</b><div class="ip">10.10.10.50</div><div class="role">第一步<br>Nmap 扫描方</div></div>
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">第二步<br>被扫描目标 · 查日志</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>起点：</b>DC1 防火墙日志已在第 21 课开启（pfirewall.log），RDP 端口为 3390</div>
+      <div class="callout warn"><b>授权边界：</b>只扫描 10.10.10.0/24，任何外部地址一律禁止</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">课前确认 Kali 的 IP 为 10.10.10.50，且与 DC1 在同一 VMnet，能互相 ping 通。如果第 21 课的日志配置被快照回滚了，任务 3 会看不到记录，要先重做 Set-NetFirewallProfile 日志配置。CLIENT1 和 SVR2 可以开着，主机发现时会被扫到，但本课不对它们做深入扫描。</aside>
+</section>
+
+<!-- 04 概念：授权与攻击链 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>扫描是攻击的第一步</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node hl"><b>① 侦察</b>主机 · 端口 · 服务</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 找弱点</b>版本 · 漏洞 · 弱口令</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>③ 利用</b>第 28 课起</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 横向移动</b>扩大控制</div>
+    </div>
+    <div class="grid2">
+      <div class="card bad"><h3>未授权扫描</h3><ul class="points"><li>扫描他人网络 = 违法风险</li><li>《网络安全法》禁止非法侵入、探测</li></ul></div>
+      <div class="card good"><h3>授权测试</h3><ul class="points"><li>书面授权 + 明确范围</li><li>本课范围：10.10.10.0/24</li></ul></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">防御者也要会扫描：先于攻击者发现自己暴露了什么。强调企业渗透测试要签授权书，写明目标、时间窗和禁止事项。提问：在学校宿舍网里"顺手"扫一下室友的电脑，合法吗？答案是不合法，没有授权。</aside>
+</section>
+
+<!-- 05 概念：三种扫描 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>TCP 全连接 vs SYN 半连接 vs UDP</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>参数</th><th>过程</th><th>特点</th></tr>
+      <tr><td><code>-sT</code> 全连接</td><td>SYN → SYN/ACK → ACK，完成三次握手</td><td>无需 root；最容易被目标日志记录</td></tr>
+      <tr><td><code>-sS</code> 半连接</td><td>SYN → SYN/ACK → RST，不完成握手</td><td>需 root；速度快，应用层看不到连接</td></tr>
+      <tr><td><code>-sU</code> UDP</td><td>发 UDP 包，看是否回 ICMP 不可达</td><td>很慢；DNS 53、SNMP 161 等靠它发现</td></tr>
+    </table>
+    <div class="grid3">
+      <div class="card"><h3>open</h3><p class="small">回 SYN/ACK，有服务在监听</p></div>
+      <div class="card"><h3>closed</h3><p class="small">回 RST，主机在但端口没开</p></div>
+      <div class="card"><h3>filtered</h3><p class="small">没回应，被防火墙丢弃</p></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">可以联系第 26 课：在 DC1 的 Wireshark 里过滤 ip.addr==10.10.10.50，对比 -sT 和 -sS 的握手差异。半连接"隐蔽"只是对应用层而言，防火墙和 IDS 照样能看到。filtered 本身就是信息：说明有防火墙。</aside>
+</section>
+
+<!-- 07 任务1 主机发现+端口 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 27′ · Kali</span></span><h2>主机发现与端口扫描</h2><button class="more" data-pop="pop-l27-t1a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l27-t1a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 Kali 终端执行（-sS / -sU 需要 sudo）</div>
+<pre><code class="language-bash" data-trim>
+nmap -sn 10.10.10.0/24              # 主机发现
+nmap -sT 10.10.10.10                # TCP 全连接
+sudo nmap -sS 10.10.10.10           # SYN 半连接
+sudo nmap -sU 10.10.10.10 --top-ports 20
+nmap -p 1-65535 10.10.10.10         # 全端口，可跳过
+</code></pre>
+    <div class="callout"><b>记录：</b><code>-sn</code> 发现了哪几台活跃主机？<code>-sT</code> 与 <code>-sS</code> 的结果一样吗？</div>
+  </div>
+</div>
+<aside class="notes">自己操作，把活跃主机和开放端口抄到记录表。-sn 只做主机发现不扫端口，应能看到 .10、.20、.50 和 CLIENT1 的 DHCP 地址。原文 -sU 没写 sudo，但 UDP 扫描同样需要 root，否则报错。全端口扫描可放到最后，它能发现 3390 这样的非标准端口。</aside>
+<template id="pop-l27-t1a-steps">
+  <h3>📋 详细步骤：主机发现与端口扫描</h3>
+  <h4>第一步：打开 Kali 终端</h4>
+  <ol>
+    <li>登录 Kali（用户名 <code>vagrant</code>），打开终端</li>
+    <li>确认能 ping 通 DC1：<code>ping -c 2 10.10.10.10</code></li>
+  </ol>
+  <h4>第二步：主机发现</h4>
+<pre>nmap -sn 10.10.10.0/24</pre>
+  <p>只做"存活探测"（ARP/ICMP），不扫端口，速度快。记录看到了哪些 IP：应该有 10.10.10.10（DC1）、10.10.10.50（Kali 自己）、CLIENT1 的 DHCP 地址。</p>
+  <h4>第三步：对比 TCP 全连接与 SYN 半连接</h4>
+<pre>nmap -sT 10.10.10.10
+sudo nmap -sS 10.10.10.10</pre>
+  <div class="tip">-sS（SYN 扫描）需要构造原始包，必须 <code>sudo</code>；-sT 走完整的三次握手，普通用户权限就能跑，但更容易被日志记录（因为连接被真正建立）。</div>
+  <h4>第四步：UDP 扫描</h4>
+<pre>sudo nmap -sU 10.10.10.10 --top-ports 20</pre>
+  <p>UDP 扫描也需要 root。只扫前 20 个常见 UDP 端口（如 53 DNS），全量 UDP 扫描很慢，教学环境不建议全扫。</p>
+  <h4>第五步（可跳过）：全端口扫描</h4>
+<pre>nmap -p 1-65535 10.10.10.10</pre>
+  <div class="tip">这条命令耗时较长（视网络和主机情况，可能几十秒到几分钟），可以放到后台先跑其它任务，或者直接跳过——它主要是用来发现像 3390 这种被改过的非标准端口。</div>
+</template>
+<template id="pop-l27-t1a-why">
+  <h3>💡 每条命令为什么要跑</h3>
+  <table>
+    <tr><th style="width:26%">命令 / 参数</th><th>意义</th></tr>
+    <tr><td><code>-sn</code></td><td>只做主机发现（原来叫 -sP），不扫端口。原理是先 ARP（同网段）或 ICMP（跨网段），比全端口扫描快几十倍，适合先摸清"网络里有谁"。</td></tr>
+    <tr><td><code>-sT</code> vs <code>-sS</code></td><td><b>-sT</b> 完成完整的 TCP 三次握手（connect scan），任何用户都能跑；<b>-sS</b> 只发 SYN，收到 SYN-ACK 就立刻发 RST 中断连接（不完成握手），更隐蔽、更快，但需要构造原始套接字，必须 root/sudo。</td></tr>
+    <tr><td><code>-sU</code></td><td>UDP 没有连接状态，扫描原理是发包等响应：收到 ICMP Port Unreachable 说明端口<b>关闭</b>，没收到任何响应则标记为 <code>open|filtered</code>（不确定）。构造原始包同样需要 root。</td></tr>
+    <tr><td><code>--top-ports 20</code></td><td>只扫最常用的 20 个端口（按 nmap 内置的频率库排序），而不是全部 65535 个，大幅缩短 UDP 扫描时间。</td></tr>
+    <tr><td>全端口扫描 <code>-p 1-65535</code></td><td>默认 nmap 只扫最常见的 1000 个端口，可能漏掉像 <b>3390</b>（第 21 课改过的 RDP 端口）这种非标准端口。全端口扫描能发现这些"藏起来"的服务，这正是"改端口不是真安全，只是增加扫描成本"的例证。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 08 任务1 版本与OS -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 27′ · Kali</span></span><h2>服务版本与操作系统识别</h2><button class="more" data-pop="pop-l27-t1b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l27-t1b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-bash" data-trim>
+nmap -sV 10.10.10.10       # 每个开放端口的服务和版本
+sudo nmap -O 10.10.10.10   # 操作系统检测
+</code></pre>
+    <div class="grid2">
+      <div class="card blue"><h3>-sV 看什么</h3><ul class="points"><li>SERVICE 列：服务名</li><li>VERSION 列：产品与版本号</li><li>3390 → ms-wbt-server（RDP）</li></ul></div>
+      <div class="card blue"><h3>-O 看什么</h3><ul class="points"><li>OS details：Windows Server 2016/2019/2022</li><li>结果是"猜测"，带准确率</li></ul></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">版本号是漏洞匹配的依据：知道版本就能查对应 CVE。-O 需要至少一个 open 和一个 closed 端口才准确，防火墙丢包太多时会显示"too many fingerprints"。提问：如何让 -sV 拿不到准确版本？引出关闭 Banner、最小化服务。</aside>
+<template id="pop-l27-t1b-steps">
+  <h3>📋 详细步骤：服务版本与 OS 识别</h3>
+  <h4>第一步：服务版本探测</h4>
+<pre>nmap -sV 10.10.10.10</pre>
+  <p>输出表格里 <code>SERVICE</code> 列是推测的服务名，<code>VERSION</code> 列是具体产品和版本号（如 Microsoft IIS httpd 10.0）。记录下 3390 端口显示的服务名。</p>
+  <h4>第二步：操作系统识别</h4>
+<pre>sudo nmap -O 10.10.10.10</pre>
+  <p>输出里找 <code>OS details</code> 或 <code>Aggressive OS guesses</code> 这几行，列出的是带百分比的猜测（如 Microsoft Windows Server 2016 93%）。</p>
+  <div class="tip">如果看到 <code>Warning: OSScan results may be unreliable because we could not find at least 1 open and 1 closed port</code>，说明猜测置信度不够——这是正常现象，不代表命令出错。</div>
+  <h4>第三步：合并记录</h4>
+  <ol>
+    <li>把开放端口、对应服务版本、猜测的操作系统整理成一张表</li>
+    <li>讨论：哪些版本信息如果暴露在外网，会被用来查对应的已知漏洞（CVE）？</li>
+  </ol>
+</template>
+<template id="pop-l27-t1b-why">
+  <h3>💡 每条命令为什么要跑</h3>
+  <table>
+    <tr><th style="width:26%">命令 / 现象</th><th>意义</th></tr>
+    <tr><td><code>-sV</code></td><td>通过发送特定探针并比对响应特征（banner、协议握手细节）来猜测端口上跑的具体软件和版本，而不只是"猜端口号对应的常见服务"。</td></tr>
+    <tr><td>3390 识别为 ms-wbt-server</td><td>说明仅仅把 RDP 从 3389 改成 3390（第 21 课做的），并不能阻止被 -sV 识别出真实服务——"改端口"只增加了扫描成本，不是真正的安全措施。</td></tr>
+    <tr><td><code>-O</code></td><td>通过 TCP/IP 协议栈实现的细微差异（如 TTL 初始值、窗口大小、TCP 选项顺序）来猜测操作系统类型，这些差异在不同操作系统/版本之间确实存在但不是 100% 可靠。</td></tr>
+    <tr><td>猜测带百分比而非绝对确定</td><td>操作系统指纹库是基于已知样本训练的，新版本/非标准配置可能匹配不到完全一致的特征，所以 nmap 诚实地给出"最可能"而不是断言。</td></tr>
+    <tr><td>版本信息是漏洞匹配的基础</td><td>知道"IIS 10.0"或"Server 2016"后，攻击者下一步通常是去查这个具体版本对应的已公开漏洞（CVE 数据库），这是真实渗透测试的标准流程，所以隐藏/减少版本信息暴露是一种防御手段。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 09 任务1 检测防御 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">检测与防御 · 任务 1</span><h2>如何发现和限制端口扫描</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card good"><h3>检测</h3><ul class="points"><li>防火墙日志：同一源 IP 短时间访问大量端口</li><li>大量 DROP 记录 = 典型扫描特征</li><li>任务 3 现场验证</li></ul></div>
+      <div class="card good"><h3>防御</h3><ul class="points"><li>只开放业务需要的端口</li><li>管理端口（RDP/WinRM）限定来源 IP</li><li>禁止 ICMP 回显可降低 -sn 命中率</li></ul></div>
+    </div>
+    <div class="callout warn"><b>注意：</b>扫描无法完全阻止，目标是"减少暴露面 + 尽早发现"。</div>
+  </div>
+</div>
+<aside class="notes">记下这些要点，任务 3 用日志验证。限定 RDP 来源可以回顾第 21 课的 -RemoteAddress 参数。思考：如果 ICMP 被禁止，-sn 还能发现主机吗？在同网段 Nmap 会用 ARP 探测，所以仍然能发现。</aside>
+</section>
+
+<!-- 10 任务2 NSE -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 22′ · Kali</span></span><h2>Nmap 脚本引擎 NSE</h2><button class="more" data-pop="pop-l27-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l27-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-bash" data-trim>
+T=10.10.10.10
+nmap --script vuln $T              # 漏洞扫描
+nmap --script smb-enum-shares $T   # SMB 共享
+nmap --script http-enum $T         # Web 目录
+nmap --script dns-brute $T         # DNS 爆破
+nmap --script rdp-enum-encryption $T -p 3390
+</code></pre>
+    <div class="callout"><b>记录：</b>vuln 报告的潜在漏洞（VULNERABLE 字样）和枚举到的共享名、目录名。</div>
+  </div>
+</div>
+<aside class="notes">用变量 T 只是为了缩短行，效果和原文逐条写 IP 一样。vuln 类脚本较慢，先跑 vuln，同时记录其他脚本输出。rdp-enum-encryption 必须带 -p 3390，因为 RDP 已不在默认 3389。提醒：NSE 里还有 dos、brute 类脚本，未经授权不得使用。</aside>
+<template id="pop-l27-t2a-steps">
+  <h3>📋 详细步骤：Nmap 脚本引擎 NSE</h3>
+  <h4>第一步：用变量简化命令</h4>
+<pre>T=10.10.10.10</pre>
+  <p>后面命令里的 <code>$T</code> 会被替换成这个 IP，省得每条都重新打一遍。</p>
+  <h4>第二步：逐条运行脚本（vuln 较慢，先跑）</h4>
+<pre>nmap --script vuln $T</pre>
+  <div class="tip">这条通常要跑几十秒到几分钟（会尝试多个已知 CVE 的探测脚本）。可以先跑这条，等待期间看下面几条命令的说明。</div>
+<pre>nmap --script smb-enum-shares $T
+nmap --script http-enum $T
+nmap --script dns-brute $T</pre>
+  <h4>第三步：枚举 RDP 加密方式（注意端口）</h4>
+<pre>nmap --script rdp-enum-encryption $T -p 3390</pre>
+  <div class="tip">必须加 <code>-p 3390</code>，因为第 21 课把 RDP 从默认的 3389 改成了 3390，不加端口参数 nmap 会去扫 3389（没人监听），什么都查不到。</div>
+  <h4>第四步：记录结果</h4>
+  <ol>
+    <li>vuln 脚本如果输出里有 <code>VULNERABLE</code> 字样，记下对应的漏洞描述</li>
+    <li>smb-enum-shares 应该能看到共享名列表（如 IT-Share、Finance-Share）</li>
+    <li>http-enum 可能枚举出一些常见的 Web 目录（取决于 IIS 配置）</li>
+  </ol>
+</template>
+<template id="pop-l27-t2a-why">
+  <h3>💡 每条命令为什么要跑</h3>
+  <table>
+    <tr><th style="width:26%">脚本</th><th>意义</th></tr>
+    <tr><td><code>--script vuln</code></td><td>一次性调用 nmap 脚本库里所有"漏洞检测"分类的脚本，逐一尝试已知的 CVE 探测方式，是渗透测试里快速摸底的常用手段。</td></tr>
+    <tr><td><code>smb-enum-shares</code></td><td>通过 SMB 协议枚举目标开放的共享名（不需要有效凭据也可能枚举到部分信息），这正是第 26 课讨论的"用户名/共享名泄露"问题在扫描阶段的体现。</td></tr>
+    <tr><td><code>http-enum</code></td><td>对 Web 服务器尝试访问一批常见的敏感路径（如管理后台、备份文件），看哪些能访问到——这是网站信息收集的标准步骤。</td></tr>
+    <tr><td><code>dns-brute</code></td><td>对目标域名尝试一批常见子域名前缀，枚举可能存在但没公开链接的子域名/主机名。</td></tr>
+    <tr><td><code>rdp-enum-encryption</code> 加 <code>-p 3390</code></td><td>NSE 脚本默认只检查标准端口（RDP 是 3389），目标服务搬到了非标准端口就必须显式指定，否则脚本会"查无此服务"。这也呼应了上一个任务的结论：改端口骗不过主动扫描端口+服务识别的组合。</td></tr>
+    <tr><td>未经授权不得用 dos/brute 类脚本</td><td>NSE 脚本库里还有拒绝服务测试、暴力破解类脚本，这些会对目标造成实际影响甚至破坏，只能在明确授权的范围（本实验网）内使用，绝不能对外部系统运行。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 11 任务2 报告 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 22′ · Kali</span></span><h2>输出扫描报告</h2><button class="more" data-pop="pop-l27-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l27-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-bash" data-trim>
+nmap -sV --script vuln -oA /home/vagrant/scan-dc1 10.10.10.10
+ls /home/vagrant/scan-dc1.*
+</code></pre>
+    <table class="tbl">
+      <tr><th>文件</th><th>格式</th><th>用途</th></tr>
+      <tr><td><code>scan-dc1.nmap</code></td><td>普通文本</td><td>人读，写报告</td></tr>
+      <tr><td><code>scan-dc1.xml</code></td><td>XML</td><td>导入其他工具分析</td></tr>
+      <tr><td><code>scan-dc1.gnmap</code></td><td>grep 友好</td><td>一行一主机，便于筛选</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">-oA 一次生成三种格式。根据 .nmap 文件整理"端口-服务-风险-加固建议"表，作为本课的核心产出。扫描报告本身属于敏感信息，不要上传到公网或群聊。</aside>
+<template id="pop-l27-t2b-steps">
+  <h3>📋 详细步骤：输出扫描报告</h3>
+  <h4>第一步：运行完整扫描并输出三种格式</h4>
+<pre>nmap -sV --script vuln -oA /home/vagrant/scan-dc1 10.10.10.10</pre>
+  <div class="tip">路径 <code>/home/vagrant</code> 是本课 Kali 环境的实际用户目录；如果你的 Kali 用户名不同，相应替换。</div>
+  <h4>第二步：确认三个文件都生成了</h4>
+<pre>ls /home/vagrant/scan-dc1.*</pre>
+  <p>应该看到三个文件：<code>scan-dc1.nmap</code>、<code>scan-dc1.xml</code>、<code>scan-dc1.gnmap</code>。</p>
+  <h4>第三步：浏览报告内容</h4>
+<pre>cat /home/vagrant/scan-dc1.nmap</pre>
+  <p>这是人类可读的文本格式，和终端里直接看到的输出基本一致，适合复制粘贴整理报告。</p>
+  <h4>第四步：整理"端口-服务-风险-加固建议"表</h4>
+  <ol>
+    <li>照着 .nmap 文件里的开放端口清单，为每个端口写一行记录</li>
+    <li>这张表是本课的核心产出，第 28/29 课的防御视角会继续用到它</li>
+  </ol>
+  <div class="tip">扫描报告包含目标系统的详细指纹信息，属于敏感资料，不要上传到群聊或公网仓库。</div>
+</template>
+<template id="pop-l27-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">选项 / 格式</th><th>意义</th></tr>
+    <tr><td><code>-oA</code></td><td>Output All：一次扫描同时生成三种格式的报告，不用重复跑三次扫描。</td></tr>
+    <tr><td><code>.nmap</code>（文本）</td><td>和终端输出格式一致，人类直接读、写报告时复制粘贴最方便。</td></tr>
+    <tr><td><code>.xml</code></td><td>结构化数据，可以被其它工具（如漏洞管理平台、自动化脚本）解析，适合集成到更大的扫描/报告流水线里。</td></tr>
+    <tr><td><code>.gnmap</code>（grep 友好）</td><td>每台主机的结果压缩成一行，方便用 <code>grep</code>/<code>awk</code> 批量筛选，比如"找出所有开着 445 端口的主机"，大规模扫描时非常实用。</td></tr>
+    <tr><td>整理表格而不只是留原始输出</td><td>原始扫描结果是"事实"，但渗透测试/安全评估真正交付的是"结论"——哪些端口有风险、该怎么处理，这是从"看到了什么"到"该做什么"的转化，也是本课检查脚本里标注为"人工核对"的部分原因。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 12 任务2 检测防御 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">检测与防御 · 任务 2</span><h2>针对漏洞扫描与服务枚举</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>攻击方发现</th><th>防御方对策</th></tr>
+      <tr><td>vuln 报出 SMB 漏洞</td><td>及时打补丁；禁用 SMBv1</td></tr>
+      <tr><td>smb-enum-shares 列出共享</td><td>收紧共享与 NTFS 权限（第 6–7 课）</td></tr>
+      <tr><td>http-enum 找到目录</td><td>删除默认页面、关闭目录浏览</td></tr>
+      <tr><td>dns-brute 得到子域名</td><td>禁止区域传送到任意服务器</td></tr>
+      <tr><td>RDP 加密等级低</td><td>要求 NLA 与 TLS（第 14 课）</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">把这张表填进报告，每一项写上"是否在本环境发现"。强调漏洞扫描结果有误报，要人工确认。这些加固项本课只讨论，不在本课修改，以免影响后续课程的快照。</aside>
+</section>
+
+<!-- 13 任务3 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 18′ · DC1</span></span><h2>在 DC1 上找扫描痕迹</h2><button class="more" data-pop="pop-l27-t3-steps">📋 详细步骤</button><button class="more" data-pop="pop-l27-t3-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$log = "C:\Windows\System32\LogFiles\Firewall\pfirewall.log"
+Get-Content $log -Tail 50 |
+    Where-Object { $_ -match "10.10.10.50" }
+
+Get-WinEvent -LogName Security -MaxEvents 50 |
+    Where-Object { $_.Message -match "10.10.10.50" } |
+    Format-Table TimeCreated, Id, Message -Wrap
+</code></pre>
+    <div class="callout"><b>📝 讨论：</b>如何从防御角度识别和阻止扫描行为？</div>
+  </div>
+</div>
+<aside class="notes">以管理员身份运行，读 pfirewall.log 需要管理员权限。只取最后 50 行，如果扫描已经过去较久可加大 -Tail。安全日志里不一定有 10.10.10.50：默认审核策略不记录被丢弃的连接，只有触发登录尝试时才有 4625 等事件。讨论时可以结合自己刚才扮演攻击方时的操作，想一条防御办法。</aside>
+<template id="pop-l27-t3-steps">
+  <h3>📋 详细步骤：在 DC1 上找扫描痕迹</h3>
+  <h4>第一步：确认防火墙日志已开启</h4>
+  <ol>
+    <li>第 21 课应该已经配置过，确认一下：<code>Get-NetFirewallProfile -Profile Domain | Select-Object LogAllowed,LogBlocked,LogFileName</code></li>
+    <li>如果 LogAllowed/LogBlocked 是 False，说明快照回滚了配置，重新开启：<code>Set-NetFirewallProfile -Profile Domain -LogAllowed True -LogBlocked True</code></li>
+  </ol>
+  <h4>第二步：以管理员身份打开 PowerShell</h4>
+  <p>读取 <code>pfirewall.log</code> 需要管理员权限，否则会报"访问被拒绝"。</p>
+  <h4>第三步：查防火墙日志里的扫描痕迹</h4>
+<pre>$log = "C:\Windows\System32\LogFiles\Firewall\pfirewall.log"
+Get-Content $log -Tail 50 |
+    Where-Object { $_ -match "10.10.10.50" }</pre>
+  <div class="tip">只取最后 50 行是为了快速定位，如果扫描是比较早之前做的，适当加大 <code>-Tail</code> 的数字（比如 2000）往前多翻一些。</div>
+  <h4>第四步：查安全日志（可能是空的）</h4>
+<pre>Get-WinEvent -LogName Security -MaxEvents 50 |
+    Where-Object { $_.Message -match "10.10.10.50" } |
+    Format-Table TimeCreated, Id, Message -Wrap</pre>
+  <div class="tip">这里查到<b>0 条</b>是正常的——纯端口扫描（SYN/UDP）不会触发任何登录尝试，Security 日志里不会有记录。只有 NSE 的 smb-enum-shares 等需要尝试连接认证的脚本，才可能留下 4624/4625 痕迹。</div>
+  <h4>第五步：自己复盘</h4>
+  <ol>
+    <li>结合刚才在 Kali 上扫描时的操作，自己提出至少一条"如何从防御角度识别和阻止扫描行为"</li>
+  </ol>
+</template>
+<template id="pop-l27-t3-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">现象 / 操作</th><th>意义</th></tr>
+    <tr><td>需要管理员权限读日志</td><td>Windows 的系统日志文件和防火墙日志默认受保护，防止普通用户随意查看或篡改，这也是一种基本的权限最小化原则。</td></tr>
+    <tr><td>pfirewall.log 里大量 DROP 记录</td><td>这正是"端口扫描"的典型特征：同一个源 IP 在很短时间内尝试连接大量不同的目标端口，绝大多数被防火墙拒绝（DROP），只有真正开放的端口才会出现 ALLOW。</td></tr>
+    <tr><td>Security 日志可能查不到</td><td>Windows 安全审核默认记录的是"登录"相关事件（4624 成功、4625 失败等），单纯的 TCP/UDP 端口探测不涉及身份认证，不会产生这类事件——这解释了为什么"看见扫描"主要靠防火墙日志而不是安全日志。</td></tr>
+    <tr><td>"只有开日志才能看见攻击"</td><td>这是第 21 课配置 <code>LogAllowed</code>/<code>LogBlocked</code> 的直接意义：默认情况下 Windows 防火墙并不记录每一次放行/拦截的详细信息，不主动开启的话，即使被扫描了也完全没有证据可查。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 14 预期结果 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">预期结果</span><h2>日志里应该看到什么</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>来源</th><th>典型内容</th><th>说明</th></tr>
+      <tr><td>pfirewall.log</td><td><code>DROP TCP 10.10.10.50 10.10.10.10</code> 大量不同目标端口</td><td>被拦截的探测</td></tr>
+      <tr><td>pfirewall.log</td><td><code>ALLOW TCP ... 445 / 3390</code></td><td>放行端口，就是扫描发现的 open</td></tr>
+      <tr><td>Security</td><td>4624 / 4625，含 10.10.10.50</td><td>NSE 脚本尝试登录 SMB 时产生</td></tr>
+      <tr><td>Security 为空</td><td>没有匹配结果</td><td>正常：纯端口扫描不产生登录事件</td></tr>
+    </table>
+    <div class="callout warn">只有日志开着才能"看见"攻击，这是第 21 课开启日志的意义。</div>
+  </div>
+</div>
+<aside class="notes">数一数 10.10.10.50 的 DROP 记录有多少条、涉及多少个不同端口，这就是识别扫描的思路。4625 表示登录失败，下节课的密码攻击会大量产生。如果 pfirewall.log 一条都没有，回看排障表。</aside>
+</section>
+
+<!-- 15 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>扫描或日志不对？按这个顺序查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>-sn 只发现 Kali 自己</td><td>不在同一 VMnet</td><td>检查网卡模式，<code>ip addr</code> 确认 10.10.10.50</td></tr>
+      <tr><td>"requires root privileges"</td><td>-sS / -sU / -O 需 root</td><td>命令前加 <code>sudo</code></td></tr>
+      <tr><td>所有端口 filtered</td><td>第 21 课阻止规则仍启用</td><td>停用演示用阻止规则</td></tr>
+      <tr><td>pfirewall.log 不存在/为空</td><td>日志未开启或快照回滚</td><td>重做第 21 课日志配置</td></tr>
+      <tr><td>vuln 扫描极慢</td><td>脚本多、超时长</td><td>先只扫已知开放端口 <code>-p</code></td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">最常见的是 Kali 网卡不在实验网。日志为空时注意：Set-NetFirewallProfile 只配置了 Domain 配置文件，DC1 当前网络配置文件必须是"域"。不要为了扫描结果好看而关闭防火墙。</aside>
+</section>
+
+<!-- 16 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>对照清单自查</h2></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>Kali 上有 scan-dc1.nmap / .xml / .gnmap</li>
+        <li>pfirewall.log 中有 10.10.10.50 的记录</li>
+        <li>完成"端口-服务-风险-对策"表</li>
+        <li>讨论结论已记录</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>VM1 与 VM4 拍快照<br><code>Lesson27-Done</code></p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对清单，由师生对照清单人工验收。本课程暂未提供自动评分脚本，若后续配发脚本可在此处运行。左侧检查项中报告文件和讨论记录由自己核对。下节课会对 DC1 做密码攻击，需要从这个快照继续。</aside>
+</section>
+
+<!-- 17 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>攻击视角看到</h3><p class="small">-sn 找主机 → -sS/-sV 找服务 → NSE 找漏洞</p></div>
+      <div class="card blue"><h3>防御视角看到</h3><p class="small">pfirewall.log 中同一源 IP 大量 DROP</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">减少暴露面 + 开日志 + 只在授权范围内扫描</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 28 课：</b>密码攻击与防御。自己先在 Kali 用 Hydra 做密码喷射，再切回 DC1 用账户锁定策略和 4625 事件应对。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check27.ps1" download>check27.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 DC1 以管理员身份运行 <code>check27.ps1</code> 生成检查报告，连同 Kali 侧扫描报告截图一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测：1. -sT 和 -sS 哪个会在目标上完成三次握手？2. 改了 RDP 端口为什么还能被发现？3. 防火墙日志中什么特征说明有人在扫描？最后再强调一遍授权边界。</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script src="assets/popup.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+</body>
+</html>
