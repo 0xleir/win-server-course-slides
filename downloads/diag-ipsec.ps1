@@ -209,7 +209,19 @@ foreach ($b in $blocks) {
 
     if ($profile) {
         $curProf = (Get-NetConnectionProfile -EA SilentlyContinue | Where-Object { $_.IPv4Connectivity -ne 'NoTraffic' } | Select-Object -First 1).NetworkCategory
-        if ($profile -match '任何|Any' -or $profile -match $curProf) {
+        $curProf = [string]$curProf
+        # 中文系统 netsh 输出 "域/专用/公用/任何", 与 Get-NetConnectionProfile 的 Domain/Private/Public/DomainAuthenticated 映射
+        $acceptKeywords = @('任何','Any')
+        switch -Regex ($curProf) {
+            'Domain'  { $acceptKeywords += @('域','Domain'); break }
+            'Private' { $acceptKeywords += @('专用','Private'); break }
+            'Public'  { $acceptKeywords += @('公用','Public'); break }
+        }
+        $covered = $false
+        foreach ($keyword in $acceptKeywords) {
+            if ($profile -match [regex]::Escape($keyword)) { $covered = $true; break }
+        }
+        if ($covered) {
             OK "配置文件：$profile（当前网络 $curProf 包含在内）"
         } else {
             BAD "配置文件：$profile — 当前网络是 $curProf，规则不覆盖当前网络！"
@@ -250,13 +262,24 @@ if ($dom -eq "WORKGROUP" -or -not $dom) {
 } else {
     OK "本机已加域：$dom"
 
-    # Test-ComputerSecureChannel
-    $sc = Test-ComputerSecureChannel -Verbose:$false -EA SilentlyContinue
-    if ($sc) { OK "域安全通道 (SecureChannel) 正常" }
-    else {
-        BAD "域安全通道断了！Test-ComputerSecureChannel 返回 False"
-        TIP "跑 Reset-ComputerMachinePassword 重置机器账户密码，或退域重新加域"
-        Issue "ERROR" "域安全通道断开" "Test-ComputerSecureChannel -Repair 修复"
+    # Test-ComputerSecureChannel  (DC 自身不适用此测试,跳过)
+    $isDC = $false
+    try {
+        $pt = (Get-WmiObject -Class Win32_ComputerSystem -EA SilentlyContinue).DomainRole
+        # 4 = Backup Domain Controller, 5 = Primary Domain Controller
+        if ($pt -eq 4 -or $pt -eq 5) { $isDC = $true }
+    } catch {}
+    if ($isDC) {
+        OK "本机是域控 (DC)，不需要测 SecureChannel"
+    } else {
+        $sc = $null
+        try { $sc = Test-ComputerSecureChannel -Verbose:$false -EA Stop } catch {}
+        if ($sc -eq $true) { OK "域安全通道 (SecureChannel) 正常" }
+        else {
+            BAD "域安全通道断了！Test-ComputerSecureChannel 返回 False/错误"
+            TIP "跑 Reset-ComputerMachinePassword 重置机器账户密码，或退域重新加域"
+            Issue "ERROR" "域安全通道断开" "Test-ComputerSecureChannel -Repair 修复"
+        }
     }
 
     # 对端是否能解析成域内主机
@@ -264,10 +287,14 @@ if ($dom -eq "WORKGROUP" -or -not $dom) {
     if ($peerDns) { OK "对端 $Peer 反向解析为：$($peerDns.NameHost)（Kerberos 需要能解析到对端 SPN）" }
     else { WARN "对端 $Peer 无 PTR 记录。Kerberos 可能找不到对端 SPN，需要 DC 上有对端的 A/PTR 记录" }
 
-    # kinit 票据
-    $tgt = klist 2>&1 | Select-String "krbtgt"
-    if ($tgt) { OK "本机有 Kerberos TGT 票据" }
-    else { WARN "没有看到 krbtgt 票据，klist 为空。重新登录域账户获取票据" }
+    # kinit 票据 (DC 自身不走 Kerberos TGT 认证, 跳过)
+    if ($isDC) {
+        INFO "DC 自身用本地安全验证，不需要 TGT 票据"
+    } else {
+        $tgt = klist 2>&1 | Select-String "krbtgt"
+        if ($tgt) { OK "本机有 Kerberos TGT 票据" }
+        else { WARN "没有看到 krbtgt 票据，klist 为空。重新登录域账户获取票据" }
+    }
 }
 
 # ───────────────────────────────────────────────────────────
@@ -279,7 +306,7 @@ $msa = Get-NetIPsecMainModeSA -EA SilentlyContinue
 $qsa = Get-NetIPsecQuickModeSA -EA SilentlyContinue
 
 if ($msa) {
-    OK "Main Mode SA 数量：$($msa.Count)（Phase 1 身份认证已通过）"
+    OK "Main Mode SA 数量：$(@($msa).Count)（Phase 1 身份认证已通过）"
     $msa | Select-Object -First 3 | ForEach-Object {
         INFO "  · $($_.LocalEndpoint) ↔ $($_.RemoteEndpoint)  State=$($_.State)"
     }
@@ -289,7 +316,7 @@ if ($msa) {
 }
 
 if ($qsa) {
-    OK "Quick Mode SA 数量：$($qsa.Count)（Phase 2 数据加密通道已建立）"
+    OK "Quick Mode SA 数量：$(@($qsa).Count)（Phase 2 数据加密通道已建立）"
 } else {
     INFO "Quick Mode SA 为空（如果 Main Mode 也没有，先解决 Main Mode；如果 Main Mode 有，可能是流量方向不匹配）"
 }
@@ -310,8 +337,9 @@ Start-Sleep -Seconds 3
 $msa2 = Get-NetIPsecMainModeSA -EA SilentlyContinue
 $qsa2 = Get-NetIPsecQuickModeSA -EA SilentlyContinue
 if ($msa2) {
-    OK "触发后 Main Mode SA 建立成功 ($($msa2.Count) 条) — IPsec 正常工作！"
-    if ($qsa2) { OK "触发后 Quick Mode SA 也建立 ($($qsa2.Count) 条)" }
+    $msaCount = @($msa2).Count
+    OK "触发后 Main Mode SA 建立成功 ($msaCount 条) — IPsec 正常工作！"
+    if ($qsa2) { OK "触发后 Quick Mode SA 也建立 ($(@($qsa2).Count) 条)" }
     else { INFO "Quick Mode SA 还没建立（SMB 流量可能被别的东西拦了，但 IPsec 身份认证层 OK）" }
 } else {
     BAD "触发后 Main Mode SA 仍为空 — 协商失败"
