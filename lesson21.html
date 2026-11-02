@@ -393,6 +393,7 @@ Get-NetIPsecQuickModeSA
         <p class="small">在 DC1 与 SVR2 之间复制文件，抓包过滤 <code>esp</code>，只见 ESP 包，看不到 SMB 明文</p>
       </div>
     </div>
+    <div class="callout warn"><b>🧪 SA 查出来是空的？</b> 下载 <a href="downloads/diag-ipsec.ps1" download>diag-ipsec.ps1</a> 在 DC1 或 SVR2 任一台管理员 PowerShell 跑一遍，自动检查 L2 连通性 / 规则属性 / Kerberos 票据 / IKE 日志，直接告诉你哪一步错了。</div>
   </div>
 </div>
 <aside class="notes">Test-NetConnection 一行是补充的，用来先产生流量，否则 SA 可能为空。Wireshark 在 C:\Tools\ 下，环境搭建时已下载。若 Wireshark 里仍能看到 SMB 内容，到 wf.msc 根节点属性 → IPsec 设置 → 自定义 → 数据保护，确认选的是"完整性和加密"而非仅完整性，这是很好的讨论点。</aside>
