@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第28课 · 密码攻击与防御</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 8 · 内网安全　|　第 28 次课 · 学时 55–56</p>
+  <h1>密码攻击与防御</h1>
+  <p class="muted">红队用弱口令打进来，蓝队用策略和日志挡回去</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">DC1 · CLIENT1 · SVR2 · Kali</span></div>
+</div>
+<aside class="notes">这是一节经典红蓝对抗课，但由你一人独立完成攻防两端。前 40 分钟你切到 Kali 以攻击者视角做密码攻击演示，然后依次回到 DC1、CLIENT1 以防御者视角做检测，再回 DC1 配置防御策略；后 40 分钟你自己换个角度复盘整个过程。开场先亮道德声明：所有攻击仅限隔离实验网 10.10.10.0/24，严禁对任何外部系统使用，否则违反《网络安全法》。提问：为什么弱口令是企业被入侵最常见的原因？引出今天的主题。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:22"><span class="t">22′</span><b>任务 1</b>密码攻击演示<br>Kali · Hydra 喷射</div>
+      <div class="seg" style="flex:22"><span class="t">22′</span><b>任务 2</b>攻击检测<br>DC1/CLIENT1 · 4625 日志</div>
+      <div class="seg" style="flex:22"><span class="t">22′</span><b>任务 3</b>密码防御策略<br>DC1 · PSO 细粒度策略</div>
+      <div class="seg" style="flex:14"><span class="t">14′</span><b>复盘</b>切换视角<br>总结</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>说明密码喷射与暴力破解的区别，理解弱口令的危害</li>
+        <li>在安全日志中用事件 ID 4625 定位失败登录并统计攻击来源</li>
+        <li>配置细粒度密码策略（PSO）：长度、复杂度、锁定阈值</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">任务 1 你先切到 Kali 上做攻击演示；任务 2 你切回 DC1 查日志，再切到 CLIENT1 实时监控；任务 3 你再切回 DC1 配置密码策略，然后切到 SVR2 验证服务未受影响。整个流程由你一人依次完成，不需要分配角色；复盘时自己换个角度回看，体会攻防两端各自看到了什么。</aside>
+</section>
+
+<!-- 03 操作顺序 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>攻防两端的操作顺序</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>步骤</th><th>机器</th><th>任务</th></tr>
+      <tr><td><b>第一步</b></td><td>Kali</td><td>执行密码喷射、暴力破解</td></tr>
+      <tr><td><b>第二步</b></td><td>DC1</td><td>查安全日志、配置密码策略和账户锁定</td></tr>
+      <tr><td><b>第三步</b></td><td>CLIENT1</td><td>实时监控安全日志、统计攻击来源</td></tr>
+      <tr><td><b>第四步</b></td><td>SVR2</td><td>检查服务是否受影响、配置额外防御</td></tr>
+    </table>
+    <div class="callout warn"><b>⚠️ 道德声明：</b>所有攻击操作仅限教学用隔离 VM 环境，严禁对外部系统使用。</div>
+  </div>
+</div>
+<aside class="notes">把这张表投到屏幕上，明确接下来要依次切换到哪几台机器、做什么。注意：这里的"账户锁定"效果主要靠任务 3 新配的 Strict-PSO 体现——任务 1 演示攻击时用的还是此前课程设的默认域密码策略，攻击成功后才在任务 3 加固，对比"加固前能喷成功、加固后会被锁"的差异。复盘环节自己把整个流程在脑子里过一遍，体会攻防两端各自的视角。再次强调道德与法律边界。</aside>
+</section>
+
+<!-- 04 概念：密码攻击方式 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>两种常见的在线密码攻击</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>方式</th><th>做法</th><th>特点</th></tr>
+      <tr><td>暴力破解<br>Brute force</td><td>固定一个用户名，试大量密码</td><td>很快触发账户锁定，噪声大</td></tr>
+      <tr><td>密码喷射<br>Password spray</td><td>固定几个常见密码，试大量用户名</td><td>每个账户失败次数少，更难被锁定</td></tr>
+    </table>
+    <div class="grid2">
+      <div class="card bad"><h3>攻击者为什么偏好喷射</h3><ul class="points"><li>避开"连续失败就锁定"的策略</li><li>一个弱口令往往多人在用</li></ul></div>
+      <div class="card good"><h3>防御核心</h3><ul class="points"><li>强制长密码 + 复杂度</li><li>锁定阈值 + 观察窗口</li><li>监控失败登录来源</li></ul></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">提问：如果锁定阈值是 5 次，攻击者如何绕过？答案就是密码喷射——每个账户只试 3 次，换下一个账户。所以单靠账户锁定不够，还要靠监控和强密码。强调在线攻击与离线破解（抓到哈希后本地跑字典）的区别，本课只做在线。</aside>
+</section>
+
+<!-- 05 任务1 准备弱口令账户 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 22′ · DC1→Kali</span></span><h2>准备测试账户（教学专用）</h2><button class="more" data-pop="pop-l28-t1a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l28-t1a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 DC1 上临时放宽策略，创建一个弱口令账户</div>
+<pre><code class="language-powershell" data-trim>
+New-ADUser -Name "weakuser" -SamAccountName "weakuser" `
+  -UserPrincipalName "weakuser@lab.local" `
+  -Path "OU=IT-Dept,OU=Company,DC=lab,DC=local" `
+  -AccountPassword (ConvertTo-SecureString "Password123" -AsPlainText -Force) `
+  -Enabled $true -PasswordNeverExpires $true
+</code></pre>
+    <div class="callout warn"><b>仅限实验：</b>生产环境永远不要创建弱口令账户。本账户任务 3 结束时必须删除。第 19 课把默认域密码策略改成了最小长度 10，纯 <code>Password1</code>（9 位）会被拒绝，这里用 11 位的 <code>Password123</code> 顶格达标但仍"够弱"（字典常见词+序号）。</div>
+  </div>
+</div>
+<aside class="notes">这个账户故意用弱口令 Password123，是为了演示攻击能成功；它满足第 19 课设的长度门槛（≥10），但仍是常见词+数字的弱组合，字典里排第一就能命中。强调这是教学"靶子"，演示完立即删除，不能遗留。</aside>
+<template id="pop-l28-t1a-steps">
+  <h3>📋 详细步骤：准备教学用弱口令账户</h3>
+  <h4>第一步：以管理员身份打开 PowerShell</h4>
+  <p>在 DC1 上右键「开始」→ <b>Windows PowerShell (管理员)</b>，并确认已 <code>Import-Module ActiveDirectory</code>（AD 模块通常默认已加载）。</p>
+  <h4>第二步：创建弱口令账户</h4>
+<pre>New-ADUser -Name "weakuser" -SamAccountName "weakuser" `
+  -UserPrincipalName "weakuser@lab.local" `
+  -Path "OU=IT-Dept,OU=Company,DC=lab,DC=local" `
+  -AccountPassword (ConvertTo-SecureString "Password123" -AsPlainText -Force) `
+  -Enabled $true -PasswordNeverExpires $true</pre>
+  <div class="tip">如果报错"密码不满足长度、复杂度或历史要求"，不要去降低域密码策略！先确认密码长度 ≥ 10（第 19 课设的门槛），比如用 <code>Password123</code>（11 位）而不是 <code>Password1</code>（9 位）。</div>
+  <h4>第三步：验证账户已创建</h4>
+<pre>Get-ADUser -Identity weakuser | Select-Object Name,Enabled</pre>
+  <p>应看到 <code>Enabled : True</code>。</p>
+  <h4>第四步：提醒</h4>
+  <ol>
+    <li>这个账户只用于本课演示，<b>任务 3 结束时必须删除</b>，不能留在域里</li>
+    <li>切换到 Kali，准备下一步的 Hydra 攻击</li>
+  </ol>
+</template>
+<template id="pop-l28-t1a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">配置项</th><th>意义</th></tr>
+    <tr><td>密码 <code>Password123</code>（11位）</td><td>第 19 课把域默认密码策略改成了<b>最小长度 10</b>，纯 <code>Password1</code> 只有 9 位，创建账户时会被域策略直接拒绝。用 11 位的 <code>Password123</code> 刚好过了长度门槛，但本质上仍是"常见词+数字"的弱组合——放进任何密码字典的前几行都能命中，不影响教学效果。</td></tr>
+    <tr><td><code>-PasswordNeverExpires $true</code></td><td>避免账户在演示过程中因为密码过期策略被自动锁掉，确保 Hydra 攻击演示期间这个账户一直可用。</td></tr>
+    <tr><td>放在 <code>OU=IT-Dept,OU=Company</code></td><td>和第 18 课建立的组织架构保持一致，而不是丢在域根目录下，模拟真实环境里"员工账户归属到对应部门 OU"的做法。</td></tr>
+    <tr><td>为什么不能"降低域策略"来绕过</td><td>临时降低整个域的密码策略会影响域里<b>所有</b>账户的安全基线，哪怕演示完"改回去"，这个操作本身在真实环境里是极其危险的做法——正确思路永远是"让弱口令账户的密码刚好压线通过"，而不是"放宽整体标准"。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 06 任务1 Hydra 喷射 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 22′ · Kali</span></span><h2>用 Hydra 做密码喷射</h2><button class="more" data-pop="pop-l28-t1b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l28-t1b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-bash" data-trim>
+echo -e "weakuser\nadministrator\nalice\nbob" > users.txt
+echo -e "Password123\nP@ssw0rd2024\n1234567890\nadmin12345" > passwords.txt
+hydra -L users.txt -P passwords.txt rdp://10.10.10.10:3390 -V
+</code></pre>
+    <div class="grid2">
+      <div class="card"><h3>参数</h3><ul class="points"><li><code>-L</code> 用户名字典</li><li><code>-P</code> 密码字典</li><li><code>rdp://...:3390</code> 第 21 课改过的 RDP 端口</li><li><code>-V</code> 逐条显示尝试</li></ul></div>
+      <div class="card good"><h3>预期结果</h3><p class="small">Hydra 报出 <code>login: weakuser  password: Password123</code>，表示破解成功。📝 记录这条证据。</p></div>
+    </div>
+    <div class="callout warn"><b>为什么不用 smb：</b>第 24 课加固把 SMB 签名设成了"必需"，老版 Hydra 的 smb 模块无法完成握手，会报 <code>invalid reply from target</code>。改打 RDP（第 21 课改过端口 3390）演示效果等价。</div>
+  </div>
+</div>
+<aside class="notes">你在 Kali 上操作，自己同步记下每条成功记录。-V 会把所有尝试都打印出来，方便和后面在 DC1 上查到的日志对照。如果连不上，先用 nmap -p 3390 确认 RDP 端口在任务开始前是通的。强调字典很小只是为了课堂演示快，真实攻击字典有百万条。</aside>
+<template id="pop-l28-t1b-steps">
+  <h3>📋 详细步骤：用 Hydra 做密码喷射</h3>
+  <h4>第一步：在 Kali 上准备字典文件</h4>
+<pre>echo -e "weakuser\nadministrator\nalice\nbob" > users.txt
+echo -e "Password123\nP@ssw0rd2024\n1234567890\nadmin12345" > passwords.txt</pre>
+  <p>用户名字典包含刚创建的 weakuser，密码字典里包含它的真实密码 Password123——真实攻击里这类字典会从泄露数据库、常见密码表中生成，这里为了课堂演示缩短为几行。</p>
+  <h4>第二步：确认目标端口可达</h4>
+<pre>nc -zv 10.10.10.10 3390</pre>
+  <p>（或用 <code>nmap -p 3390 10.10.10.10</code>）确认 RDP 服务在 3390 端口上监听，这是第 21 课改过的端口。</p>
+  <h4>第三步：运行 Hydra</h4>
+<pre>hydra -L users.txt -P passwords.txt rdp://10.10.10.10:3390 -V</pre>
+  <div class="tip">RDP 模块比较慢（协议本身握手开销大），每次尝试可能要几秒钟，耐心等待。看到类似 <code>[3390][rdp] host: 10.10.10.10   login: weakuser   password: Password123</code> 的绿色提示即为破解成功。</div>
+  <h4>第四步：记录证据</h4>
+  <ol>
+    <li>截图或复制这行成功记录，作为任务证据的一部分</li>
+    <li>接下来切回 DC1，去安全日志里找对应的失败尝试</li>
+  </ol>
+</template>
+<template id="pop-l28-t1b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">配置项</th><th>意义</th></tr>
+    <tr><td>打 RDP 而不是 SMB</td><td>第 24 课系统加固把 DC1 的 SMB 签名设成了"必需"（<code>RequireSecuritySignature=True</code>），旧版本 Hydra 的 smb 模块无法完成这种强制签名的握手，会直接报错退出。RDP 协议没有这个限制，演示效果等价（都是"猜密码+尝试登录"）。</td></tr>
+    <tr><td><code>-L</code> / <code>-P</code></td><td>分别指定用户名字典和密码字典文件，Hydra 会对两个列表做笛卡尔积（每个用户名尝试每个密码），这正是"密码喷射"（password spraying）的本质——广撒网式地尝试常见弱密码组合。</td></tr>
+    <tr><td><code>-V</code>（Verbose）</td><td>打印出每一次尝试的详情（而不只是最后成功的那条），方便和 DC1 上的失败登录日志数量对照验证。</td></tr>
+    <tr><td>字典很小（4用户×4密码=16次尝试）</td><td>只是为了课堂演示在几秒内看到结果；真实攻击里的字典可能有几万到几百万条，耗时会长得多，但原理完全相同。</td></tr>
+    <tr><td>为什么这是教学"靶子"而非真实渗透测试</td><td>我们提前知道弱密码是什么并故意设置了它，目的是让你自己在攻击者和防御者两个视角都能观察到攻击的全过程和对应的防御证据，这是受控的教学演示，不代表真实渗透测试的完整流程。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 07 任务2 查失败登录 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">检测 · 任务 2 <span class="t">· 22′ · DC1</span></span><h2>在安全日志中找失败登录（4625）</h2></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Get-WinEvent -FilterHashtable @{LogName='Security'; ID=4625} -MaxEvents 50 |
+  Select-Object TimeCreated,
+    @{N='IP';E={$_.Properties[19].Value}},
+    @{N='User';E={$_.Properties[5].Value}} |
+  Format-Table
+</code></pre>
+    <div class="callout"><b>事件 ID 4625</b> = 登录失败。<code>Properties[19]</code> 是来源 IP，<code>Properties[5]</code> 是尝试的用户名。</div>
+  </div>
+</div>
+<aside class="notes">你以管理员身份在 DC1 上运行。短时间内出现大量 4625 且来源都是 10.10.10.50，就是密码攻击的典型特征。Properties 的下标和具体 Windows 版本有关，若取不到 IP，可改用 $_.Message 直接看文本。接下来可以切到 CLIENT1，用同样的方式远程查询 DC1 的日志做同步监控。</aside>
+</section>
+
+<!-- 08 任务2 统计来源与锁定 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">检测 · 任务 2 <span class="t">· 22′ · DC1</span></span><h2>统计攻击来源 · 检查账户锁定</h2></div>
+  <div class="body">
+    <div class="code-cap">按来源 IP 分组统计失败次数</div>
+<pre><code class="language-powershell" data-trim>
+Get-WinEvent -FilterHashtable @{LogName='Security'; ID=4625} |
+  Group-Object {$_.Properties[19].Value} |
+  Sort-Object Count -Descending
+
+Search-ADAccount -LockedOut | Select-Object Name, LockedOut, LastLogonDate
+Get-ADUser weakuser -Properties LockedOut, BadLogonCount, LastBadPasswordAttempt
+</code></pre>
+    <div class="callout warn"><b>读数：</b>哪个 IP 的失败次数最多？weakuser 的 BadLogonCount 是多少？是否已被锁定？</div>
+  </div>
+</div>
+<aside class="notes">分组统计能一眼看出攻击源。Search-ADAccount -LockedOut 列出所有被锁账户——如果任务 3 的锁定策略已经生效，攻击过程中这里会出现被锁的账户。BadLogonCount 显示连续失败次数，和锁定阈值对照。把"攻击源 IP + 失败次数"填进安全事件记录表，留作证据。</aside>
+</section>
+
+<!-- 09 任务3 细粒度密码策略 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 22′ · DC1</span></span><h2>配置细粒度密码策略（PSO）</h2><button class="more" data-pop="pop-l28-t3a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l28-t3a-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+New-ADFineGrainedPasswordPolicy -Name "Strict-PSO" `
+  -Precedence 10 -MinPasswordLength 12 `
+  -LockoutThreshold 3 -LockoutDuration "00:30:00" `
+  -LockoutObservationWindow "00:15:00" `
+  -ComplexityEnabled $true -ReversibleEncryptionEnabled $false `
+  -MaxPasswordAge "60.00:00:00" -MinPasswordAge "1.00:00:00" `
+  -PasswordHistoryCount 10
+
+Add-ADFineGrainedPasswordPolicySubject -Identity "Strict-PSO" -Subjects "Domain-IT"
+</code></pre>
+    <div class="callout"><b>Precedence</b> 越小优先级越高；PSO 可对特定组覆盖默认域密码策略。</div>
+  </div>
+</div>
+<aside class="notes">细粒度密码策略（PSO）允许对不同的组设不同策略，比默认域策略更灵活。这里对 Domain-IT 组强制 12 位、复杂度、3 次锁定、30 分钟。-Subjects 要指向一个实际存在的组，若没有 Domain-IT 组就换成实验里真实存在的组。锁定观察窗口 15 分钟意味着 15 分钟内累计 3 次失败才锁。</aside>
+<template id="pop-l28-t3a-steps">
+  <h3>📋 详细步骤：配置细粒度密码策略（PSO）</h3>
+  <h4>第一步：确认目标组存在</h4>
+<pre>Get-ADGroup -Identity "Domain-IT"</pre>
+  <p>Domain-IT 是第 18 课建立组织架构时创建的组，确认它存在；如果你的环境里组名不同，后面命令里的 <code>-Subjects</code> 要换成实际存在的组名。</p>
+  <h4>第二步：创建 PSO</h4>
+<pre>New-ADFineGrainedPasswordPolicy -Name "Strict-PSO" `
+  -Precedence 10 -MinPasswordLength 12 `
+  -LockoutThreshold 3 -LockoutDuration "00:30:00" `
+  -LockoutObservationWindow "00:15:00" `
+  -ComplexityEnabled $true -ReversibleEncryptionEnabled $false `
+  -MaxPasswordAge "60.00:00:00" -MinPasswordAge "1.00:00:00" `
+  -PasswordHistoryCount 10</pre>
+  <h4>第三步：把 PSO 应用到组</h4>
+<pre>Add-ADFineGrainedPasswordPolicySubject -Identity "Strict-PSO" -Subjects "Domain-IT"</pre>
+  <h4>第四步：验证</h4>
+<pre>Get-ADFineGrainedPasswordPolicy -Identity "Strict-PSO" |
+  Select-Object MinPasswordLength,LockoutThreshold,ComplexityEnabled
+Get-ADFineGrainedPasswordPolicySubject -Identity "Strict-PSO"</pre>
+  <p>第一条应看到 <code>MinPasswordLength=12</code>、<code>LockoutThreshold=3</code>、<code>ComplexityEnabled=True</code>；第二条应看到 Domain-IT 在列表里。</p>
+</template>
+<template id="pop-l28-t3a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">参数</th><th>意义</th></tr>
+    <tr><td><code>-Precedence 10</code></td><td>当一个用户同时适用多个 PSO 时，<b>数字越小优先级越高</b>。设成 10（相对较小）确保这个策略在冲突时能生效，具体数值在没有其它 PSO 竞争时不太关键，但要养成显式指定的习惯。</td></tr>
+    <tr><td><code>-MinPasswordLength 12</code></td><td>比默认域策略（第 19 课设的 10 位）更严格，专门给 IT 部门这类高权限岗位设置更高门槛——这正是"细粒度"的意义：不同岗位风险不同，策略也应该不同。</td></tr>
+    <tr><td><code>-LockoutThreshold 3</code></td><td>连续 3 次登录失败就锁定账户，直接针对今天演示的密码喷射攻击——攻击者尝试几次密码就会触发锁定，大幅提高暴力破解成本。</td></tr>
+    <tr><td><code>-LockoutObservationWindow</code> / <code>-LockoutDuration</code></td><td>观察窗口（15分钟）内累计到阈值次数才算触发锁定；锁定后维持 30 分钟才自动解锁（或由管理员手动解锁）。</td></tr>
+    <tr><td><code>Add-ADFineGrainedPasswordPolicySubject</code></td><td>PSO 创建后默认不生效于任何人，必须显式"绑定"到用户或组才会真正应用——这一步容易被忘记，导致"策略建了但没用"。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 10 任务3 清理 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 22′ · DC1</span></span><h2>清理测试账户 · 解锁合法用户</h2><button class="more" data-pop="pop-l28-t3b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l28-t3b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Remove-ADUser -Identity "weakuser" -Confirm:$false
+Search-ADAccount -LockedOut | Unlock-ADAccount
+</code></pre>
+    <ul class="points check">
+      <li>删除演示用的弱口令账户 weakuser</li>
+      <li>解锁攻击过程中被误锁的合法账户</li>
+      <li>切到 SVR2 上确认文件/Web 服务未受影响</li>
+    </ul>
+    <div class="callout warn">教学靶子用完必须清理，避免遗留弱口令账户成为真实隐患。</div>
+  </div>
+</div>
+<aside class="notes">这是收尾也是安全习惯：攻击演示留下的东西要全部清掉。Search-ADAccount -LockedOut | Unlock-ADAccount 会解锁所有被锁账户，确认里面没有攻击者账户需要保留观察后再执行。最后切到 SVR2，验证攻击期间服务可用性没下降，说明攻击只是尝试登录没有造成实际破坏。</aside>
+<template id="pop-l28-t3b-steps">
+  <h3>📋 详细步骤：清理测试账户 · 解锁合法用户</h3>
+  <h4>第一步：删除演示用的弱口令账户</h4>
+<pre>Remove-ADUser -Identity "weakuser" -Confirm:$false</pre>
+  <h4>第二步：确认删除成功</h4>
+<pre>Get-ADUser -Identity "weakuser" -ErrorAction SilentlyContinue</pre>
+  <p>应该报错"找不到对象"，说明已经删除干净，不会在 check28.ps1 检查时被判定为"遗留"。</p>
+  <h4>第三步：检查并解锁被误锁的账户</h4>
+<pre>Search-ADAccount -LockedOut</pre>
+  <div class="tip">先看一遍列表里有哪些账户，确认都是测试过程中正常被锁的（比如密码喷射时用到的 alice/bob 字典名），没有可疑的陌生账户，再统一解锁。</div>
+<pre>Search-ADAccount -LockedOut | Unlock-ADAccount</pre>
+  <h4>第四步：验证清理结果</h4>
+<pre>Search-ADAccount -LockedOut</pre>
+  <p>应该返回空结果（没有被锁账户）。</p>
+</template>
+<template id="pop-l28-t3b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">操作</th><th>意义</th></tr>
+    <tr><td>必须删除 weakuser</td><td>这是专门为演示创建的弱口令账户，如果留在域里就是一个真实的安全隐患——任何人（包括真正的攻击者）都可能用同样的密码喷射方式登录进来。"演示完立即清理"是贯穿整个教学环境的安全习惯。</td></tr>
+    <tr><td>先看一遍再统一解锁</td><td>批量解锁前先确认锁定的账户都是预期内的（演示字典里涉及的名字），避免在真实环境里不假思索地解锁了一个本该保持锁定状态观察的、真正被攻击者尝试过的账户。</td></tr>
+    <tr><td><code>Search-ADAccount -LockedOut</code></td><td>这是 AD 模块提供的专用 cmdlet，直接返回所有当前被锁定的账户对象，比逐个查 <code>LockedOut</code> 属性方便得多。</td></tr>
+    <tr><td>验证清理后结果为空</td><td>确认收尾干净，不给下一课（第 29 课 Sysmon 部署）留下"环境不干净"的隐患——这也是检查脚本 check28.ps1 里"没有遗留被锁定账户"这一项的直接依据。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 11 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>攻击打不动 / 日志看不到？</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>Hydra 连不上 3390</td><td>RDP 端口被防火墙拦 / NLA 限制</td><td>确认 3390 在实验网放行，Kali↔DC1 可达；RDP 模块较慢是正常现象</td></tr>
+      <tr><td>weakuser 创建失败</td><td>密码长度 &lt; 第19课设的最小长度10</td><td>密码至少 10 位（如 Password123），不要降复杂度</td></tr>
+      <tr><td>查不到 4625</td><td>未启用登录失败审核</td><td>组策略开启"审核登录事件：失败"</td></tr>
+      <tr><td>Properties[19] 为空</td><td>版本字段下标不同</td><td>改用 <code>$_.Message</code> 文本匹配 IP</td></tr>
+      <tr><td>合法用户登录不了</td><td>被锁定策略误锁</td><td><code>Unlock-ADAccount</code> 解锁</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">最常见两个坑：一是失败登录审核没开，日志里什么都没有；二是 Properties 下标因版本不同取不到 IP。审核策略在第 21 课讲过，可回看。</aside>
+</section>
+
+<!-- 12 复盘与小结 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">复盘 + 小结</span><h2>攻防两端各看到了什么</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>攻击视角看到</h3><p class="small">弱口令 + 可枚举用户 = 喷射能成功；强口令 + 锁定让攻击成本飙升</p></div>
+      <div class="card blue"><h3>防御视角看到</h3><p class="small">同一源 IP 大量 4625；PSO 把弱口令堵在门外</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">强密码 + 锁定 + 监控三者缺一不可</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 29 课：</b>日志分析与入侵检测。部署 Sysmon，把今天的攻击痕迹看得更清楚。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check28.ps1" download>check28.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 DC1 以管理员身份运行 <code>check28.ps1</code> 生成检查报告，连同 Hydra 破解结果一起提交。</div>
+  </div>
+</div>
+<aside class="notes">复盘时自己换个角度回看：刚才在 Kali 上是攻击者视角，现在回到 DC1/CLIENT1/SVR2 体会防御者视角——同一个人、同一套环境，前后两种立场看到的证据正好对应起来。出口小测：1. 密码喷射为什么能绕过账户锁定？2. 事件 ID 4625 代表什么？3. PSO 与默认域密码策略的区别是什么？最后收尾对照清单逐项人工核对，确认后拍快照 Lesson28-Done。本课程暂未提供自动评分脚本，由师生对照清单人工验收。</aside>
+</section>
+
+<!-- 13 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>对照清单自查</h2></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>Strict-PSO 已创建并应用到目标组</li>
+        <li>weakuser 已删除，被锁账户已解锁</li>
+        <li>攻击阶段的破解证据、防御阶段的 4625 统计已记录</li>
+        <li>SVR2 服务可用性确认正常</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>相关 VM 拍快照<br><code>Lesson28-Done</code></p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">自己在 DC1 上逐项核对清单，由师生对照清单人工验收。本课程暂未提供自动评分脚本，若后续配发脚本可在此处运行。拍快照前再确认 weakuser 确实删掉了。下节课 Sysmon 会在此快照基础上继续，所以环境要干净。</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script src="assets/popup.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+</body>
+</html>

