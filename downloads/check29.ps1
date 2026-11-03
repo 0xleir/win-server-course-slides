@@ -24,11 +24,36 @@ else { Add-Item "模拟可疑活动产物(recon.txt/users.txt)存在" "WARN" "�
 $fail2 = @(Get-WinEvent -FilterHashtable @{LogName='Security';Id=4625;StartTime=(Get-Date).AddHours(-2)} -EA SilentlyContinue)
 Add-Item "近2小时内 4625 失败登录(采集)" "INFO" "" ($fail2.Count.ToString() + " 条")
 
-Add-Task "任务3 · 事件转发 WEF(诚实标注: 需要第二台域成员服务器 SVR2 配合, 单机环境无法验证)"
+Add-Task "任务3 · 事件转发 WEF"
 $wecsvc = Get-Service Wecsvc -EA SilentlyContinue
 if($wecsvc -and $wecsvc.Status -eq "Running"){ Add-Item "DC1 已配置为 WEF 收集器(wecutil qc, Wecsvc 运行中)" "PASS" "Running" "Running" }
 else { Add-Item "DC1 已配置为 WEF 收集器(wecutil qc, Wecsvc 运行中)" "FAIL" "Running" ($(if($wecsvc){"$($wecsvc.Status)"}else{"未配置"})) "wecutil qc" }
 
-Add-Item "SVR2 作为日志源的订阅是否生效" "FAIL" "订阅 Active 且能收到 SVR2 日志" "本实验环境无可靠 SVR2,诚实标注为无法验证(与第21-24课对SVR2的处理一致)" "需要第二台域成员服务器配合,参见课程设计方案任务3"
+# 真跑 SVR2 订阅检查: 1) 至少有一条 Active 的订阅, 2) ForwardedEvents 日志里能查到来自 SVR2 的事件
+$subActive = $false; $subInfo = "无订阅"
+try {
+  $subs = & wecutil es 2>$null
+  if($subs){
+    foreach($name in $subs){
+      $name = $name.Trim(); if(!$name){ continue }
+      $gs = & wecutil gs "$name" 2>$null
+      $enabled = ($gs | Where-Object { $_ -match 'Enabled:\s*true' })
+      $status  = ($gs | Where-Object { $_ -match 'RuntimeStatus:\s*Active|Status:\s*Active' })
+      if($enabled -and $status){ $subActive = $true; $subInfo = "订阅 $name = Active"; break }
+    }
+    if(!$subActive){ $subInfo = "订阅存在但无 Active: $($subs -join ',')" }
+  }
+} catch { $subInfo = "wecutil 执行失败: $($_.Exception.Message.Split([char]10)[0])" }
+
+$fwdFromSvr2 = @(Get-WinEvent -LogName "ForwardedEvents" -MaxEvents 500 -EA SilentlyContinue |
+  Where-Object { $_.MachineName -match '^SVR2' -or $_.MachineName -match '^svr2' })
+
+if($subActive -and $fwdFromSvr2.Count -gt 0){
+  Add-Item "SVR2 作为日志源的订阅是否生效" "PASS" "订阅 Active 且 ForwardedEvents 有 SVR2 日志" ("$subInfo; SVR2 事件 $($fwdFromSvr2.Count) 条")
+} elseif($subActive){
+  Add-Item "SVR2 作为日志源的订阅是否生效" "WARN" "订阅 Active 且 ForwardedEvents 有 SVR2 日志" ("$subInfo; 但 ForwardedEvents 中未见 SVR2 事件") "SVR2 侧确认: winrm quickconfig; 把 LAB\DC-01$ 加入 SVR2 的 Event Log Readers 组; 等几分钟或在 SVR2 产生新事件"
+} else {
+  Add-Item "SVR2 作为日志源的订阅是否生效" "FAIL" "订阅 Active 且 ForwardedEvents 有 SVR2 日志" $subInfo "DC1 上 wecutil cs C:\LabFiles\subscription.xml 导入订阅; SVR2 侧 winrm quickconfig + 把 LAB\DC-01$ 加入 Event Log Readers"
+}
 
 Export-CheckReport
