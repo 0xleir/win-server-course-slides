@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第34课 · 企业安全加固</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">综合实战 · 企业网络安全加固（第 31–35 课）　|　第 34 次课 · 学时 67–68</p>
+  <h1>企业安全加固</h1>
+  <p class="muted">把前 33 课学过的加固手段，一次性落到整个企业环境</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM2 + VM3 + VM4</span></div>
+</div>
+<aside class="notes">开场：第 31–33 课把企业环境"搭起来、连起来"，今天要把它"关起来"，下节课第 35 课就是你用今天加固的环境做渗透测试与应急响应演练，今天加固得好不好，下节课直接见分晓。本课没有新命令，几乎全部是第 4、16、19、21、24、29 课命令的组合复用。流程：先在 Kali 上扫一次"加固前"，再依次在 DC1、SVR2 上做防火墙与审计加固，在 CLIENT1 上验证 GPO 与业务，最后切回 Kali 扫一次"加固后"做对比。</aside>
+</section>
+
+<!-- 02 进度 + 目标 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>综合项目进度</h2></div>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:1"><span class="t">第 31 课</span><b>规划</b>架构图 · 配置清单</div>
+      <div class="seg" style="flex:1"><span class="t">第 32 课</span><b>部署</b>IIS · HTTPS · 共享 · DNS</div>
+      <div class="seg" style="flex:1"><span class="t">第 33 课</span><b>整合</b>驱动器映射 · 集成认证 · FTP</div>
+      <div class="seg" style="flex:1"><span class="t">第 34 课</span><b>加固</b><span class="orange">★ 本课</span></div>
+      <div class="seg" style="flex:1"><span class="t">第 35 课</span><b>对抗</b>渗透测试 · 应急响应</div>
+    </div>
+    <div class="grid2">
+      <div class="card blue">
+        <h3>下课时你应该能够</h3>
+        <ul class="points check">
+          <li>按"白名单"为 DC1、SVR2 统一防火墙策略</li>
+          <li>用 GPO 落地应用控制、USB 禁用、锁屏</li>
+          <li>部署 Sysmon + 日志转发并出基线报告</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>本课交付物</h3>
+        <ul class="points">
+          <li>两台服务器的 SecurityReport 输出</li>
+          <li>你的加固前 / 后 nmap 对比</li>
+          <li>四台 VM 快照 <code>Lesson34-Done</code></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">原文本课为"全天任务"，未给各子任务时长，建议：防火墙 25′、组策略 25′、审计 20′、基线与对比 20′，可由教师调整。交付物中的 nmap 对比是本稿补充，原文只要求运行 SecurityReport.ps1 和拍快照，但它正好为第 35 课的渗透测试报告做准备。提问：为什么加固课排在红蓝对抗之前，而不是之后？</aside>
+</section>
+
+<!-- 03 拓扑 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">第二步<br>AD/DNS/DHCP/CA · WEF 收集器</div></div>
+      <div class="host"><div class="ic">🗄️</div><b>SVR2</b><div class="ip">10.10.10.20</div><div class="role">第三步<br>IIS · FTP · 文件共享</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">第四步<br>域成员 · GPO 验证</div></div>
+      <div class="host"><div class="ic">🐉</div><b>Kali</b><div class="ip">10.10.10.50</div><div class="role">第一步 / 第五步<br>nmap 加固前后对比</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>起点：</b>恢复快照 <code>Lesson33-Done</code>，所有服务可从 CLIENT1 访问</div>
+      <div class="callout warn"><b>开工前：</b>先在 Kali 上扫一次"加固前"，再备份防火墙</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">四台都开机，确认 CLIENT1 能访问第 33 课的网站、映射盘和 FTP，否则先修复再加固，不然分不清问题是旧的还是今天加固造成的。"加固前"扫描必须在动手改配置之前完成。Kali 不入域，只在 10.10.10.0/24 内活动。</aside>
+</section>
+
+<!-- 04 概念：纵深防御 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>纵深防御：一层失守，下一层兜底</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">① 网络层 · 防火墙白名单（任务 1）</div>
+        <div class="nest">
+          <div class="lbl">② 主机层 · GPO 锁屏 / USB（任务 2）</div>
+          <div class="nest">
+            <div class="lbl">③ 应用层 · SRP / AppLocker（任务 2）</div>
+            <span class="obj">📁 数据</span><span class="obj">🔑 账号</span>
+          </div>
+        </div>
+      </div>
+      <table class="tbl">
+        <tr><th>贯穿各层</th><th>作用</th></tr>
+        <tr><td><b>审计监控</b></td><td>Sysmon + 日志转发到 DC1（任务 3）</td></tr>
+        <tr><td><b>基线验证</b></td><td>SecurityReport.ps1 证明"真的加固了"（任务 4）</td></tr>
+        <tr><td><b>对抗检验</b></td><td>加固前后 nmap 对比</td></tr>
+      </table>
+    </div>
+    <div class="callout"><b>一句话：</b>没有一层是万无一失的；防住的靠前三层，没防住的靠"看得见"。</div>
+  </div>
+</div>
+<aside class="notes">举例：攻击者绕过防火墙（例如通过钓鱼进到 CLIENT1），USB 禁用和应用控制让他带不进、跑不了工具；即使都失败，Sysmon 的进程创建事件也会被转发到 DC1 留下证据。提问：如果只能做一层，你选哪层？引出下一页的优先级。可以把这张图画进你的加固记录。</aside>
+</section>
+
+<!-- 05 概念：优先级 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>加固优先级：先做什么</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:12%">顺序</th><th style="width:30%">加固项</th><th>理由</th></tr>
+      <tr><td>1</td><td>备份 + 防火墙</td><td>暴露面最大、见效最快；先备份才能放心改</td></tr>
+      <tr><td>2</td><td>审计与 Sysmon</td><td>先"看得见"，后面每一步出问题都有记录可查</td></tr>
+      <tr><td>3</td><td>GPO 加固</td><td>影响所有域成员，改前要想清楚链接到哪个 OU</td></tr>
+      <tr><td>4</td><td>基线报告 + 扫描</td><td>用证据收尾：报告 + nmap 对比</td></tr>
+    </table>
+    <div class="callout warn"><b>原则：</b>每改一项，立刻从 CLIENT1 测一次业务；不要攒到最后一起测。</div>
+  </div>
+</div>
+<aside class="notes">原文按"防火墙 → 组策略 → 审计 → 基线"排列，本页是本稿建议的思考顺序，课堂上仍按原文任务编号推进，但审计（任务 3）可以和任务 2 并行由不同角色完成。最常见的错误是一口气改完所有东西再测，结果网站打不开却不知道是哪一步造成的。</aside>
+</section>
+
+<!-- 06 任务1 防火墙 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 22′ · DC1 + SVR2</span></span><span class="chip">回顾第 16、21 课</span><h2>防火墙统一策略</h2><button class="more" data-pop="pop-l34-t1-steps">📋 详细步骤</button><button class="more" data-pop="pop-l34-t1-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">两台服务器都执行：默认阻止入站</div>
+<pre><code class="language-powershell" data-trim>
+Set-NetFirewallProfile -Profile Domain,Public,Private `
+  -DefaultInboundAction Block -DefaultOutboundAction Allow
+$in = @{Direction="Inbound"; Action="Allow"}
+</code></pre>
+    <div class="code-cap">再分别放行清单端口（先在 DC1 上做，再在 SVR2 上做）</div>
+<pre><code class="language-powershell" data-trim>
+# DC1：DNS · DHCP · AD · HTTPS · WinRM
+New-NetFirewallRule @in -DisplayName "DC1-TCP" `
+  -Protocol TCP -LocalPort 53,88,389,445,636,443,3390,5985,5986
+New-NetFirewallRule @in -DisplayName "DC1-UDP" `
+  -Protocol UDP -LocalPort 53,67,68,88,389
+# SVR2：HTTP·HTTPS·FTP·SMB·管理
+New-NetFirewallRule @in -DisplayName "SVR2-TCP" `
+  -Protocol TCP -LocalPort 21,80,443,445,3389,5985,5986,"50000-50100"
+</code></pre>
+  </div>
+</div>
+<aside class="notes">动手前先用第 16 课的 netsh advfirewall export C:\LabFiles\firewall-backup.wfw 备份。规则名 DC1-TCP 等是本稿命名；端口按原文，TCP/UDP 拆分是补充（DNS、Kerberos 两种都用，DHCP 只有 UDP，域控定位还用 UDP 389）。关键一步：默认阻止不会关掉以前课程建的 Any 来源放行规则（Allow-IIS、Allow HTTP 8080、Allow ICMPv4、Allow FTP、SMB-IT-Only 等），要真正"仅开放"必须把它们逐条禁用：Get-NetFirewallRule -Enabled True -Direction Inbound -Action Allow 审查后 Disable-NetFirewallRule。白名单里 DC1 的 445 给 SYSVOL（客户端拉 GPO）、5985/5986 给 WinRM 管理与日志转发、3390 给 RDP（第 21 课改过的端口），漏了会断掉任务 2/3；SVR2 的 50000-50100 是第 12 课固定的 FTP 被动端口。</aside>
+<template id="pop-l34-t1-steps">
+  <h3>📋 详细步骤：防火墙白名单</h3>
+  <h4>第一步：备份（两台都做）</h4>
+  <pre>netsh advfirewall export C:\LabFiles\firewall-backup.wfw</pre>
+  <h4>第二步：默认阻止入站</h4>
+  <pre>Set-NetFirewallProfile -Profile Domain,Public,Private `
+  -DefaultInboundAction Block -DefaultOutboundAction Allow -LogBlocked True
+$in = @{Direction="Inbound"; Action="Allow"}</pre>
+  <h4>第三步：放行清单端口</h4>
+  <pre># DC1
+New-NetFirewallRule @in -DisplayName "DC1-TCP" -Protocol TCP `
+  -LocalPort 53,88,389,445,636,443,3390,5985,5986
+New-NetFirewallRule @in -DisplayName "DC1-UDP" -Protocol UDP -LocalPort 53,67,68,88,389
+# SVR2
+New-NetFirewallRule @in -DisplayName "SVR2-TCP" -Protocol TCP `
+  -LocalPort 21,80,443,445,3389,5985,5986,"50000-50100"</pre>
+  <h4>第四步：收口旧的宽放行规则（关键）</h4>
+  <pre>Get-NetFirewallRule -Enabled True -Direction Inbound -Action Allow |
+  Where-Object DisplayName -in "Allow-IIS","Allow HTTP 8080","Allow ICMPv4",`
+    "Allow FTP","Allow FTP Passive","SMB-IT-Only" | Disable-NetFirewallRule</pre>
+  <p>默认阻止不会关掉这些以前课程建的 Any 来源规则，必须手动禁用，否则 nmap 还能扫到清单外端口。</p>
+</template>
+<template id="pop-l34-t1-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:28%">设计点</th><th>意义</th></tr>
+    <tr><td>默认入站 Block + 白名单</td><td>"默认拒绝"是防火墙的黄金法则：先全关，再按业务一个个开，暴露面最小。</td></tr>
+    <tr><td>DC1 保留 445/5985/5986/3390</td><td>445 给客户端拉 SYSVOL 里的 GPO；5985/5986 给 WinRM 管理与日志转发；3390 是第 21 课改过的 RDP 端口。漏了会断掉任务 2/3 和远程管理。</td></tr>
+    <tr><td>SVR2 保留 50000-50100</td><td>第 12 课固定的 FTP 被动端口，不放行则 FTP 列目录会卡住。</td></tr>
+    <tr><td>禁用旧的 Any 来源规则</td><td>防火墙规则是叠加的：只要还有一条 Any 来源的放行，"仅开放"就名存实亡。这步最容易被忽略。</td></tr>
+    <tr><td>先备份</td><td>万一白名单漏了管理端口把自己关在门外，可以在 VM 控制台（不走网络）用 netsh advfirewall import 还原。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 07 任务2 GPO -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 22′ · DC1 → CLIENT1</span></span><span class="chip">回顾第 19 课</span><h2>组策略安全加固</h2><button class="more" data-pop="pop-l34-t2-steps">📋 详细步骤</button><button class="more" data-pop="pop-l34-t2-why">💡 每项为什么</button></div>
+  <div class="body">
+    <p class="muted">gpmc.msc 新建 GPO → 编辑 → 计算机配置 › 策略：</p>
+    <table class="tbl">
+      <tr><th style="width:24%">要求</th><th>位置</th></tr>
+      <tr><td>SRP：隔离区禁运行</td><td>安全设置 › 软件限制策略 › 新建路径规则 <code>C:\LabFiles\*</code> = 不允许（默认级别保持"不受限"）</td></tr>
+      <tr><td>USB 存储禁用</td><td>管理模板 › 系统 › 可移动存储访问 › 可移动磁盘：拒绝读取/写入权限</td></tr>
+      <tr><td>锁屏 10 分钟</td><td>安全设置 › 本地策略 › 安全选项 › 交互式登录：计算机不活动限制 = 600 秒</td></tr>
+    </table>
+    <div class="code-cap">第四步 · CLIENT1 上验证（第 19 课）</div>
+<pre><code class="language-powershell" data-trim>
+gpupdate /force
+gpresult /r
+</code></pre>
+    <div class="callout"><b>本课取定：</b>GPO 名 <code>Hardening-Policy</code>，<b>链接到域根</b>并用安全筛选只应用到 CLIENT1（计算机对象在 CN=Computers，链到 Company 管不到）。用 SRP 不用 AppLocker。</div>
+  </div>
+</div>
+<aside class="notes">关键坑一：计算机配置只对计算机对象所在位置生效，CLIENT1 在 CN=Computers 容器，链到 Company OU 管不到它——所以把 Hardening-Policy 链接到域根，再用安全筛选（GPO 委派里 GpoApply 只给 CLIENT1）避免波及服务器。关键坑二：SRP 不要用"默认不允许 + 白名单路径"，那会把用户开始菜单快捷方式、AppData 下的程序全拦住（实测普通用户点 PowerShell 没反应），而且会让 PowerShell 进入 ConstrainedLanguage；本课改成"默认不受限 + 单条不允许规则 C:\LabFiles\*"，只封一个隔离目录，既能演示拦截又不影响日常使用。验证要用普通用户：管理员默认不完全受 SRP 约束。AppLocker 依赖 AppIDSvc 且版本限制多，课堂统一用 SRP。gpresult /r 里应出现 Hardening-Policy。</aside>
+<template id="pop-l34-t2-steps">
+  <h3>📋 详细步骤：组策略加固</h3>
+  <h4>第一步：新建 GPO 并链接到域根</h4>
+  <p>gpmc.msc › 右键 lab.local › 在这个域中创建 GPO 并在此处链接 › 名称 <code>Hardening-Policy</code>。</p>
+  <h4>第二步：只让 CLIENT1 应用（安全筛选）</h4>
+  <p>选中 Hardening-Policy › 右侧"范围"选项卡 › 安全筛选：删掉 Authenticated Users，添加计算机 <code>CLIENT1</code>。这样加固只落到工作站，不波及 DC/服务器。</p>
+  <h4>第三步：编辑策略（计算机配置）</h4>
+  <ul>
+    <li><b>USB：</b>管理模板 › 系统 › 可移动存储访问 › "可移动磁盘：拒绝读取权限""拒绝写入权限" = 已启用</li>
+    <li><b>锁屏：</b>Windows 设置 › 安全设置 › 本地策略 › 安全选项 › 交互式登录：计算机不活动限制 = <code>600</code></li>
+    <li><b>SRP：</b>Windows 设置 › 安全设置 › 软件限制策略 › （右键创建）；默认级别保持 <b>不受限</b>；"其他规则"里新建路径规则 <code>C:\LabFiles\*</code> = <b>不允许</b>；并在"指定的文件类型"里去掉 <b>LNK</b>（否则连快捷方式都被管）</li>
+  </ul>
+  <h4>第四步：CLIENT1 验证</h4>
+  <pre>gpupdate /force
+gpresult /r      # 应看到 Hardening-Policy</pre>
+  <p>以普通用户登录，把一个 exe 复制到 <code>C:\LabFiles</code> 双击 → "组策略阻止了这个程序"；放在别处则正常运行。插 U 盘应提示拒绝访问。</p>
+</template>
+<template id="pop-l34-t2-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:28%">设计点</th><th>意义</th></tr>
+    <tr><td>链接到域根 + 安全筛选只给 CLIENT1</td><td>CLIENT1 计算机对象在 CN=Computers 容器，链到 Company OU 到不了它；链到域根能覆盖，再用安全筛选避免把端点加固（尤其 SRP）误加到 DC/服务器上。</td></tr>
+    <tr><td>SRP 用"默认不受限 + 隔离目录禁止"</td><td>若反过来用"默认不允许 + 白名单路径"，会把用户开始菜单快捷方式、AppData 下的程序全拦住（普通用户点 PowerShell 没反应），还会让 PowerShell 进 ConstrainedLanguage。只封一个隔离目录 C:\LabFiles，演示清晰又不影响日常。</td></tr>
+    <tr><td>文件类型去掉 LNK</td><td>SRP 默认连 .lnk 快捷方式也管；去掉后只拦真正的可执行文件，用户体验正常。</td></tr>
+    <tr><td>验证要用普通用户</td><td>SRP 对本地管理员默认不完全约束，用管理员测会"没被拦"，必须换普通域用户试。</td></tr>
+    <tr><td>USB 禁用 + 锁屏</td><td>主机层加固：挡住 U 盘摆渡进来的工具、减少无人值守时被人直接操作的窗口。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 08 任务3 审计 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 18′ · DC1 + SVR2</span></span><span class="chip">回顾第 4、24、29 课</span><h2>审计全面启用</h2><button class="more" data-pop="pop-l34-t3-steps">📋 详细步骤</button><button class="more" data-pop="pop-l34-t3-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">① 两台服务器都部署 Sysmon（第 29 课）</div>
+<pre><code class="language-powershell" data-trim>
+$cfg = "C:\Tools\sysmon-config.xml"
+C:\Tools\Sysinternals\Sysmon64.exe -accepteula -i $cfg
+Get-Service Sysmon64
+</code></pre>
+    <div class="grid2">
+      <div class="card blue">
+        <h3>② DC1 当收集器</h3>
+<pre><code class="language-powershell" data-trim>
+wecutil qc
+wecutil cs C:\LabFiles\subscription.xml
+</code></pre>
+      </div>
+      <div class="card blue">
+        <h3>③ SVR2 当日志源（指向 DC1）</h3>
+<pre><code class="language-powershell" data-trim>
+winrm quickconfig
+# 注册表 ...EventForwarding\SubscriptionManager
+# 值 1 = Server=http://DC-01.lab.local:5985
+#        /wsman/SubscriptionManager/WEC,Refresh=60
+Restart-Service WinRM
+</code></pre>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">第 24 课的 auditpol 增强审计和第 4 课的审计策略应已在位，先用 auditpol /get /subcategory:"{0CCE9215-69AE-11D9-BED3-505054503030}"（登录子类别；中文系统写英文名 Logon 会报 0x57）确认，不用重做。本课用"源推送式"日志转发（实测最稳）：DC1 用 wecutil qc 当收集器、wecutil cs 建订阅 LabForward（订阅 XML 见详细步骤，必须含 Uri 元素和允许域计算机的 SDDL，订阅内容收集 SVR2 的 4624/4625/4672 和 Sysmon 日志）；SVR2 设 SubscriptionManager 注册表指向 DC1:5985 后重启 WinRM，1–2 分钟后 DC1 的"转发的事件"里就会出现 SVR2 的记录。SVR2 的 C:\Tools 下要有 Sysmon 文件，没有就从 DC1 用 445 拷过来。检查点：DC1 事件查看器 › Windows 日志 › 转发的事件 里出现来自 SVR2 的事件。</aside>
+<template id="pop-l34-t3-steps">
+  <h3>📋 详细步骤：Sysmon + 日志转发</h3>
+  <h4>第一步：两台都装 Sysmon</h4>
+  <pre>C:\Tools\Sysinternals\Sysmon64.exe -accepteula -i C:\Tools\sysmon-config.xml
+Get-Service Sysmon64</pre>
+  <p>SVR2 若没有 C:\Tools 下的文件，先从 DC1 用 445 拷：<code>Copy-Item C:\Tools\* \\SVR2\C$\Tools\ -Recurse</code>。</p>
+  <h4>第二步：DC1 当收集器 + 建订阅</h4>
+  <pre>wecutil qc        # 一路 Y</pre>
+  <p>把下面存成 <code>C:\LabFiles\subscription.xml</code>（源推送式，含 Uri 和允许域计算机的 SDDL）：</p>
+  <pre>&lt;Subscription xmlns="http://schemas.microsoft.com/2006/03/windows/events/subscription"&gt;
+  &lt;SubscriptionId&gt;LabForward&lt;/SubscriptionId&gt;
+  &lt;SubscriptionType&gt;SourceInitiated&lt;/SubscriptionType&gt;
+  &lt;Enabled&gt;true&lt;/Enabled&gt;
+  &lt;Uri&gt;http://schemas.microsoft.com/wbem/wsman/1/windows/EventLog&lt;/Uri&gt;
+  &lt;ConfigurationMode&gt;Normal&lt;/ConfigurationMode&gt;
+  &lt;Query&gt;&lt;![CDATA[&lt;QueryList&gt;&lt;Query Id="0"&gt;
+    &lt;Select Path="Security"&gt;*[System[(EventID=4624 or EventID=4625 or EventID=4672)]]&lt;/Select&gt;
+    &lt;Select Path="Microsoft-Windows-Sysmon/Operational"&gt;*&lt;/Select&gt;
+  &lt;/Query&gt;&lt;/QueryList&gt;]]&gt;&lt;/Query&gt;
+  &lt;ReadExistingEvents&gt;false&lt;/ReadExistingEvents&gt;
+  &lt;TransportName&gt;HTTP&lt;/TransportName&gt;&lt;ContentFormat&gt;RenderedText&lt;/ContentFormat&gt;
+  &lt;Locale Language="zh-CN"/&gt;&lt;LogFile&gt;ForwardedEvents&lt;/LogFile&gt;
+  &lt;AllowedSourceDomainComputers&gt;O:NSG:BAD:P(A;;GA;;;DC)S:&lt;/AllowedSourceDomainComputers&gt;
+&lt;/Subscription&gt;</pre>
+  <pre>wecutil cs C:\LabFiles\subscription.xml</pre>
+  <h4>第三步：SVR2 指向 DC1 收集器</h4>
+  <pre>winrm quickconfig
+# 注册表 HKLM\SOFTWARE\Policies\Microsoft\Windows\EventLog\
+#   EventForwarding\SubscriptionManager  值名 1 =
+# Server=http://DC-01.lab.local:5985/wsman/SubscriptionManager/WEC,Refresh=60
+Restart-Service WinRM</pre>
+  <h4>第四步：验证（DC1）</h4>
+  <p>等 1–2 分钟，在 SVR2 上登录几次（成功/失败），DC1 事件查看器 › Windows 日志 › <b>转发的事件</b> 里会出现来自 SVR2 的 4624/4625 和 Sysmon 事件。</p>
+</template>
+<template id="pop-l34-t3-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:28%">设计点</th><th>意义</th></tr>
+    <tr><td>两台都装 Sysmon</td><td>Windows 自带日志看不到"谁创建了什么进程、连了哪个 IP"；Sysmon 补上进程创建、网络连接等关键取证事件，第 35 课查攻击就靠它。</td></tr>
+    <tr><td>日志集中转发到 DC1</td><td>攻击者进了 SVR2 第一件事常是清本机日志；事件实时推到 DC1，即使源机日志被清，证据还在收集器上。</td></tr>
+    <tr><td>用"源推送式"(Source-Initiated)</td><td>源机主动把日志推给收集器，适合一对多、源机防火墙只需出站；实测比"收集器主动拉"稳。订阅 XML 必须有 Uri 元素和允许域计算机的 SDDL，少了源机不会推。</td></tr>
+    <tr><td>SubscriptionManager 指向 DC1</td><td>这条注册表（可由 GPO 下发）告诉源机"去哪个收集器报到"；设好后重启 WinRM 触发，Refresh=60 表示每 60 秒检查一次订阅。</td></tr>
+    <tr><td>只收 4624/4625/4672 + Sysmon</td><td>聚焦登录成功/失败/特权登录和进程行为，既覆盖第 35 课要查的痕迹，又不让转发日志爆量。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 09 任务4 基线 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 4 <span class="t">· 18′ · DC1 + SVR2</span></span><span class="chip">回顾第 24 课</span><h2>安全基线验证</h2></div>
+  <div class="body">
+    <div class="code-cap">先在 DC1 上把第 24 课写好的脚本拷到 SVR2，再分别运行</div>
+<pre><code class="language-powershell" data-trim>
+$src = "C:\Scripts\SecurityReport.ps1"
+Copy-Item $src -Destination "\\SVR2\C$\Scripts\"
+C:\Scripts\SecurityReport.ps1
+</code></pre>
+    <table class="tbl">
+      <tr><th style="width:34%">报告项</th><th style="width:22%">期望</th><th>不对就回顾</th></tr>
+      <tr><td>SMBv1</td><td><span class="green">False</span></td><td>第 24 课 Set-SmbServerConfiguration</td></tr>
+      <tr><td>Firewall Default Inbound</td><td><span class="green">Block</span></td><td>本课任务 1</td></tr>
+      <tr><td>Defender Real-time</td><td><span class="green">True</span></td><td>第 22 课</td></tr>
+      <tr><td>Audit Logon / LmCompat</td><td><span class="green">成功和失败 / 5</span></td><td>第 24 课 auditpol / 注册表</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">原文要求"在每台服务器运行"，但该脚本是第 24 课在 DC1 上建的，SVR2 上没有，所以先用 SMB 445（SVR2 本课放行的端口）拷过去；若 SVR2 上没有 C:\Scripts 目录先建立。SVR2 上 CA Service 一行会报找不到 CertSvc，这是正常的，CA 只在 DC1。把两台的输出截图收进交付物。</aside>
+</section>
+
+<!-- 10 加固前后对比 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">检查点 · 前后对比</span><span class="chip">回顾第 21 课</span><h2>用 nmap 验证加固效果</h2></div>
+  <div class="body">
+    <div class="code-cap">第一步 / 第五步 · Kali：加固前、加固后各跑一次，只扫实验网</div>
+<pre><code class="language-bash" data-trim>
+P=21,53,80,88,389,443,445,636,3390,5985,5986
+nmap -sT -p $P 10.10.10.0/24 -oN before.txt
+nmap -sT -p $P 10.10.10.0/24 -oN after.txt
+</code></pre>
+    <table class="tbl">
+      <tr><th style="width:26%">主机</th><th style="width:37%">加固后应 open</th><th>应变为 filtered</th></tr>
+      <tr><td>DC1 10.10.10.10</td><td>53 · 88 · 389 · 443 · 636 · 5986</td><td>其余端口</td></tr>
+      <tr><td>SVR2 10.10.10.20</td><td>21 · 80 · 443 · 445</td><td>其余端口</td></tr>
+      <tr><td>管理/业务必需端口</td><td colspan="2">DC1 的 445(SYSVOL)、3390(RDP)、5985/5986(WinRM/WEF) 保持 open——这些是业务与管理要用的，不是漏洞</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">授权与合法边界：《网络安全法》禁止未经授权扫描他人系统，只能扫本机实验网 10.10.10.0/24。端口表沿用第 21 课的 nmap -sT 写法，-oN 保存结果作为第 35 课渗透报告素材；加固后用 diff before.txt after.txt 对比。检测配对：切回 DC1/SVR2 用第 21 课的 Get-Content 查看 pfirewall.log，应看到来自 10.10.10.50 的 DROP 记录。注意：原文 DC1 清单不含 445，但客户端要从 DC1 的 SYSVOL 下载 GPO；也未列 RDP 3390 和 WEF 用的 5985，严格执行会影响任务 2、3，请教师决定是否补开。</aside>
+</section>
+
+<!-- 11 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>加固后业务坏了？按这个表查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:32%">现象</th><th style="width:32%">原因</th><th>处理</th></tr>
+      <tr><td>nmap 显示端口仍 open</td><td>旧课程的放行规则还在</td><td><code>Get-NetFirewallRule -Enabled True -Direction Inbound</code> 审查</td></tr>
+      <tr><td>FTP 能登录但列目录卡住</td><td>被动端口未放行</td><td>检查 50000-50100（第 12 课）</td></tr>
+      <tr><td>gpresult 看不到新 GPO</td><td>CLIENT1 不在链接的 OU / 读不到 SYSVOL</td><td>移动计算机对象；检查 DC1 的 445</td></tr>
+      <tr><td>转发的事件为空</td><td>SVR2 的 WinRM 被拦 / 权限缺</td><td><code>winrm quickconfig</code>；查 Event Log Readers</td></tr>
+      <tr><td>改坏了无法远程</td><td>白名单漏掉管理端口</td><td>控制台登录，<code>netsh advfirewall import</code> 还原备份</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">前四行都是"仅开放"清单和既有服务之间的冲突，正好说明加固不是越严越好，要和业务对齐。最后一行强调第 16 课的备份价值：VM 控制台不走网络，防火墙拦不住。把今天遇到的问题整理记录，用扫描结果帮忙定位。</aside>
+</section>
+
+<!-- 12 角色分工 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">操作顺序</span><h2>今天按什么顺序推进</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:10%">步骤</th><th style="width:26%">机器</th><th>本课要做的事</th></tr>
+      <tr><td><b>第一步</b></td><td>Kali</td><td>加固前 nmap 扫描，保存 before.txt</td></tr>
+      <tr><td><b>第二步</b></td><td>DC1</td><td>任务 1 防火墙 DC1 部分 · 任务 2 建 GPO · 任务 3 收集器 · 任务 4</td></tr>
+      <tr><td><b>第三步</b></td><td>SVR2</td><td>任务 1 防火墙 SVR2 部分 · 任务 3 Sysmon 与日志源 · 任务 4</td></tr>
+      <tr><td><b>第四步</b></td><td>CLIENT1</td><td>每步后测业务 · 验证 GPO · 整理报告与截图</td></tr>
+      <tr><td><b>第五步</b></td><td>Kali</td><td>加固后 nmap 扫描，保存 after.txt 并对比</td></tr>
+    </table>
+    <div class="callout warn"><b>授权边界：</b>只扫 10.10.10.0/24，不做爆破和漏洞利用——那是下节课的事，且仍限实验网。</div>
+  </div>
+</div>
+<aside class="notes">原文本课未写操作顺序，本表按"先扫描基线、再加固、最后对比"的闭环建议排列。切回 Kali 的时间较灵活，也可以用来做业务回归测试（从 Kali 用浏览器访问 SVR2 网站等）。提醒：第 35 课会用你今天加固的环境做渗透测试与应急响应演练，今天的加固质量决定下节课的演练效果。</aside>
+</section>
+
+<!-- 13 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>运行基线报告并拍快照</h2></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+C:\Scripts\SecurityReport.ps1
+</code></pre>
+    <div class="grid2">
+      <ul class="points check">
+        <li>DC1、SVR2 默认入站 = Block，仅清单端口放行</li>
+        <li>CLIENT1 gpresult 显示加固 GPO</li>
+        <li>两台服务器 Sysmon64 正在运行</li>
+        <li>DC1 转发的事件中有 SVR2 日志</li>
+        <li>before.txt / after.txt 已保存并对比</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>四台 VM 都拍快照<br><code>Lesson34-Done</code></p>
+        <p class="small muted" style="margin-top:8px">第 35 课红蓝对抗从这里开始</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">清单达成后，在 DC1、SVR2、CLIENT1 上分别运行 check34.ps1 自动核对（脚本按本机角色选检查项）。SecurityReport.ps1 的输出作为交付物之一。第 24 课的 SMBv1 禁用需要重启才完全生效，拍快照前统一重启一次再复跑报告。快照必须在四台都拍，第 35 课直接从它开始对抗。</aside>
+</section>
+
+<!-- 14 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">纵深防御：网络、主机、应用层层设防，审计兜底</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">防火墙白名单 → GPO 加固 → Sysmon + WEF → 基线报告</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">每改一步测业务；用报告和 nmap 对比证明加固有效</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 35 课：</b>渗透测试与应急响应。切到 Kali 视角，用你今天加固的环境做渗透测试与应急响应演练，自己攻、自己防、自己修复。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check34.ps1" download>check34.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），分别在 <b>DC1、SVR2、CLIENT1</b> 上以管理员 PowerShell 各运行一次生成报告，连同两台服务器的 SecurityReport 输出、加固前/后 nmap 对比一起提交。
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 为什么设了"默认阻止入站"，nmap 还能扫到原文清单外的端口？2. 计算机配置类 GPO 为什么对 CN=Computers 里的 CLIENT1 不生效？3. 日志转发里，DC1 和 SVR2 分别扮演什么角色？预告：下节课切到 Kali 视角，用你今天加固的环境做渗透测试与应急响应演练，依然只限实验网。</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script src="assets/popup.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+</body>
+</html>

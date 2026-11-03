@@ -7,6 +7,101 @@
 <link rel="stylesheet" href="vendor/reveal.css">
 <link rel="stylesheet" href="vendor/monokai.css">
 <link rel="stylesheet" href="assets/course.css">
+<style>
+/* ===== L31 架构图样本 (scoped to .l31-arch) ===== */
+.l31-arch{
+  background:linear-gradient(135deg,#0f1724 0%,#172234 100%);
+  border-radius:14px;padding:10px 18px;position:relative;overflow:hidden;
+  flex:1;display:flex;flex-direction:column;gap:6px;min-height:0;
+}
+.l31-arch::before{content:"";position:absolute;inset:0;border-radius:14px;
+  background-image:radial-gradient(circle,rgba(76,154,255,0.07) 1px,transparent 1px);
+  background-size:30px 30px;pointer-events:none;}
+.l31-arch > *{position:relative;z-index:2;}
+
+.l31-arch .arch-head{text-align:center;}
+.l31-arch .fqdn{display:inline-block;padding:4px 20px;background:rgba(255,204,85,0.1);
+  border:1.5px solid var(--yellow,#ffcc55);border-radius:14px;color:var(--yellow,#ffcc55);
+  font-family:var(--mono);font-size:18px;font-weight:700;line-height:1.4;}
+.l31-arch .fqdn::before{content:"☁️  ";}
+.l31-arch .ou-inline-k{color:#fff;font-weight:700;}
+.l31-arch .fqdn code{font-family:var(--mono);color:#fff;background:rgba(255,204,85,0.2);
+  padding:1px 7px;border-radius:4px;font-size:18px;font-weight:600;}
+
+.l31-arch .net-zones{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;}
+.l31-arch .zone{border:2px dashed;border-radius:12px;padding:14px 14px 6px;position:relative;
+  background:rgba(23,34,52,0.6);}
+.l31-arch .zone > .tag{position:absolute;top:-13px;left:14px;padding:2px 12px;border-radius:999px;
+  font-size:18px;font-weight:700;background:#0f1724;white-space:nowrap;}
+.l31-arch .zone.server{border-color:var(--accent);} .l31-arch .zone.server > .tag{color:var(--accent);}
+.l31-arch .zone.client{border-color:var(--green);} .l31-arch .zone.client > .tag{color:var(--green);}
+.l31-arch .zone.server .hosts{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.l31-arch .zone.client .hosts{display:grid;grid-template-columns:1fr;}
+
+.l31-arch .host{background:var(--surface);border:2px solid var(--line);border-radius:10px;
+  padding:8px 12px;position:relative;}
+.l31-arch .host.dc{border-color:var(--accent);box-shadow:0 0 12px rgba(76,154,255,0.15);}
+.l31-arch .host.svr{border-color:#79b8f0;}
+.l31-arch .host.client{border-color:var(--green);box-shadow:0 0 12px rgba(54,179,126,0.15);}
+.l31-arch .host-hd{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.l31-arch .host-ico{font-size:26px;line-height:1;}
+.l31-arch .host-name{font-size:20px;font-weight:700;line-height:1.1;}
+.l31-arch .host-ip{font-family:var(--mono);font-size:18px;color:var(--muted);display:block;margin-top:1px;line-height:1.1;}
+.l31-arch .host.dc .host-name{color:var(--accent);}
+.l31-arch .host.svr .host-name{color:#79b8f0;}
+.l31-arch .host.client .host-name{color:var(--green);}
+.l31-arch .host-roles{font-size:18px;line-height:1.3;}
+.l31-arch .host-roles .r{display:flex;gap:6px;}
+.l31-arch .host-roles .sub{color:var(--muted);margin-left:20px;font-size:18px;}
+.l31-arch .host-roles .dns-note{font-family:var(--mono);font-size:18px;color:var(--muted);
+  margin-top:3px;padding-top:3px;border-top:1px dashed var(--line);}
+
+.l31-arch .access-matrix{background:rgba(76,154,255,0.04);
+  border:1px solid rgba(76,154,255,0.3);border-radius:10px;padding:4px 14px;}
+.l31-arch .access-matrix > .title{color:var(--accent);font-weight:700;font-size:18px;margin-bottom:2px;}
+.l31-arch .access-matrix table{width:100%;border-collapse:collapse;font-size:18px;}
+.l31-arch .access-matrix td,.l31-arch .access-matrix th{padding:2px 8px;text-align:left;
+  border-bottom:1px solid rgba(255,255,255,0.05);line-height:1.25;}
+.l31-arch .access-matrix th{color:var(--muted);font-weight:600;font-size:18px;letter-spacing:0.3px;}
+.l31-arch .access-matrix tr:last-child td{border-bottom:none;}
+.l31-arch .access-matrix .from{color:var(--green);font-weight:700;white-space:nowrap;}
+.l31-arch .access-matrix .arrow{color:var(--muted);text-align:center;width:28px;font-size:18px;}
+.l31-arch .access-matrix .to{color:var(--accent);font-weight:700;white-space:nowrap;}
+.l31-arch .access-matrix .to.svr{color:#79b8f0;}
+.l31-arch .access-matrix .ports{font-family:var(--mono);color:var(--yellow,#ffcc55);font-size:18px;}
+.l31-arch .access-matrix .desc{color:var(--muted);font-size:18px;}
+
+.l31-arch .bottom-grid{display:grid;grid-template-columns:1fr 1.5fr;gap:14px;}
+.l31-arch .kali-zone{border:2px dashed var(--red);border-radius:12px;padding:14px 12px 6px;
+  position:relative;background:rgba(255,86,48,0.05);display:flex;flex-direction:column;gap:4px;}
+.l31-arch .kali-zone > .tag{position:absolute;top:-13px;left:14px;padding:2px 12px;border-radius:999px;
+  font-size:18px;font-weight:700;background:#0f1724;color:var(--red);}
+.l31-arch .kali-row{display:flex;gap:10px;align-items:center;}
+.l31-arch .kali-host{background:var(--surface);border:2px solid var(--red);border-radius:9px;
+  padding:6px 10px;text-align:center;flex-shrink:0;}
+.l31-arch .kali-host .host-ico{font-size:24px;line-height:1;}
+.l31-arch .kali-host .host-name{color:#ff8870;font-size:18px;font-weight:700;}
+.l31-arch .kali-host .host-ip{font-family:var(--mono);font-size:18px;color:var(--muted);display:block;line-height:1.1;}
+.l31-arch .kali-note{flex:1;font-size:18px;line-height:1.3;color:var(--muted);}
+.l31-arch .kali-note b{color:#ff8870;}
+
+.l31-arch .ou-zone{border:2px solid var(--yellow,#ffcc55);border-radius:12px;padding:16px 12px 8px;
+  position:relative;background:rgba(255,204,85,0.06);}
+.l31-arch .ou-zone > .tag{position:absolute;top:-13px;left:14px;padding:2px 12px;border-radius:999px;
+  font-size:18px;font-weight:700;background:#0f1724;color:var(--yellow,#ffcc55);}
+.l31-arch .ou-list{font-size:18px;line-height:1.5;}
+.l31-arch .ou-list .label{color:var(--yellow,#ffcc55);font-weight:700;display:block;}
+.l31-arch .ou-list code{font-family:var(--mono);color:#fff;background:rgba(255,204,85,0.15);
+  padding:1px 6px;border-radius:3px;font-size:18px;margin:0 1px;}
+
+.l31-arch .attack-sec{border:1px solid var(--red);border-radius:12px;padding:14px 12px 6px;
+  position:relative;background:rgba(255,86,48,0.08);}
+.l31-arch .attack-sec > .tag{position:absolute;top:-13px;left:14px;padding:2px 12px;border-radius:999px;
+  font-size:18px;font-weight:700;background:#0f1724;color:var(--red);}
+.l31-arch .attack-sec .list{font-size:18px;color:#ffb0a0;line-height:1.3;}
+.l31-arch .attack-sec .list > div{display:flex;gap:4px;}
+.l31-arch .attack-sec .list .num{color:var(--red);font-weight:700;flex-shrink:0;}
+</style>
 </head>
 <body>
 <div class="reveal"><div class="slides">
@@ -199,6 +294,126 @@
     <tr><td>自己站到攻击者视角审查</td><td>真实的安全架构评审通常会请攻击视角的人提前介入（Threat Modeling 的雏形），比上线后再找漏洞成本低得多。你一人分饮两种视角，一样能达到这个效果。</td></tr>
   </table>
 </template>
+</section>
+
+<!-- 07b 架构图样本 (纯 HTML/CSS 参考) -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">参考样本</span><h2>架构图参考样本（画成这样就够用）</h2></div>
+  <div class="body" style="display:flex;flex-direction:column;min-height:0;">
+
+    <div class="l31-arch">
+      <div class="arch-head">
+        <span class="fqdn">Active Directory 域：lab.local · 10.10.10.0/24　|　<span class="ou-inline-k">OU=Company</span> <code>IT·Finance·HR·Sales·Servers</code> · <span class="ou-inline-k">组</span> <code>Domain-IT · Finance · Sales</code></span>
+      </div>
+
+      <div class="net-zones">
+        <div class="zone server">
+          <span class="tag">🏢 服务器网段 · 静态 IP · .1–.99</span>
+          <div class="hosts">
+            <div class="host dc">
+              <div class="host-hd">
+                <div class="host-ico">🏛️</div>
+                <div><div class="host-name">DC-01</div><span class="host-ip">10.10.10.10</span></div>
+              </div>
+              <div class="host-roles">
+                <div class="r"><span>🗂️</span><span>AD DS（域控）</span></div>
+                <div class="r"><span>🌐</span><span>DNS</span></div>
+                <div class="r"><span>📡</span><span>DHCP · Lab-Scope</span></div>
+                <div class="r"><span>🔐</span><span>AD CS · Lab-Root-CA</span></div>
+                <div class="dns-note">DNS → 127.0.0.1</div>
+              </div>
+            </div>
+            <div class="host svr">
+              <div class="host-hd">
+                <div class="host-ico">🗄️</div>
+                <div><div class="host-name">SVR2</div><span class="host-ip">10.10.10.20</span></div>
+              </div>
+              <div class="host-roles">
+                <div class="r"><span>🌐</span><span>IIS（HTTPS）</span></div>
+                <div class="r"><span>📁</span><span>文件服务器</span></div>
+                <div class="sub">· IT-Share</div>
+                <div class="sub">· Finance-Share</div>
+                <div class="dns-note">DNS → 10.10.10.10</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="zone client">
+          <span class="tag">💻 客户端网段 · DHCP · .100–.200</span>
+          <div class="hosts">
+            <div class="host client">
+              <div class="host-hd">
+                <div class="host-ico">💻</div>
+                <div><div class="host-name">CLIENT1</div><span class="host-ip">DHCP 自动获取</span></div>
+              </div>
+              <div class="host-roles">
+                <div class="r"><span>🪟</span><span>Windows 10 · 域成员</span></div>
+                <div class="r"><span>👤</span><span>域账号登录</span></div>
+                <div class="r"><span>🔍</span><span>测试访问</span></div>
+                <div class="dns-note">DNS → 10.10.10.10</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="access-matrix">
+        <div class="title">🔗 访问路径矩阵</div>
+        <table>
+          <tr>
+            <th style="width:14%">源</th><th style="width:3%"></th><th style="width:14%">目标</th>
+            <th style="width:34%">端口 / 协议</th><th>说明</th>
+          </tr>
+          <tr>
+            <td class="from">CLIENT1</td><td class="arrow">→</td><td class="to">DC-01</td>
+            <td class="ports">DNS 53 · DHCP 67 · LDAP 389 · Kerberos 88</td>
+            <td class="desc">域登录、找 DC、获取 IP、查目录</td>
+          </tr>
+          <tr>
+            <td class="from">CLIENT1</td><td class="arrow">→</td><td class="to svr">SVR2</td>
+            <td class="ports">HTTPS 443 · SMB 445</td>
+            <td class="desc">访问内网 Web、读写部门共享</td>
+          </tr>
+          <tr>
+            <td class="from" style="color:#79b8f0">SVR2</td><td class="arrow">⇄</td><td class="to">DC-01</td>
+            <td class="ports">Kerberos 88 · LDAP 389</td>
+            <td class="desc">成员机加域、认证域账号</td>
+          </tr>
+        </table>
+      </div>
+
+      <div class="bottom-grid">
+        <div class="kali-zone">
+          <span class="tag">⚠️ 授权测试区 · 不加域</span>
+          <div class="kali-row">
+            <div class="kali-host">
+              <div class="host-ico">🐉</div>
+              <div class="host-name">Kali</div>
+              <span class="host-ip">10.10.10.50</span>
+            </div>
+            <div class="kali-note">
+              <b>授权边界：</b>仅 10.10.10.0/24<br>
+              仅第 35 课使用，本课不扫描
+            </div>
+          </div>
+        </div>
+        <div class="attack-sec">
+          <span class="tag">🎯 攻击者视角（第 35 课复用）</span>
+          <div class="list">
+            <div><span class="num">①</span><span>SVR2 的 IIS（Web 入口最大）</span></div>
+            <div><span class="num">②</span><span>DC-01 的 AD CS（CA 私钥 = 全域信任崩塌）</span></div>
+            <div><span class="num">③</span><span>CLIENT1 域账号（跳板横移、密码喷射）</span></div>
+            <div><span class="num">④</span><span>SMB 445（Finance-Share 弱 ACL 可直接读）</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+<aside class="notes">这是一张"达标线"参考图，告诉学生画成这个样子就足够交付。重点看三件事：① 两个网段用不同颜色框区分（服务器蓝/客户端绿），虽然物理上同一个 10.10.10.0/24，但按规划分开画，为第 34 课防火墙分段打基础；② 访问矩阵三行覆盖所有东西向、南北向访问关系，画架构图不要只摆设备、必须标出"谁访问谁"；③ 攻击面 4 条由学生自己提出，这是第 35 课红队测试的输入。学生可以在此基础上细化（加 Kerberos 票据链、加 CRL 分发点、加审计日志流），也可以保持这个颗粒度交付。</aside>
 </section>
 
 <!-- 08 交付物2 清单：服务器 -->

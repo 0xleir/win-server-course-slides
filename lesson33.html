@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第33课 · 企业Web与文件服务整合</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">模块六 · 综合实战　|　第 33 次课 · 学时 65–66</p>
+  <h1>企业 Web 与文件服务整合</h1>
+  <p class="muted">登录即映射盘、打开即免密：让域身份贯穿所有服务</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM2 + VM3 + VM4</span><span class="chip check">综合项目 3/5</span></div>
+</div>
+<aside class="notes">开场提问：上节课 SVR2 已经有网站和共享了，用户用起来还有哪些不方便？——要自己记 UNC 路径、网站谁都能看、FTP 还在 DC1 上。今天做的是"整合"：同一个域账号，自动拿到该部门的盘、免密进内网、登录 FTP。你依次完成：先在 DC1 做 GPO，再到 SVR2 做 IIS 与 FTP，然后在 CLIENT1 用不同部门账号全面测试，最后切到 Kali 从非域机器视角复核匿名访问是否已关闭。</aside>
+</section>
+
+<!-- 02 综合项目进度 -->
+<section>
+<div class="frame">
+  <h2>综合项目进度</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:1"><span class="t">第 31 课</span><b>规划</b>架构图<br>配置清单</div>
+      <div class="seg" style="flex:1"><span class="t">第 32 课</span><b>部署</b>SVR2 上线<br>IIS · 共享 · DNS</div>
+      <div class="seg" style="flex:1;border-top-color:var(--orange)"><span class="t">第 33 课 · 本课</span><b class="orange">整合</b>GPO 映射<br>集成认证 · FTP</div>
+      <div class="seg" style="flex:1"><span class="t">第 34 课</span><b>加固</b>防火墙<br>GPO · Sysmon</div>
+      <div class="seg" style="flex:1"><span class="t">第 35 课</span><b>对抗</b>红蓝对抗<br>应急响应</div>
+    </div>
+    <div class="callout"><b>起点：</b>恢复 <code>Lesson32-Done</code>。今天的每一项都建立在上节课的共享、证书和 DNS 之上。</div>
+  </div>
+</div>
+<aside class="notes">如果上节课的 IT-Share、Finance-Share 或 HTTPS 没做完，先补完再进入任务 1，否则后面全部测不通。第 34 课会对今天开放的 FTP 21、50000-50100 等端口做统一防火墙收敛，所以今天端口规则要记录在配置清单里。</aside>
+</section>
+
+<!-- 03 目标与交付物 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课目标与交付物</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>下课时你应该能够</h3>
+        <ul class="points check">
+          <li>用 GPO 首选项按部门自动映射共享驱动器</li>
+          <li>说清 Kerberos 与 NTLM 的区别，为网站启用集成认证</li>
+          <li>把 FTP 迁到 SVR2，用域账号 + CA 证书登录</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>交付物</h3>
+        <ul class="points">
+          <li>IT 用户 S: → <code>\\SVR2\IT-Share</code></li>
+          <li>Finance 用户 F: → <code>\\SVR2\Finance-Share</code></li>
+          <li>内部网站：Windows 认证开、匿名关</li>
+          <li>SVR2 FTP：域用户 + SSL；快照 <code>Lesson33-Done</code></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">交付物中盘符和 UNC 路径照抄原文。注意第 7 课我们用 net use 手动映射过 S: 和 F:，今天改由 GPO 自动完成，这就是从"教会每个用户"到"策略统一下发"的变化。提问：为什么 IT 和 Finance 用不同盘符？——同一台电脑上可能同时出现两个盘（例如管理员账号），盘符不能冲突。</aside>
+</section>
+
+<!-- 04 实验环境 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">第一步<br>GPMC · KDC · Lab-Root-CA</div></div>
+      <div class="host"><div class="ic">🗄️</div><b>SVR2</b><div class="ip">10.10.10.20</div><div class="role">第二步<br>IIS · 共享 · 新 FTP</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">第三步<br>sunqi / zhangsan 测试</div></div>
+      <div class="host"><div class="ic">🐉</div><b>Kali</b><div class="ip">10.10.10.50</div><div class="role">第四步<br>非域机器视角复核</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>测试账号（第 18 课）：</b><code>sunqi</code> ∈ Domain-IT，<code>zhangsan</code> ∈ Domain-Finance，密码 <code>Domain@2026!</code></div>
+      <div class="callout"><b>KDC 在哪：</b>DC1 就是 Kerberos 的密钥分发中心，三台 Windows 时间要一致</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">开始前确认三台 Windows 的时间相差不超过 5 分钟（第 17 课排障表提过），否则今天的 Kerberos 认证会失败。CLIENT1 是 DHCP 获取 IP，到 Kali 复核前先用 ipconfig 记下它的地址，不要扫描整网去找。</aside>
+</section>
+
+<!-- 05 概念1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>Windows 集成认证：Kerberos 优先，NTLM 兜底</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>① 登录</b>CLIENT1 向 DC1<br>拿到 TGT</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 访问网站</b>IIS 回 401<br>要求 Negotiate</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>③ 申请票据</b>向 DC1 要<br>HTTP/web.lab.local</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 出示票据</b>IIS 验证通过<br>用户无需输密码</div>
+    </div>
+    <table class="tbl">
+      <tr><th></th><th>Kerberos</th><th>NTLM</th></tr>
+      <tr><td><b>前提</b></td><td>域成员、能联系 DC、时差 &lt; 5 分钟、SPN 正确</td><td>任何情况都可回退</td></tr>
+      <tr><td><b>安全性</b></td><td>双向认证，票据有时效</td><td>挑战/响应，可被中继，较弱</td></tr>
+      <tr><td><b>怎么看</b></td><td>CLIENT1 上 <code>klist</code> 出现 HTTP/ 票据</td><td>没有 HTTP/ 票据但仍登录成功</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">第 15 课讲过：域环境用 Kerberos，工作组只能用 NTLM；第 24 课把 NTLM 限制到仅 NTLMv2。今天的关键点是 SPN：浏览器按 CNAME 解析出的真实名字 web.lab.local 申请 HTTP/web.lab.local 的票据，而 SVR2 的计算机账户默认只有 HOST/SVR2 这类 SPN，所以很可能悄悄回退到 NTLM。是否用 setspn 为 SVR2 注册 HTTP/web.lab.local，原文未要求，需教师确定。提问：Kali 不是域成员，访问这个网站会怎样？</aside>
+</section>
+
+<!-- 06 概念2 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>GPO 驱动器映射 + 两道门</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">OU Company　🔗 驱动器映射 GPO</div>
+        <div class="nest"><div class="lbl">项目 S:（目标：Domain-IT）</div><span class="obj">📁 \\SVR2\IT-Share</span></div>
+        <div class="nest"><div class="lbl">项目 F:（目标：Domain-Finance）</div><span class="obj">📁 \\SVR2\Finance-Share</span></div>
+      </div>
+      <table class="tbl">
+        <tr><th>层次</th><th>决定什么</th></tr>
+        <tr><td><b>GPO 项目级别目标</b></td><td>谁的电脑上<b>出现</b>这个盘</td></tr>
+        <tr><td><b>共享权限</b></td><td>网络上能不能<b>进门</b></td></tr>
+        <tr><td><b>NTFS 权限</b></td><td>进门后能<b>读写</b>哪些文件</td></tr>
+      </table>
+    </div>
+    <div class="callout warn"><b>映射 ≠ 授权：</b>盘符出现了不代表能打开；隐藏盘符也不能代替权限控制。</div>
+  </div>
+</div>
+<aside class="notes">第 19 课用首选项做过 P: → \\DC-01\Public$，并提到可以按组设置"项目级别目标"，今天正式用上：一个 GPO 里放两个映射项，各自按安全组筛选。有效权限仍是第 7 课的共享 ∩ NTFS。常见误区：学生以为 Finance 用户看不到 S: 盘就安全了，其实手动输入 \\SVR2\IT-Share 依然会尝试访问，真正挡住他的是权限。</aside>
+</section>
+
+<!-- 07 任务1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 20′ · DC1</span></span><span class="chip">回顾第 19 课</span><h2>GPO 按部门映射驱动器</h2><button class="more" data-pop="pop-l33-t1-steps">📋 详细步骤</button><button class="more" data-pop="pop-l33-t1-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="crumb"><span>gpmc.msc</span><i>›</i><span>新建 GPO <b>Dept-Drive-Maps</b>，链接到 Company</span><i>›</i><span>用户配置 › 首选项 › Windows 设置 › 驱动器映射</span></div>
+    <table class="tbl">
+      <tr><th>映射项</th><th>位置</th><th>常用 › 项目级别目标</th></tr>
+      <tr><td>操作 创建 · 驱动器 <b>S:</b></td><td><code>\\SVR2\IT-Share</code></td><td>安全组 <code>LAB\Domain-IT</code></td></tr>
+      <tr><td>操作 创建 · 驱动器 <b>F:</b></td><td><code>\\SVR2\Finance-Share</code></td><td>安全组 <code>LAB\Domain-Finance</code></td></tr>
+    </table>
+<pre><code class="language-powershell" data-trim>
+gpupdate /force      # CLIENT1 上刷新后注销重登
+gpresult /r          # 用户设置里应看到 Dept-Drive-Maps
+</code></pre>
+    <div class="callout"><b>检查点：</b>sunqi 登录 CLIENT1 只有 S:，zhangsan 只有 F:</div>
+  </div>
+</div>
+<aside class="notes">一个 GPO 放两个映射项，各自用"项目级别目标"按安全组筛选，链接到 Company（sunqi 在 IT-Dept、zhangsan 在 Finance-Dept，都在 Company 下）。这样以后新部门只需加一个映射项，不用新建 GPO。驱动器映射属于用户配置的首选项，只在前台登录时处理，所以 gpupdate 后要注销重登。实测：sunqi 登录只出现 S: → \\SVR2\IT-Share，zhangsan 只出现 F: → \\SVR2\Finance-Share。CLIENT1 若没开远程桌面，就直接在 VMware 控制台里切换用户登录。</aside>
+<template id="pop-l33-t1-steps">
+  <h3>📋 详细步骤：GPO 按部门映射驱动器</h3>
+  <h4>第一步：新建并链接 GPO（DC1）</h4>
+  <p>gpmc.msc › 林 › 域 › lab.local › 右键 <b>Company</b> › 在这个域中创建 GPO 并在此处链接 › 名称 <code>Dept-Drive-Maps</code>。</p>
+  <h4>第二步：新建 S: 映射项</h4>
+  <ol>
+    <li>右键 Dept-Drive-Maps › 编辑 › <b>用户配置 › 首选项 › Windows 设置 › 驱动器映射</b></li>
+    <li>右键 › 新建 › 映射驱动器：操作 <b>创建</b>，位置 <code>\\SVR2\IT-Share</code>，勾选"重新连接"，驱动器号 <b>S:</b></li>
+    <li>切到"常用"选项卡 › 勾选 <b>项目级别目标</b> › 目标… › 新建项目 › <b>安全组</b> › 浏览选 <code>Domain-IT</code> › 确定</li>
+  </ol>
+  <h4>第三步：新建 F: 映射项</h4>
+  <p>同上，位置 <code>\\SVR2\Finance-Share</code>，驱动器号 <b>F:</b>，项目级别目标选安全组 <code>Domain-Finance</code>。</p>
+  <h4>第四步：到 CLIENT1 验证</h4>
+<pre>gpupdate /force
+gpresult /r</pre>
+  <p>注销后用 <code>LAB\sunqi</code>（密码 Domain@2026!）登录：资源管理器里应出现 S:，没有 F:。再注销换 <code>LAB\zhangsan</code>：只有 F:。也可以在 cmd 里运行 <code>net use</code> 查看。</p>
+</template>
+<template id="pop-l33-t1-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:30%">设计点</th><th>意义</th></tr>
+    <tr><td>链接到 Company，而不是分别链接两个 OU</td><td>一个 GPO 管所有部门的盘，按组筛选；以后加部门只加一个映射项。分别链接到 IT-Dept / Finance-Dept 也能做到，但 GPO 数量会随部门增加。</td></tr>
+    <tr><td>项目级别目标选"安全组"</td><td>按 Domain-IT / Domain-Finance 这两个第 18 课建的全局组判断；用户换部门只需改组成员，盘符自动跟着变。</td></tr>
+    <tr><td>首选项而不是第 19 课的登录脚本</td><td>首选项是图形化配置，不用自己写 net use，失败时还能在事件日志里看到原因；第 19 课的脚本方式更灵活但易出错。</td></tr>
+    <tr><td>gpupdate 后必须注销重登</td><td>驱动器映射是用户配置首选项，只在用户前台登录时处理，后台刷新不会马上映射。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>gpresult /r 里没有 Dept-Drive-Maps：GPO 没链接到 Company，或用户不在 Company 之下的 OU</li>
+    <li>两个盘都出现或都不出现：检查项目级别目标里选的组是否写反、用户是否在对应组</li>
+    <li>盘符出现但打不开：是共享/NTFS 权限问题（第 32 课任务 3），不是 GPO 问题</li>
+  </ul>
+</template>
+</section>
+
+<!-- 08 任务2 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 20′ · SVR2 + DC1</span></span><span class="chip">回顾第 9、15 课</span><h2>内部网站：开 Windows 认证，关匿名</h2><button class="more" data-pop="pop-l33-t2-steps">📋 详细步骤</button><button class="more" data-pop="pop-l33-t2-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Enter-PSSession -ComputerName SVR2                       # ① DC1 上
+[SVR2]: PS> Install-WindowsFeature Web-Windows-Auth
+setspn -S HTTP/web.lab.local SVR2                        # ② DC1：为网站注册 SPN
+setspn -S HTTP/intranet.lab.local SVR2
+</code></pre>
+    <div class="grid2">
+      <div class="card bad"><h3>③ IIS › IntranetSite › 身份验证</h3><p>匿名 <b>禁用</b> · Windows 身份验证 <b>启用</b></p></div>
+      <div class="card good"><h3>④ GPO <b>Intranet-SSO</b>（链接到域）</h3><p><code>https://*.lab.local</code> → 本地 Intranet；Edge 允许向 <code>*.lab.local</code> 发送凭据</p></div>
+    </div>
+    <div class="callout"><b>检查点：</b>sunqi 在 CLIENT1 用 Edge 打开 https://intranet.lab.local 不弹密码框；Kali 得到 401</div>
+  </div>
+</div>
+<aside class="notes">四步缺一不可，这是实测出来的：只做 ③，Edge 一定弹"登录以访问此站点"；加了区域 GPO 还是弹，因为 Edge 默认只对它自己判定为内网的名字自动登录，要再配 AuthServerAllowlist。④ 要链接到域根而不是 Company：CLIENT1 计算机对象在默认的 Computers 容器里，Company 下的计算机策略到不了它。SPN 决定能不能走 Kerberos：浏览器按 CNAME 解析出的真名 web.lab.local 申请 HTTP/web.lab.local 票据，SVR2 默认只有 HOST/SVR2 这类 SPN，不注册就悄悄回退 NTLM。setspn -S 会先查重，重复执行时提示"发现重复的 SPN"并终止，说明已注册过，不用担心。</aside>
+<template id="pop-l33-t2-steps">
+  <h3>📋 详细步骤：Windows 集成认证 + 浏览器免密</h3>
+  <h4>第一步：装 Windows 身份验证（DC1 远程到 SVR2）</h4>
+<pre>Enter-PSSession -ComputerName SVR2
+Install-WindowsFeature Web-Windows-Auth
+Exit-PSSession</pre>
+  <p>装完要重新打开 SVR2 上的 IIS 管理器，"身份验证"里才出现 Windows 身份验证。</p>
+  <h4>第二步：IIS 里关匿名、开 Windows 认证（SVR2）</h4>
+  <p>IIS 管理器 › 网站 › <b>IntranetSite</b> › 身份验证：选"匿名身份验证"→ 右侧 <b>禁用</b>；选"Windows 身份验证"→ 右侧 <b>启用</b>。</p>
+  <h4>第三步：注册 SPN（DC1）</h4>
+<pre>setspn -S HTTP/web.lab.local SVR2
+setspn -S HTTP/intranet.lab.local SVR2
+setspn -L SVR2</pre>
+  <p>列表里出现两条 HTTP/ 就对了。</p>
+  <h4>第四步：浏览器免密 GPO（DC1 管理员 PowerShell）</h4>
+<pre>New-GPO -Name "Intranet-SSO" | New-GPLink -Target "DC=lab,DC=local"
+$k = "HKLM\Software\Policies\Microsoft\Windows\CurrentVersion\Internet Settings\ZoneMapKey"
+Set-GPRegistryValue -Name "Intranet-SSO" -Key $k -ValueName "https://*.lab.local" -Type String -Value 1
+Set-GPRegistryValue -Name "Intranet-SSO" -Key "HKLM\Software\Policies\Microsoft\Edge" `
+  -ValueName AuthServerAllowlist -Type String -Value "*.lab.local"</pre>
+  <p>图形界面等效位置：计算机配置 › 策略 › 管理模板 › Windows 组件 › Internet Explorer › Internet 控制面板 › 安全页 › <b>站点到区域分配列表</b>（值 1 = 本地 Intranet）。</p>
+  <h4>第五步：验证（CLIENT1）</h4>
+<pre>gpupdate /force</pre>
+  <p>用 sunqi 登录，Edge 打开 <code>https://intranet.lab.local</code>：直接显示页面，不弹框，锁图标无警告。再在 PowerShell 运行 <code>klist</code>，应看到 <code>HTTP/web.lab.local</code> 票据。</p>
+</template>
+<template id="pop-l33-t2-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:30%">设计点</th><th>意义</th></tr>
+    <tr><td>关匿名 + 开 Windows 认证</td><td>匿名开着时 IIS 根本不要求身份；关掉后未认证请求返回 401 并告诉浏览器"用 Negotiate（Kerberos 优先，NTLM 兜底）"。</td></tr>
+    <tr><td>setspn 注册 HTTP/ SPN</td><td>Kerberos 票据是发给"服务名"的。浏览器要的是 HTTP/web.lab.local，KDC 必须知道这个名字属于 SVR2 的计算机账户，否则只能回退 NTLM。</td></tr>
+    <tr><td>站点到区域分配列表</td><td>Windows 只向"本地 Intranet 区域"自动发送当前登录凭据；带点号的名字默认被当成 Internet 区域，所以要用策略把 https://*.lab.local 明确划进来。</td></tr>
+    <tr><td>Edge AuthServerAllowlist</td><td>微软推荐的 Edge 集成认证白名单；实测只配区域 Edge 仍弹框，两项一起配最稳，也同样适用于 Chrome（同名策略在 Chrome 路径下）。</td></tr>
+    <tr><td>GPO 链接到域根</td><td>这两项是计算机配置；CLIENT1 计算机对象在默认 Computers 容器里，不在 Company 下，链接到 Company 的计算机策略到不了它。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>一直弹密码框：CLIENT1 上 <code>gpresult /r /scope computer</code> 看有没有 Intranet-SSO</li>
+    <li>能进但 klist 没有 HTTP/ 票据：SPN 没注册，走的是 NTLM</li>
+    <li>ERR_CERT_COMMON_NAME_INVALID：第 32 课证书没带 SAN，回第 32 课任务 2 重签</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务3 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 25′ · SVR2</span></span><span class="chip">回顾第 12、23 课</span><h2>FTP 迁移到 SVR2：域用户 + CA 证书</h2><button class="more" data-pop="pop-l33-t3-steps">📋 详细步骤</button><button class="more" data-pop="pop-l33-t3-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+Install-WindowsFeature Web-Ftp-Server -IncludeAllSubFeature
+New-NetFirewallRule -DisplayName "Allow FTP" -Direction Inbound `
+  -Protocol TCP -LocalPort 21 -Action Allow
+New-NetFirewallRule -DisplayName "Allow FTP Passive" -Direction Inbound `
+  -Protocol TCP -LocalPort 50000-50100 -Action Allow
+Disable-NetFirewallRule -DisplayName "FTP 服务器被动(FTP 被动流量入站)"
+</code></pre>
+    <table class="tbl">
+      <tr><th style="width:30%">设置（站点 CorpFTP · C:\FTPRoot）</th><th>取值（沿用第 12 课向导）</th></tr>
+      <tr><td>身份验证 / 授权 / 隔离</td><td>基本 · 允许 <code>Domain-IT,Domain-Finance</code> 读写 · 隔离到 <code>C:\FTPRoot\LAB\用户名</code></td></tr>
+      <tr><td>SSL / 被动端口</td><td>第 32 课 Intranet-SAN 证书 · <b>需要 SSL</b> · 服务器级 50000-50100</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">命令和第 12 课相同，被动端口直接用收窄后的 50000-50100，与第 34 课 SVR2 的放行清单一致；IIS 安装 FTP 时自带的"FTP 服务器被动"规则放行 1024-65535，必须禁用，否则收窄无效。证书复用第 32 课那张，它的 SAN 里有 svr2.lab.local，所以客户端连 svr2.lab.local 时证书校验通过；用 IP 连会报名称不匹配。隔离模式下，域用户的家目录必须是 根目录\LAB\用户名（第 12 课概念 2 的规则），目录名写错用户就登录不进去。DC1 上旧的 LabFTP 停用：在 IIS 管理器里选 LabFTP › 右侧"停止"，命令行 Stop-Website 停不掉 FTP 站点（实测 21 端口仍在监听）。</aside>
+<template id="pop-l33-t3-steps">
+  <h3>📋 详细步骤：FTP 迁移到 SVR2</h3>
+  <h4>第一步：安装 + 防火墙（SVR2 管理员 PowerShell）</h4>
+<pre>Install-WindowsFeature Web-Ftp-Server -IncludeAllSubFeature
+New-NetFirewallRule -DisplayName "Allow FTP" -Direction Inbound `
+  -Protocol TCP -LocalPort 21 -Action Allow
+New-NetFirewallRule -DisplayName "Allow FTP Passive" -Direction Inbound `
+  -Protocol TCP -LocalPort 50000-50100 -Action Allow
+Disable-NetFirewallRule -DisplayName "FTP 服务器被动(FTP 被动流量入站)"</pre>
+  <h4>第二步：建目录，按"域\用户名"放家目录</h4>
+<pre>mkdir C:\FTPRoot\LAB\sunqi, C:\FTPRoot\LAB\zhangsan
+"sunqi's FTP file" | Out-File C:\FTPRoot\LAB\sunqi\readme.txt -Encoding ASCII
+"zhangsan's FTP file" | Out-File C:\FTPRoot\LAB\zhangsan\readme.txt -Encoding ASCII
+icacls C:\FTPRoot\LAB\sunqi /grant "LAB\sunqi:(OI)(CI)M"
+icacls C:\FTPRoot\LAB\zhangsan /grant "LAB\zhangsan:(OI)(CI)M"</pre>
+  <h4>第三步：IIS 管理器 › 网站 › 右键"添加 FTP 站点"</h4>
+  <ol>
+    <li>名称 <b>CorpFTP</b>，物理路径 <code>C:\FTPRoot</code></li>
+    <li>绑定：全部未分配、端口 21；SSL 选 <b>需要 SSL</b>，证书选 <b>Intranet-SAN</b>（第 32 课那张）</li>
+    <li>身份验证勾 <b>基本</b>（不勾匿名）；授权：<b>指定角色或用户组</b> 填 <code>LAB\Domain-IT,LAB\Domain-Finance</code>，权限 读取+写入</li>
+  </ol>
+  <h4>第四步：隔离 + 被动端口</h4>
+  <ol>
+    <li>CorpFTP › <b>FTP 用户隔离</b> › 选"用户名目录（禁用全局虚拟目录）" › 应用</li>
+    <li>点左侧<b>服务器节点</b> › FTP 防火墙支持 › 数据通道端口范围 <code>50000-50100</code> › 应用</li>
+  </ol>
+<pre>Restart-Service ftpsvc</pre>
+  <h4>第五步：停用 DC1 上旧的 LabFTP</h4>
+  <p>DC1 的 IIS 管理器 › LabFTP › 右侧 <b>停止</b>（会同时关掉自动启动）。在 CLIENT1 上 <code>Test-NetConnection 10.10.10.10 -Port 21</code> 应为 False。</p>
+</template>
+<template id="pop-l33-t3-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:30%">设计点</th><th>意义</th></tr>
+    <tr><td>禁用"FTP 服务器被动"内置规则</td><td>它放行 1024-65535；防火墙规则是叠加的，不禁用它，"Allow FTP Passive"收窄到 101 个端口就形同虚设（第 12 课已实测）。</td></tr>
+    <tr><td>家目录 C:\FTPRoot\LAB\用户名</td><td>"用户名目录"隔离模式下，域账户按 根目录\域名\用户名 找家目录；登录后被关在里面，cd .. 出不去，看不到别人的文件。</td></tr>
+    <tr><td>授权给两个部门组</td><td>只让域内这两个部门用 FTP；不授权 Everyone，也不开匿名。</td></tr>
+    <tr><td>需要 SSL + CA 证书</td><td>基本身份验证会把密码以明文发出，必须用 TLS 加密控制和数据通道；证书来自 Lab-Root-CA，域成员自动信任。</td></tr>
+    <tr><td>证书 SAN 含 svr2.lab.local</td><td>FTPS 客户端校验的是"连接用的名字"。用 svr2.lab.local 连接时名字匹配；用 10.10.10.20 连接会报"目标主要名称不正确"。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 10 任务4 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">任务 4 <span class="t">· 15′ · CLIENT1 + Kali</span></span><span class="chip">回顾第 7、10、12 课</span><h2>从 CLIENT1 测试全部服务</h2><button class="more" data-pop="pop-l33-t4-steps">📋 详细步骤</button><button class="more" data-pop="pop-l33-t4-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+net use;  klist | Select-String HTTP/
+ftp 10.10.10.20                              # 明文 → 534 Policy requires SSL
+curl.exe --ssl-reqd --user "LAB\sunqi:Domain@2026!" ftp://svr2.lab.local/
+</code></pre>
+    <table class="tbl">
+      <tr><th>测试项</th><th>sunqi（IT）</th><th>zhangsan（Finance）</th></tr>
+      <tr><td>驱动器</td><td>S: 可读写，无 F:</td><td>F: 可读写，无 S:</td></tr>
+      <tr><td>内部网站</td><td colspan="2">Edge 不弹密码框，证书无警告；klist 有 HTTP/web.lab.local</td></tr>
+      <tr><td>FTP</td><td colspan="2">明文被拒 534；FTPS 列出自己的 readme.txt，看不到对方的</td></tr>
+      <tr><td>Kali（非域）</td><td colspan="2">网站 401；FTP 匿名 530/534；DC1 的 21 端口已关</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">两个账号各登录 CLIENT1 一次，逐项打勾。Windows 自带的 curl.exe 支持显式 FTPS，不需要另装客户端；用户名必须带 LAB\ 前缀才符合本课口径。Kali 上只对本机 10.10.10.0/24 的服务做复核：curl -k https://10.10.10.20/ 应返回 401，curl ftp://10.10.10.20/ 应返回 534（要求 SSL），不做任何密码猜测。实测 Kali 上 http://10.10.10.20:8080 不通，是因为 SVR2 防火墙没放行 8080，这正好说明内网只开放了 https。</aside>
+<template id="pop-l33-t4-steps">
+  <h3>📋 详细步骤：两个部门账号全量测试</h3>
+  <h4>第一步：用 sunqi 登录 CLIENT1（再换 zhangsan 重复）</h4>
+<pre>net use
+Get-ChildItem S:\                  # zhangsan 改成 F:\
+"test" | Out-File S:\t_$env:USERNAME.txt
+Get-ChildItem \\SVR2\Finance-Share # sunqi 应"拒绝访问"</pre>
+  <h4>第二步：网站</h4>
+  <p>Edge 打开 <code>https://intranet.lab.local</code>：不弹框、锁图标正常。然后：</p>
+<pre>klist | Select-String HTTP/      # 应有 HTTP/web.lab.local</pre>
+  <h4>第三步：FTP</h4>
+<pre>Test-NetConnection 10.10.10.20 -Port 21
+ftp 10.10.10.20                    # 输入 LAB\sunqi 后返回 534，bye 退出
+curl.exe --ssl-reqd --user "LAB\sunqi:Domain@2026!" ftp://svr2.lab.local/
+curl.exe --ssl-reqd --user "LAB\sunqi:Domain@2026!" ftp://svr2.lab.local/readme.txt</pre>
+  <p>sunqi 看到 "sunqi's FTP file"，zhangsan 看到 "zhangsan's FTP file"。</p>
+  <h4>第四步：Kali 复核（只测本实验网段）</h4>
+<pre>curl -sk -o /dev/null -w "%{http_code}\n" https://10.10.10.20/   # 401
+curl ftp://10.10.10.20/                                          # 534
+nmap -Pn -p 21 10.10.10.10                                      # filtered/closed</pre>
+</template>
+<template id="pop-l33-t4-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:30%">测试项</th><th>证明了什么</th></tr>
+    <tr><td>写对方的共享被拒</td><td>映射 ≠ 授权：真正挡住人的是共享 ∩ NTFS 权限，不是盘符有没有出现。</td></tr>
+    <tr><td>klist 里的 HTTP/ 票据</td><td>证明网站走的是 Kerberos；没有这张票据但仍能进，说明回退到了 NTLM（多半是 SPN 没注册）。</td></tr>
+    <tr><td>ftp.exe 返回 534</td><td>自带 ftp 不支持 TLS，被拒正说明"需要 SSL"生效，密码不会明文上网。</td></tr>
+    <tr><td>curl.exe --ssl-reqd</td><td>Windows 自带，支持显式 FTPS 并校验证书；不加 -k 也能连，说明证书链和名字都对。</td></tr>
+    <tr><td>Kali 视角</td><td>非域机器拿不到 Kerberos 票据，网站只能 401；FTP 不接受匿名——第 35 课要尝试的"Web 扫描、FTP 匿名"口子今天就关上了。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 11 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>整合排障：身份、策略、权限三条线</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:32%">现象</th><th style="width:32%">原因</th><th>处理</th></tr>
+      <tr><td>登录后没有 S: / F:</td><td>GPO 未应用或组筛选不符</td><td><code>gpresult /r</code>；查用户所在 OU 与组</td></tr>
+      <tr><td>盘符有，打开被拒</td><td>共享或 NTFS 未授权</td><td><code>Get-SmbShareAccess</code>、<code>icacls</code></td></tr>
+      <tr><td>网站一直弹密码框</td><td>站点不在 Intranet 区域</td><td>见任务 2 讲稿，用账号 <code>LAB\sunqi</code> 先验证</td></tr>
+      <tr><td>网站 401，域账号也进不去</td><td>未装 Windows 认证或时差大</td><td>装 Web-Windows-Auth；同步时间</td></tr>
+      <tr><td>FTP 530 登录失败</td><td>没写域前缀或未授权</td><td>用户名写 <code>LAB\用户名</code>；查授权规则</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">三条线：身份（Kerberos/NTLM、时间、域前缀）、策略（GPO 是否链接、是否应用）、权限（共享 ∩ NTFS、IIS/FTP 授权）。刚加入组的用户需要注销重登才拿到新令牌；klist purge 可以清除票据缓存后重试（补充命令，只清当前用户票据，不影响系统）。</aside>
+</section>
+
+<!-- 12 操作顺序 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">操作顺序</span><h2>一个人怎么走完整条链路</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>步骤</th><th>机器</th><th>本课任务</th></tr>
+      <tr><td><b>第一步</b></td><td>VM1 · DC1</td><td>任务 1：驱动器映射 GPO、核对组成员与时间</td></tr>
+      <tr><td><b>第二步</b></td><td>VM2 · SVR2</td><td>任务 2–3：Windows 认证、FTP 迁移与 SSL</td></tr>
+      <tr><td><b>第三步</b></td><td>VM3 · CLIENT1</td><td>任务 4：两个部门账号全量测试并记录</td></tr>
+      <tr><td><b>第四步</b></td><td>VM4 · Kali</td><td>非域视角：匿名访问网站、明文 FTP 应被拒</td></tr>
+    </table>
+    <div class="callout warn"><b>授权边界：</b>切到 Kali 后只验证本机 10.10.10.0/24 内的服务是否拒绝匿名，不做密码猜测。</div>
+  </div>
+</div>
+<aside class="notes">今天的检查正好对应第 35 课要尝试的"Web 扫描、FTP 匿名"，现在就关掉这些口子，第 35 课才有底气。密码喷射等攻击只在第 35 课授权的对抗环节进行，今天不做；未授权的扫描和登录尝试违反《网络安全法》。</aside>
+</section>
+
+<!-- 13 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>对照清单自查</h2></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>IT 用户 S: → \\SVR2\IT-Share</li>
+        <li>Finance 用户 F: → \\SVR2\Finance-Share</li>
+        <li>网站 Windows 认证开、匿名关，SPN 与 Intranet-SSO 就绪</li>
+        <li>SVR2 FTP 要求 SSL、用户隔离；DC1 旧 FTP 已停</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>四台 VM 都拍快照<br><code>Lesson33-Done</code></p>
+        <p class="small muted" style="margin-top:8px">第 34 课从这个快照开始</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">清单达成后运行 check33.ps1 生成报告（见本课小结页的「作业提交」）。它只需在 SVR2 本机跑一次：GPO 和 SPN 通过 LDAP 向域控查询，DC1 的 21 端口由脚本从 SVR2 探测。注意要在 SVR2 控制台或远程桌面里运行，放在 Enter-PSSession 远程会话里会查不了 AD。CLIENT1 的测试记录表一并写进《服务器配置清单》。</aside>
+</section>
+
+<!-- 14 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>策略</h3><p class="small">GPO 首选项 + 项目级别目标，按部门自动映射盘</p></div>
+      <div class="card blue"><h3>身份</h3><p class="small">集成认证：Kerberos 优先，NTLM 兜底；关闭匿名</p></div>
+      <div class="card blue"><h3>服务</h3><p class="small">FTP 迁到 SVR2：域账号登录 + CA 证书强制 SSL</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 34 课：</b>企业安全加固。统一防火墙策略、AppLocker 与 USB 禁用、Sysmon 与日志转发。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check33.ps1" download>check33.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 <b>SVR2 本机</b>（控制台或远程桌面，不要用 Enter-PSSession）以 LAB\Administrator 身份、管理员 PowerShell 运行一次 <code>check33.ps1</code>，连同 CLIENT1 上 sunqi、zhangsan 的测试截图一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测：1. zhangsan 看不到 S: 盘，是否就无法访问 IT-Share？为什么？2. 怎样判断网站这次用的是 Kerberos 还是 NTLM？3. 登录 SVR2 的 FTP 时，用户名应该怎么写？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script src="assets/popup.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+</body>
+</html>

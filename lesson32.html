@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第32课 · 企业域环境全流程搭建</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">模块六 · 综合实战　|　第 32 次课 · 学时 63–64</p>
+  <h1>企业域环境全流程搭建</h1>
+  <p class="muted">把 Web 与文件服务部署到成员服务器 SVR2</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM2 + VM3 + VM4</span><span class="chip check">综合项目 2/5</span></div>
+</div>
+<aside class="notes">开场：上节课我们画了架构图、写了《服务器配置清单》，今天按清单把服务真正落到 SVR2 上。本课几乎没有新命令，全部是前面课次的复用，考的是"把零件装成整机"的能力。顺序：先在 DC1 上确认 DNS、CA 在线，再切到 SVR2 装 IIS、建共享，然后在 CLIENT1 上验证访问效果，最后切到 Kali 做外部视角端口复核。</aside>
+</section>
+
+<!-- 02 综合项目进度 -->
+<section>
+<div class="frame">
+  <h2>综合项目进度</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:1"><span class="t">第 31 课</span><b>规划</b>架构图<br>配置清单</div>
+      <div class="seg" style="flex:1;border-top-color:var(--orange)"><span class="t">第 32 课 · 本课</span><b class="orange">部署</b>SVR2 上线<br>IIS · 共享 · DNS</div>
+      <div class="seg" style="flex:1"><span class="t">第 33 课</span><b>整合</b>GPO 映射<br>集成认证 · FTP</div>
+      <div class="seg" style="flex:1"><span class="t">第 34 课</span><b>加固</b>防火墙<br>GPO · Sysmon</div>
+      <div class="seg" style="flex:1"><span class="t">第 35 课</span><b>对抗</b>红蓝对抗<br>应急响应</div>
+    </div>
+    <div class="callout"><b>本课承上启下：</b>输入是第 31 课的《服务器配置清单》，输出是一台能被第 33 课继续整合的 SVR2。</div>
+  </div>
+</div>
+<aside class="notes">把第 31 课的配置清单摆在桌上，今天所有站点名、目录、组名都以清单为准。提醒：后面三节课都基于 Lesson32-Done 快照，今天做错会一路影响到第 35 课的渗透测试与应急响应。</aside>
+</section>
+
+<!-- 03 目标与交付物 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课目标与交付物</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card blue">
+        <h3>下课时你应该能够</h3>
+        <ul class="points check">
+          <li>用 PowerShell Remoting 远程给 SVR2 装 IIS</li>
+          <li>为内部网站申请 CA 签发证书并启用 HTTPS</li>
+          <li>用域组配置部门共享，并发布 DNS 名称</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>交付物</h3>
+        <ul class="points">
+          <li>SVR2：IIS + HTTPS 内部网站</li>
+          <li>SVR2：IT-Share、Finance-Share</li>
+          <li>DC1：<code>web</code> A 记录、<code>intranet</code> CNAME</li>
+          <li>四台 VM 快照 <code>Lesson32-Done</code></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">交付物里共享名 IT-Share、Finance-Share 取自第 33 课原文的 \\SVR2\IT-Share 和 \\SVR2\Finance-Share，今天必须用这两个名字，否则下节课的驱动器映射会失败。提问：为什么交付物里要写清"在哪台机器上"？——综合项目里最常见的错误就是配置做在了错的机器上。</aside>
+</section>
+
+<!-- 04 实验环境 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天的实验环境</h2></div>
+  <div class="body">
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">第一步<br>AD · DNS · Lab-Root-CA</div></div>
+      <div class="host"><div class="ic">🗄️</div><b>SVR2</b><div class="ip">10.10.10.20</div><div class="role">第二步<br>今天上线：IIS + 共享</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">第三步<br>域用户访问验证</div></div>
+      <div class="host"><div class="ic">🐉</div><b>Kali</b><div class="ip">10.10.10.50</div><div class="role">第四步<br>外部视角端口复核</div></div>
+    </div>
+    <div class="grid2">
+      <div class="callout"><b>起点：</b>恢复 <code>Lesson31-Done</code>，四台机器网络互通，三台 Windows 都在 <code>lab.local</code> 域中</div>
+      <div class="callout"><b>终点：</b>SVR2 对外提供 HTTPS 网站和部门共享，域内可按名字访问</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">开始前依次确认：DC1 上 Get-ADDomain 正常、Lab-Root-CA 在线；SVR2 的 IP 是 10.10.10.20、DNS 指向 10.10.10.10；CLIENT1 用域账号能登录。Kali 不是域成员，今天只做端口复核，不做攻击，扫描目标只限 10.10.10.0/24。</aside>
+</section>
+
+<!-- 05 概念1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 1</span><h2>一次访问 intranet 要经过的整条链路</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node"><b>① DNS</b>intranet → CNAME<br>web.lab.local</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② DNS</b>web → A 记录<br>10.10.10.20</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>③ 防火墙</b>SVR2 放行 443</div>
+      <div class="arrow">→</div>
+      <div class="node hl"><b>④ TLS</b>证书名称匹配<br>且由 Lab-Root-CA 签发</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>⑤ IIS</b>按绑定找到站点</div>
+    </div>
+    <table class="tbl">
+      <tr><th>环节</th><th>来自哪一课</th><th>坏了的表现</th></tr>
+      <tr><td>A / CNAME 记录</td><td>第 10 课 · DNS 记录</td><td>"找不到服务器"</td></tr>
+      <tr><td>域证书</td><td>第 23 课 · AD CS</td><td>证书名称不匹配 / 不受信任</td></tr>
+      <tr><td>HTTPS 绑定</td><td>第 11 课 · IIS 加固</td><td>连接被重置或打开了别的站点</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">综合项目的难点不是单个命令，而是链路上任何一环错了，浏览器只给一个笼统的报错。教学生按 ①→⑤ 的顺序逐段排查。CNAME 的好处：以后网站搬到别的服务器，只改 web 的 A 记录，intranet 这个名字不用动。提问：证书通用名应该写 web.lab.local 还是 intranet.lab.local？——取决于用户在地址栏输入哪个名字，这一点需教师确定统一口径。</aside>
+</section>
+
+<!-- 06 概念2 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念 2</span><h2>从本地组到域组：权限交给 AD 管</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad">
+        <h3>第 6–7 课（本地组）</h3>
+        <ul class="points">
+          <li>IT-Admins、IT-Users 建在 DC1 本机</li>
+          <li>换一台文件服务器就要重建组</li>
+          <li>人员调动要逐台改组成员</li>
+        </ul>
+      </div>
+      <div class="card good">
+        <h3>今天（域组）</h3>
+        <ul class="points">
+          <li>授权给第 18 课的 <code>Domain-IT</code>、<code>Domain-Finance</code></li>
+          <li>SVR2 只认 AD 里的组，不建本地账户</li>
+          <li>员工调岗：在 DC1 改组成员即可</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout"><b>两道门仍然有效（第 7 课）：</b>网络访问的有效权限 = 共享权限 ∩ NTFS 权限，取更严格的一方。</div>
+  </div>
+</div>
+<aside class="notes">回顾第 7 课的"两道门"：共享权限管网络入口，NTFS 管文件本身。原文只写"NTFS + 共享权限配合域组"，没有指定授权给哪个组、给什么权限级别，本稿建议沿用第 18 课的 Domain-IT、Domain-Finance，具体权限级别需教师确定。常见错误：组名不带域前缀 LAB\，在 SVR2 上会被当成本地组而找不到。</aside>
+</section>
+
+<!-- 07 任务1 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 15′ · DC1 → SVR2</span></span><span class="chip">回顾第 9、15 课</span><h2>远程给 SVR2 安装 IIS</h2><button class="more" data-pop="pop-l32-t1-steps">📋 详细步骤</button><button class="more" data-pop="pop-l32-t1-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 DC1 上以 LAB\Administrator 运行 PowerShell</div>
+<pre><code class="language-powershell" data-trim>
+Enter-PSSession -ComputerName SVR2
+[SVR2]: PS> Install-WindowsFeature Web-Server `
+              -IncludeManagementTools
+[SVR2]: PS> Get-Service W3SVC
+[SVR2]: PS> exit
+</code></pre>
+    <div class="grid2">
+      <div class="callout"><b>第 15 课是工作组：</b>要配 TrustedHosts、用 IP 连。现在是域环境，用计算机名 + Kerberos，直接连。</div>
+      <div class="callout"><b>检查点：</b><code>W3SVC</code> 状态为 Running；提示符前缀是 <code>[SVR2]</code>。</div>
+    </div>
+  </div>
+</div>
+<aside class="notes">安装命令与第 9 课完全相同，区别只是在远程会话里执行。如果 Enter-PSSession 报 WinRM 无法连接，先在 SVR2 本机执行第 15 课的 Enable-PSRemoting -Force。第 33 课要用 Windows 身份验证，需要 Web-Windows-Auth 子功能，可以提前按第 9 课的子功能列表一起装上，是否今天装需教师确定。装完后顺手确认一下 DC1 上 Lab-Root-CA 服务正常，为任务 2 做准备。</aside>
+<template id="pop-l32-t1-steps">
+  <h3>📋 详细步骤：远程给 SVR2 装 IIS</h3>
+  <h4>第一步：从 DC1 发起远程会话</h4>
+  <pre>Enter-PSSession -ComputerName SVR2</pre>
+  <p>提示符变成 <code>[SVR2]: PS&gt;</code> 说明已连上，接下来敲的命令都在 SVR2 上执行。</p>
+  <h4>第二步：安装 Web 服务器角色</h4>
+  <pre>Install-WindowsFeature Web-Server -IncludeManagementTools</pre>
+  <h4>第三步：确认服务已启动</h4>
+  <pre>Get-Service W3SVC</pre>
+  <p>看到 <code>Status: Running</code> 就对了，确认完退出远程会话：</p>
+  <pre>exit</pre>
+</template>
+<template id="pop-l32-t1-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:30%">设计点</th><th>意义</th></tr>
+    <tr><td>不用配 TrustedHosts 就能远程连接</td><td>第 15 课在工作组环境下，PowerShell Remoting 靠 NTLM 认证，必须把目标加入本机 TrustedHosts 才允许连接；现在两台机器都在域里，Kerberos 认证自带互信，直接用计算机名就能连，这正是"域"相对"工作组"的核心优势之一。</td></tr>
+    <tr><td>装 IIS 用 Install-WindowsFeature 而不是图形界面</td><td>远程会话里没有图形界面可用，命令行是唯一方式；而且这条命令和第 9 课本机安装时完全一样，说明"装角色"这件事和在哪台机器上做、用什么方式连接是两回事。</td></tr>
+    <tr><td>-IncludeManagementTools 这个参数</td><td>它会顺手装上 IIS 管理器控制台和 WebAdministration 模块，后面任务 2 配证书绑定时要用到图形界面，漏了这个参数就要再补装一次。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 08 任务2 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 25′ · SVR2</span></span><span class="chip">回顾第 11、23 课</span><h2>内部网站 + CA 签发证书 + HTTPS</h2><button class="more" data-pop="pop-l32-t2-steps">📋 详细步骤</button><button class="more" data-pop="pop-l32-t2-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">① 建站见📋详细步骤　② certreq 申请 SAN 证书（IIS 向导加不了 SAN）　③ 绑定 https</div>
+<pre style="--fs-code:20px"><code class="language-powershell" data-trim>
+@'
+[Version]
+Signature = "$Windows NT$"
+[NewRequest]
+Subject = "CN=web.lab.local"
+MachineKeySet = TRUE
+FriendlyName = "Intranet-SAN"
+[Extensions]
+2.5.29.17 = "{text}dns=web.lab.local&amp;dns=intranet.lab.local&amp;dns=svr2.lab.local"
+'@ | Out-File C:\web.inf -Encoding ASCII
+certreq -new C:\web.inf C:\web.req
+certreq -submit -attrib "CertificateTemplate:WebServer" `
+  -config "DC-01.lab.local\Lab-Root-CA" C:\web.req C:\web.cer
+certreq -accept C:\web.cer
+</code></pre>
+  </div>
+</div>
+<aside class="notes">证书要覆盖用户可能输入的所有名字：web.lab.local（真实主机名，任务 4 建 A 记录）、intranet.lab.local（别名，任务 4 建 CNAME）、svr2.lab.local（第 33 课 FTP 用）。现代浏览器只看 SAN 扩展、不看 CN，这是实测出来的坑：IIS 管理器的"创建域证书"向导没有 SAN 选项，签出来的证书在 Edge 里直接报名称无效。certreq 是 Windows 自带的申请工具：-new 按 INF 生成密钥和请求，-submit 交给 CA（-attrib 指定第 23 课发布的 WebServer 模板），-accept 把签回来的证书装进本机证书库。三条命令都在 SVR2 本机（控制台或 RDP）以 LAB\Administrator 运行；如果在 Enter-PSSession 远程会话里执行 certreq -new，会报"用户还未通过身份验证"（远程会话不能再去连 AD），所以这一步要在本机做。① 里 8080 是本课的 http 端口，https 用 443。</aside>
+<template id="pop-l32-t2-steps">
+  <h3>📋 详细步骤：内部网站 + CA 证书 + HTTPS</h3>
+  <h4>第一步：建站（SVR2 管理员 PowerShell）</h4>
+<pre>New-Item C:\inetpub\intranet -ItemType Directory
+"&lt;h1&gt;Intranet - SVR2&lt;/h1&gt;" | Out-File C:\inetpub\intranet\index.htm
+New-Website -Name IntranetSite -Port 8080 -PhysicalPath C:\inetpub\intranet
+New-WebBinding -Name IntranetSite -Protocol https -Port 443</pre>
+  <h4>第二步：写证书申请文件 C:\web.inf</h4>
+<pre>@'
+[Version]
+Signature = "$Windows NT$"
+[NewRequest]
+Subject = "CN=web.lab.local"
+MachineKeySet = TRUE
+FriendlyName = "Intranet-SAN"
+[Extensions]
+2.5.29.17 = "{text}dns=web.lab.local&amp;dns=intranet.lab.local&amp;dns=svr2.lab.local"
+'@ | Out-File C:\web.inf -Encoding ASCII</pre>
+  <div class="tip">最后一行 <code>'@</code> 必须顶格写在行首，前面不能有空格，否则 PowerShell 认不出 here-string 的结尾。</div>
+  <h4>第三步：生成请求 → 提交 CA → 安装证书</h4>
+<pre>certreq -new C:\web.inf C:\web.req
+certreq -submit -attrib "CertificateTemplate:WebServer" `
+  -config "DC-01.lab.local\Lab-Root-CA" C:\web.req C:\web.cer
+certreq -accept C:\web.cer</pre>
+  <p>看到"已颁发"和"安装的证书 … DNS Name=web.lab.local, DNS Name=intranet.lab.local, DNS Name=svr2.lab.local"就对了。DC-01 换成你的 DC 计算机名。</p>
+  <h4>第四步：把证书绑到 https 443</h4>
+<pre>Import-Module WebAdministration
+$cert = Get-ChildItem Cert:\LocalMachine\My | Where-Object {
+  $_.Issuer -like "CN=Lab-Root-CA*" -and $_.DnsNameList -match "intranet" } |
+  Sort-Object NotBefore | Select-Object -Last 1
+(Get-WebBinding -Name IntranetSite -Protocol https).AddSslCertificate($cert.Thumbprint, "my")
+$cert | Format-List Subject, DnsNameList, Issuer</pre>
+  <p>也可以在 IIS 管理器 › IntranetSite › 绑定 › 编辑 https 里选友好名称为 <b>Intranet-SAN</b> 的证书，效果一样。</p>
+  <h4>第五步：验证</h4>
+<pre>Get-WebBinding -Name IntranetSite | Format-Table protocol, bindingInformation, certificateHash</pre>
+  <p>https *:443 那一行的 certificateHash 应等于 <code>$cert.Thumbprint</code>。任务 4 建好 DNS 后，再到 CLIENT1 用 Edge 打开 https://intranet.lab.local，锁图标里证书路径顶端应是 Lab-Root-CA。</p>
+</template>
+<template id="pop-l32-t2-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:30%">设计点</th><th>意义</th></tr>
+    <tr><td>用 Lab-Root-CA 签发而不是第 11 课的自签名证书</td><td>自签名证书浏览器永远不信任；域证书由第 23 课的企业根 CA 签发，域成员自动信任这个根，访问就不会报"不受信任"。</td></tr>
+    <tr><td>SAN 里写 web、intranet、svr2 三个名字</td><td>浏览器校验的是"地址栏里的名字是否出现在证书的 SAN 里"。用户会输 intranet（别名），排障时会输 web（主机名），第 33 课 FTP 用 svr2.lab.local——一张证书覆盖三个名字，哪个都不报名称不匹配。</td></tr>
+    <tr><td>用 certreq + INF，而不是 IIS「创建域证书」</td><td>IIS 向导只能填 CN，签出来没有 SAN；Edge/Chrome 已经不看 CN，实测直接报 <code>ERR_CERT_COMMON_NAME_INVALID</code>。INF 的 <code>2.5.29.17</code> 就是 SAN 扩展的编号。</td></tr>
+    <tr><td><code>-attrib "CertificateTemplate:WebServer"</code></td><td>企业 CA 必须知道按哪个模板签发；WebServer 是第 23 课已发布的内置模板，用途是"服务器身份验证"。</td></tr>
+    <tr><td>在 SVR2 本机运行，不在远程会话里</td><td><code>certreq -new</code> 要用你的身份去查 AD 里的注册策略，在 Enter-PSSession 里属于"二次跳转"，凭据传不过去，会报"用户还未通过身份验证"。</td></tr>
+  </table>
+  <h4>出了问题怎么判断</h4>
+  <ul>
+    <li>certreq -submit 报"RPC 服务器不可用"：-config 里的计算机名写错了，用 <code>certutil -config - -ping</code> 弹框选 CA 看真实名字</li>
+    <li>Edge 报 ERR_CERT_COMMON_NAME_INVALID：绑定的不是这张带 SAN 的证书，重新执行第四步</li>
+  </ul>
+</template>
+</section>
+
+<!-- 09 任务3 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 25′ · SVR2</span></span><span class="chip">回顾第 6、7、18 课</span><h2>部门共享：共享权限 + NTFS 配域组</h2><button class="more" data-pop="pop-l32-t3-steps">📋 详细步骤</button><button class="more" data-pop="pop-l32-t3-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+$it  = "C:\CompanyData\IT"
+$fin = "C:\CompanyData\Finance"
+mkdir $it, $fin
+New-SmbShare -Name "IT-Share" -Path $it `
+  -ChangeAccess "LAB\Domain-IT"
+New-SmbShare -Name "Finance-Share" -Path $fin `
+  -ChangeAccess "LAB\Domain-Finance"
+</code></pre>
+    <div class="callout"><b>NTFS（第 6 课 icacls）：</b><code>icacls $it /grant "LAB\Domain-IT:(OI)(CI)M"</code>，Finance 同理换成 <code>Domain-Finance</code></div>
+    <div class="callout warn"><b>检查点：</b><code>Get-SmbShare</code> 能看到两个共享；<code>icacls $it</code> 里有 <code>LAB\Domain-IT</code>。</div>
+  </div>
+</div>
+<aside class="notes">共享名必须是 IT-Share、Finance-Share（第 33 课要映射）；目录 C:\CompanyData\... 沿用第 6 课的结构，原文未指定 SVR2 上的路径和各组的权限级别，需教师确定。整条 icacls 参数加引号，避免 PowerShell 把括号当成表达式。新建目录会继承 C:\ 上 Users 的读权限，要达到"财务看不到 IT"，需按第 6 课在图形界面里禁用继承并删掉 Users。管理员自己的 FullAccess 是否加（第 7 课给了 IT-Admins）也请教师统一。</aside>
+<template id="pop-l32-t3-steps">
+  <h3>📋 详细步骤：部门共享（共享权限 + NTFS）</h3>
+  <h4>第一步：建目录、建共享</h4>
+  <pre>$it  = "C:\CompanyData\IT"
+$fin = "C:\CompanyData\Finance"
+mkdir $it, $fin
+New-SmbShare -Name "IT-Share" -Path $it -ChangeAccess "LAB\Domain-IT"
+New-SmbShare -Name "Finance-Share" -Path $fin -ChangeAccess "LAB\Domain-Finance"</pre>
+  <h4>第二步：配 NTFS 权限</h4>
+  <pre>icacls $it  /grant "LAB\Domain-IT:(OI)(CI)M"
+icacls $fin /grant "LAB\Domain-Finance:(OI)(CI)M"</pre>
+  <h4>第三步：按第 6 课的做法去掉继承</h4>
+  <p>图形界面里对两个目录分别禁用继承并移除 Users 组，确保财务看不到 IT 的内容。</p>
+  <h4>第四步：验证</h4>
+  <pre>Get-SmbShare
+icacls $it</pre>
+</template>
+<template id="pop-l32-t3-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:30%">设计点</th><th>意义</th></tr>
+    <tr><td>共享名必须精确是 IT-Share、Finance-Share</td><td>第 33 课会用 GPO 把这两个共享映射成 S:、F: 盘，映射脚本里写的是固定路径 \\SVR2\IT-Share，名字不一致下节课就会连不上。</td></tr>
+    <tr><td>授权给域组而不是本地组或具体某个人</td><td>这是本课"概念2"讲的核心变化：域组统一在 DC1 管理，SVR2 只认 AD 里的组，员工调岗只需改一处（DC1 的组成员），不用逐台服务器改权限。</td></tr>
+    <tr><td>共享权限和 NTFS 权限都要配（两道门）</td><td>第 7 课讲过"有效权限 = 共享权限 ∩ NTFS 权限"，两边取更严格的一方；只配一边，另一边默认值可能比预期更宽或更严，达不到"财务看不到IT"的效果。</td></tr>
+    <tr><td>禁用继承、删掉 Users 组</td><td>新建目录默认继承上级 C:\ 的权限，Users 组通常有读取权限——如果不清理，所有域用户都能看到部门共享的内容，等于没做隔离。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 10 任务4 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 4 <span class="t">· 15′ · DC1</span></span><span class="chip">回顾第 10 课</span><h2>DNS：发布 web 和 intranet</h2><button class="more" data-pop="pop-l32-t4-steps">📋 详细步骤</button><button class="more" data-pop="pop-l32-t4-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 DC1 上执行（原文命令）</div>
+<pre><code class="language-powershell" data-trim>
+Add-DnsServerResourceRecordA -ZoneName "lab.local" `
+  -Name "web" -IPv4Address "10.10.10.20"
+Add-DnsServerResourceRecordCName -ZoneName "lab.local" `
+  -Name "intranet" -HostNameAlias "web.lab.local"
+</code></pre>
+<pre><code class="language-powershell" data-trim>
+Resolve-DnsName intranet.lab.local   # 在 CLIENT1 上验证
+</code></pre>
+    <div class="callout"><b>检查点：</b>先出现 CNAME → <code>web.lab.local</code>，再出现 A → <code>10.10.10.20</code>。用 <code>nslookup intranet.lab.local</code> 也行：看到 <code>Aliases: intranet.lab.local</code> 和 <code>Address: 10.10.10.20</code> 就对。</div>
+  </div>
+</div>
+<aside class="notes">A 记录写法与第 10 课添加 www、hr 完全一致，CNAME 是新出现的记录类型：别名指向另一个名字，而不是直接指向 IP。如果 CNAME 报"记录已存在"，多半是第 13 课 阶段考核 2 留下了 intranet 的 A 记录，在 DNS 管理器里确认后再处理。切到 CLIENT1 验证时若解析到旧结果，先 ipconfig /flushdns。</aside>
+<template id="pop-l32-t4-steps">
+  <h3>📋 详细步骤：发布 DNS 记录</h3>
+  <h4>第一步：在 DC1 上添加 A 记录</h4>
+  <pre>Add-DnsServerResourceRecordA -ZoneName "lab.local" -Name "web" -IPv4Address "10.10.10.20"</pre>
+  <h4>第二步：添加 CNAME 记录</h4>
+  <pre>Add-DnsServerResourceRecordCName -ZoneName "lab.local" -Name "intranet" -HostNameAlias "web.lab.local"</pre>
+  <h4>第三步：切到 CLIENT1 验证解析</h4>
+  <pre>Resolve-DnsName intranet.lab.local</pre>
+  <p>结果应该先出现 CNAME → web.lab.local，再出现 A → 10.10.10.20，这就是别名层层解析的过程。</p>
+  <p>也可以用 nslookup：</p>
+  <pre>nslookup intranet.lab.local</pre>
+  <p>看到 <code>名称: web.lab.local</code>、<code>Address: 10.10.10.20</code>、<code>Aliases: intranet.lab.local</code> 就对了。第一行 <code>服务器: UnKnown</code> 是因为 DC1 没建反向查找区域，查不到 DNS 服务器自己的名字，不影响解析，可以忽略。</p>
+</template>
+<template id="pop-l32-t4-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:30%">设计点</th><th>意义</th></tr>
+    <tr><td>先建 A 记录再建 CNAME，不能反过来</td><td>CNAME 的本质是"别名"，它自己不存 IP，必须指向另一个能被解析的名字；如果 web 这个 A 记录还不存在，intranet 这个别名就是"指向了一个不存在的地方"。</td></tr>
+    <tr><td>用 CNAME 而不是直接给 intranet 建第二条 A 记录</td><td>以后如果 SVR2 的 IP 变了，或者网站搬到别的服务器，只需要改 web 这一条 A 记录，intranet 这个对外的名字完全不用动——这是别名机制存在的意义。</td></tr>
+    <tr><td>验证时要留意解析结果的顺序</td><td>Resolve-DnsName 会显示完整的解析链路：先看到 CNAME 指向谁，再看到那个名字最终解析到哪个 IP，这正好是"intranet 和 web 这两层各自在起作用"的证据。nslookup 显示的是同一条链，只是把 CNAME 写成 Aliases。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 11 排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">排障</span><h2>整合排障：按链路从前往后查</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th style="width:32%">现象</th><th style="width:32%">原因</th><th>处理</th></tr>
+      <tr><td>Enter-PSSession 拒绝连接</td><td>SVR2 未启用 WinRM</td><td>SVR2 本机 <code>Enable-PSRemoting -Force</code></td></tr>
+      <tr><td>certreq -submit 找不到 CA</td><td>SVR2 DNS 没指向 DC1</td><td>改 DNS 为 10.10.10.10，确认 CA 服务运行</td></tr>
+      <tr><td>浏览器报名称不匹配</td><td>证书通用名 ≠ 地址栏名字</td><td>按访问名重新申请证书并重新绑定</td></tr>
+      <tr><td>intranet 解析不到</td><td>CNAME 未建或客户端缓存</td><td>DC1 查记录；CLIENT1 <code>ipconfig /flushdns</code></td></tr>
+      <tr><td>域用户访问共享被拒</td><td>共享或 NTFS 缺授权</td><td>两道门都查：<code>Get-SmbShareAccess</code>、<code>icacls</code></td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">让学生先说出报错发生在链路的哪一段，再翻这页。Get-SmbShareAccess -Name IT-Share 可以单独查看共享权限，是本页补充的只读命令。新加入组的用户需要注销重登才拿到新的组成员身份（访问令牌在登录时生成），这是"明明加了组还是被拒"的常见原因。</aside>
+</section>
+
+<!-- 12 操作顺序 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">操作顺序</span><h2>一个人怎么把四步走完</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>步骤</th><th>机器</th><th>本课任务</th></tr>
+      <tr><td><b>第一步</b></td><td>DC1</td><td>保证 CA 在线；任务 4 DNS 记录；核对域组成员</td></tr>
+      <tr><td><b>第二步</b></td><td>SVR2</td><td>任务 1–3：IIS、证书与 HTTPS、部门共享</td></tr>
+      <tr><td><b>第三步</b></td><td>CLIENT1</td><td>用 zhangsan / sunqi 验证网站和共享，记录结果</td></tr>
+      <tr><td><b>第四步</b></td><td>Kali</td><td>只读复核 SVR2 暴露了哪些端口，交给第 34 课加固</td></tr>
+    </table>
+    <div class="callout warn"><b>授权边界：</b>只对 10.10.10.0/24 做端口扫描，不做爆破和利用。</div>
+  </div>
+</div>
+<aside class="notes">测试账号沿用第 18 课：sunqi 在 Domain-IT，zhangsan 在 Domain-Finance，密码 Domain@2026!。可以用第 21 课的 nmap -sT 方式扫 10.10.10.20，把开放端口列表记下来，作为第 34 课"SVR2 仅开放 80/443/21/445"的基线对比。提醒：未经授权扫描他人网络违反《网络安全法》，课堂上只扫本实验网。</aside>
+</section>
+
+<!-- 13 验证提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>对照清单自查</h2></div>
+  <div class="body">
+    <p class="muted">对照下面的清单逐项自查，全部达成后再拍快照：</p>
+    <div class="grid2">
+      <ul class="points check">
+        <li>SVR2 已安装 IIS，W3SVC 运行</li>
+        <li>内部网站 HTTPS 绑定使用 Lab-Root-CA 签发证书</li>
+        <li>SVR2 上存在 IT-Share、Finance-Share</li>
+        <li>DNS 有 web A 记录和 intranet CNAME</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>四台 VM 都拍快照<br><code>Lesson32-Done</code></p>
+        <p class="small muted" style="margin-top:8px">第 33 课从这个快照开始</p>
+      </div>
+    </div>
+  </div>
+</div>
+<aside class="notes">本课程暂未提供自动评分脚本，由师生对照清单人工验收；左侧检查项由本稿按任务整理，需教师确定。把 CLIENT1 上的访问结果截图留存，一并写进《服务器配置清单》的"已完成"栏，作为个人提交材料。</aside>
+</section>
+
+<!-- 14 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>部署</h3><p class="small">域环境下用 <code>Enter-PSSession</code> 远程装角色，无需 TrustedHosts</p></div>
+      <div class="card blue"><h3>信任</h3><p class="small">CA 签发证书 + 名字一致，浏览器才不报警</p></div>
+      <div class="card blue"><h3>权限</h3><p class="small">授权给域组，共享 ∩ NTFS 两道门都要开</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 33 课：</b>企业 Web 与文件服务整合。GPO 自动映射 S:、F: 盘，网站改用 Windows 集成认证，FTP 迁移到 SVR2。</div>
+    <div class="callout"><b>📎 作业提交：</b>下载 <a href="downloads/check32.ps1" download>check32.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a>（放同一目录），在 <b>SVR2</b> 上以 LAB\Administrator 身份、管理员 PowerShell 运行一次 <code>check32.ps1</code> 生成检查报告（DNS 记录由脚本向 DC1 查询，不用再去 DC1 上跑），连同 CLIENT1 的访问结果截图一起提交。</div>
+  </div>
+</div>
+<aside class="notes">出口小测：1. 为什么今天 Enter-PSSession 不用配 TrustedHosts？2. intranet 的 CNAME 指向谁，最终解析到哪个 IP？3. 域用户访问 IT-Share 被拒，要查哪两处权限？</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script src="assets/popup.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+</body>
+</html>

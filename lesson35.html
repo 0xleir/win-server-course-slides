@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第35课 · 渗透测试与应急响应</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">模块六 · 综合实战　|　第 35 次课 · 学时 69–70</p>
+  <h1>渗透测试与应急响应</h1>
+  <p class="muted">课程高潮 —— 一人分饮攻防两端的完整闭环</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">全套 VM 环境</span></div>
+</div>
+<aside class="notes">这是整门课的高潮，但不是组间对抗：你自己打自己搭建的环境，先当攻击者把能找到的问题都打一遍，再切回防御者视角，看自己的日志能不能发现刚才那些攻击动作。这个"自己打自己"的设计看似简单，其实价值很高——你知道自己做了什么，所以能精确算出"检测率"（日志里查到了几成），这比猜测更有说服力。全程强调法律与道德边界——只攻击自己的实验网段，严禁触碰任何真实或未授权系统。</aside>
+</section>
+
+<!-- 02 整体格局 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>今天怎么打：单人闭环</h2></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node hl"><b>① 攻击</b>切到 Kali<br>打自己的 DC1/SVR2/CLIENT1</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 应急响应</b>切回防御视角<br>识别 → 封禁 → 修复</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>③ 复盘</b>对照"我做了什么"<br>和"日志查到了什么"</div>
+    </div>
+    <div class="callout warn"><b>边界：</b>只攻击 10.10.10.0/24 内你自己的实验机，严禁对实验网之外的任何系统扫描或攻击。</div>
+  </div>
+</div>
+<aside class="notes">关键点：不再有"对方的环境"，Kali 打的就是你自己在前几课配置好的 DC1/SVR2/CLIENT1。这样设计仍然有真实的攻防张力——第 31–34 课你是以防御者身份加固的，可能漏了什么自己都不知道，现在换上攻击者的帽子，用前面学到的技术逐一验证，往往会有意外发现。开场把流程和评分讲清楚。</aside>
+</section>
+
+<!-- 03 流程时间线 -->
+<section>
+<div class="frame">
+  <h2>全天任务时间线</h2>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:8"><span class="t">8′</span><b>开场</b>规则<br>授权边界声明</div>
+      <div class="seg" style="flex:36"><span class="t">36′</span><b>阶段 1 · 攻击</b>切 Kali：信息收集 + 漏洞利用</div>
+      <div class="seg" style="flex:18"><span class="t">18′</span><b>阶段 2 · 应急响应</b>切回防御：识别 → 封禁 → 修复</div>
+      <div class="seg" style="flex:18"><span class="t">18′</span><b>阶段 3 · 复盘</b>对照攻击记录与检测记录</div>
+    </div>
+    <div class="card">
+      <h3>两份提交物</h3>
+      <ul class="points check">
+        <li>《渗透测试报告》—— 漏洞、攻击路径、截图证据（攻击视角）</li>
+        <li>《安全事件分析报告》—— 检测到的攻击、响应、改进（防御视角）</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">三个阶段节奏要卡住：40 分钟攻防对抗、20 分钟应急响应、20 分钟复盘。两份报告都是同一个人写的，提醒自己边打边截图记录，边守边记日志，不要等到最后补——现场证据补不回来。原来的"角色轮换记录表"已不再需要，因为你本来就会亲手做完攻防两端。</aside>
+</section>
+
+<!-- 04 阶段1 攻击 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">阶段 1 · 攻击视角 <span class="t">· 40′</span></span><h2>切到 Kali：信息收集 → 利用</h2><button class="more" data-pop="pop-l35-atk-steps">📋 详细步骤</button><button class="more" data-pop="pop-l35-atk-why">💡 每条命令在查什么</button></div>
+  <div class="body">
+    <div class="code-cap">在 Kali（10.10.10.50）对自己的靶机操作 · DC1=.10 SVR2=.20 CLIENT1=.100</div>
+<pre><code class="language-bash" data-trim>
+nmap -sV -p- 10.10.10.10 10.10.10.20 10.10.10.100   # 全端口+服务侦察
+nmap -p445 --script smb2-security-mode 10.10.10.20   # SMB 签名是否"强制"
+curl -k -o /dev/null -w "%{http_code}
+" https://10.10.10.20/  # 网站匿名=401?
+curl http://10.10.10.20/                              # 80 端口匿名返回什么
+curl -k --ssl-reqd ftp://10.10.10.20/                 # FTP 匿名(应被拒)
+sudo mount.cifs //10.10.10.20/IT-Share /mnt -o user=sunqi,pass=错密码,dom=LAB
+</code></pre>
+    <div class="callout warn"><b>加固后你会发现：</b>多数口子已关（FTP 要 SSL、网站 443 要认证、CLIENT1 的 RDP 被过滤），但仍有可记录的问题 —— 见 <b>📋 详细步骤</b>。每条都截图进《渗透测试报告》。</div>
+  </div>
+</div>
+<aside class="notes">方法论就是前面几节课的综合：先 nmap -sV -sC 侦察，再按发现的服务选利用方式——SMB 枚举共享、Hydra 喷射弱口令、http-enum 找 Web 目录、FTP 试匿名。TARGET 替换成你自己 DC1/SVR2 的真实 IP。强调每一步都要留证据，报告质量占分。再次重申只打 10.10.10.0/24 内自己的机器。</aside>
+<template id="pop-l35-atk-steps">
+  <h3>📋 详细步骤：对加固环境的渗透（Kali 10.10.10.50）</h3>
+  <h4>第一步：全端口服务侦察</h4>
+  <pre>nmap -sV -p- 10.10.10.10 10.10.10.20 10.10.10.100</pre>
+  <p>记下每台开放的端口与服务版本，和你第 34 课的白名单对照——哪些是预期开放，哪些意外还开着。</p>
+  <h4>第二步：逐服务试探</h4>
+  <pre># SMB 签名是否"强制"
+nmap -p445 --script smb2-security-mode 10.10.10.20
+# 网站：443 匿名应 401；80 匿名返回什么？
+curl -k -o /dev/null -w "%{http_code}
+" https://10.10.10.20/
+curl http://10.10.10.20/
+# FTP 匿名、明文（应被 SSL 挡）
+curl -k --ssl-reqd ftp://10.10.10.20/
+# 共享弱口令（错密码，看是否被签名/策略挡）
+sudo mount.cifs //10.10.10.20/IT-Share /mnt -o user=sunqi,pass=Wrong1,dom=LAB</pre>
+  <h4>本环境的真实发现（示例答案）</h4>
+  <table>
+    <tr><th>发现</th><th>说明</th></tr>
+    <tr><td>SVR2:80 匿名返回默认 IIS 页</td><td>HTTP 200，无业务用途的站点仍在监听——应关闭或改为跳转</td></tr>
+    <tr><td>SMB 签名"启用但不强制"</td><td>smb2-security-mode 显示 enabled but not required，可被中间人降级</td></tr>
+    <tr><td>DC1/SVR2 的 135、139 暴露</td><td>RPC/NetBIOS 对外可见，是信息泄露面</td></tr>
+    <tr><td>DC1:3390 RDP 开放</td><td>管理需要，但应限制来源 IP</td></tr>
+  </table>
+  <h4>加固挡住了什么（也要记进报告）</h4>
+  <ul>
+    <li>FTP 匿名/明文：返回 534 要求 SSL，密码喷射连不上</li>
+    <li>网站 443：匿名 401，必须域凭据</li>
+    <li>CLIENT1 的 RDP(3389)：被防火墙过滤，扫不到</li>
+    <li>hydra 打 SMB：因签名要求返回 invalid reply，喷不动</li>
+  </ul>
+</template>
+<template id="pop-l35-atk-why">
+  <h3>💡 每条命令在查什么</h3>
+  <table>
+    <tr><th style="width:34%">命令</th><th>目的</th></tr>
+    <tr><td>nmap -sV -p-</td><td>全端口 + 服务版本：画出攻击面，和白名单对照找意外开放的端口</td></tr>
+    <tr><td>smb2-security-mode 脚本</td><td>判断 SMB 签名是"强制"还是只"启用"——不强制就可能被降级/中继攻击</td></tr>
+    <tr><td>curl https:// 看状态码</td><td>401 说明匿名访问被挡（好）；200 说明匿名能进（要查这个站点该不该开）</td></tr>
+    <tr><td>curl http://:80</td><td>80 端口常被忽略；默认 IIS 页=一个无人管的站点，是典型遗留面</td></tr>
+    <tr><td>curl --ssl-reqd ftp://</td><td>测 FTP 是否强制 SSL、是否允许匿名——第 33 课加固点的回归验证</td></tr>
+    <tr><td>mount.cifs 错密码</td><td>试共享弱口令；同时会在服务器产生 4625 失败登录，正好供阶段 2 检测</td></tr>
+  </table>
+  <div class="tip">红线：所有命令只对 10.10.10.0/24 内你自己的靶机运行；不做实验网之外的任何扫描或爆破。</div>
+</template>
+</section>
+
+<!-- 05 阶段1 防御记录 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">阶段 1 · 防御记录 <span class="t">· 与攻击同步</span></span><h2>攻击的同时，顺手记一下监控对象</h2><button class="more" data-pop="pop-l35-det-steps">📋 怎么查日志</button><button class="more" data-pop="pop-l35-det-why">💡 哪条日志对应哪种攻击</button></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>监控对象</th><th>关注点</th></tr>
+      <tr><td>DC1 · 转发的事件</td><td>来自 SVR2 的 4625 失败登录（含攻击账户名、源）</td></tr>
+      <tr><td>SVR2 · IIS/FTP 日志</td><td>C:\inetpub\logs 里 10.10.10.50 的大量请求 = 扫描/枚举</td></tr>
+      <tr><td>SVR2 · pfirewall.log</td><td>来自 10.10.10.50 的 DROP = 被白名单挡下的扫描</td></tr>
+      <tr><td>两台 · Sysmon</td><td>进程创建(ID1)、网络连接(ID3)</td></tr>
+    </table>
+    <div class="callout"><b>先别急着看：</b>这页只是提前标出阶段3要核对的三条战线，阶段1的重点仍是攻击，等阶段2再切回来逐条查。</div>
+  </div>
+</div>
+<aside class="notes">这页是为阶段 3 的复盘做铺垫：攻击时你走了哪些路，等下就该去这三条战线里找痕迹。三条战线覆盖域控认证、应用服务、网络与进程，基本能盖住阶段 1 用到的所有攻击手法。先记在心里，阶段 1 结束后再切回防御视角逐条查。</aside>
+<template id="pop-l35-det-steps">
+  <h3>📋 怎么查日志（阶段 2/3 用）</h3>
+  <h4>DC1：转发的事件里找失败登录</h4>
+  <pre>Get-WinEvent -LogName ForwardedEvents -MaxEvents 500 |
+  Where-Object Id -eq 4625 |
+  Select-Object TimeCreated, MachineName,
+    @{n='User';e={$_.Properties[5].Value}}</pre>
+  <p>应看到来自 SVR2 的 4625，账户名就是你喷射时用的（如 sunqi），域 LAB。</p>
+  <h4>SVR2：IIS/FTP 日志里找 Kali</h4>
+  <pre>Select-String -Path C:\inetpub\logs\LogFiles\*\*.log -Pattern "10.10.10.50" |
+  Measure-Object | Select-Object Count</pre>
+  <p>数量很大 = 你的 nmap/curl 扫描痕迹；FTP 日志（FTPSVC 目录）里是被 534 拒绝的匿名尝试。</p>
+  <h4>SVR2：防火墙 DROP</h4>
+  <pre>Select-String C:\Windows\System32\LogFiles\Firewall\pfirewall.log `
+  -Pattern "DROP.*10.10.10.50"</pre>
+  <p>这些是被白名单直接挡掉的扫描包——加固在"看得见"地起作用。</p>
+</template>
+<template id="pop-l35-det-why">
+  <h3>💡 哪条日志对应哪种攻击</h3>
+  <table>
+    <tr><th style="width:32%">攻击动作</th><th>会在哪留痕</th></tr>
+    <tr><td>nmap -sV 端口扫描</td><td>SVR2 pfirewall.log 的 DROP（被挡的端口）、IIS 日志（命中 80/443 的探测请求）</td></tr>
+    <tr><td>curl 探测网站/目录</td><td>SVR2 IIS 日志里来自 10.10.10.50 的 GET，含 401/200 状态码</td></tr>
+    <tr><td>FTP 匿名尝试</td><td>SVR2 FTP 日志（FTPSVC），记录 534 被拒</td></tr>
+    <tr><td>mount.cifs / hydra 错密码</td><td>SVR2 Security 4625 → 转发到 DC1 的"转发的事件"</td></tr>
+  </table>
+  <div class="tip">遗漏的意义：如果某种攻击在三条战线里都查不到，就是防御盲区——比如没开某日志、Sysmon 没覆盖该事件。把"为什么没发现"写进分析报告，分值很高。</div>
+</template>
+</section>
+
+<!-- 06 阶段2 应急响应 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">阶段 2 · 切回防御 <span class="t">· 20′</span></span><h2>应急响应</h2><button class="more" data-pop="pop-l35-ir-steps">📋 详细步骤</button><button class="more" data-pop="pop-l35-ir-why">💡 每步为什么</button></div>
+  <div class="body">
+    <div class="flow">
+      <div class="node hl"><b>① 识别</b>从日志定位攻击源 IP</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>② 封禁</b>防火墙阻止该 IP</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>③ 恢复</b>解锁合法账户</div>
+      <div class="arrow">→</div>
+      <div class="node"><b>④ 修复</b>堵住被利用的漏洞</div>
+    </div>
+<pre><code class="language-powershell" data-trim>
+New-NetFirewallRule -DisplayName "Block-Attacker" -Direction Inbound `
+  -RemoteAddress &lt;Kali的IP 10.10.10.50&gt; -Action Block
+Search-ADAccount -LockedOut | Unlock-ADAccount
+</code></pre>
+  </div>
+</div>
+<aside class="notes">应急响应是一条标准流程：先从日志里确认攻击源 IP（就是你自己的 Kali，10.10.10.50），用防火墙 New-NetFirewallRule 建一条入站 Block 规则封掉它（实测可建可删）；再 Search-ADAccount -LockedOut 看有没有合法用户被喷射误锁，用 Unlock-ADAccount 恢复；最后针对本课真实发现做修复：关掉 SVR2:80 那个匿名的默认 IIS 站点、把 SMB 签名从"启用"改成"强制"、评估是否需要 135/139。封禁要精准到攻击 IP，不要一刀切断全网。</aside>
+<template id="pop-l35-ir-steps">
+  <h3>📋 详细步骤：应急响应四步</h3>
+  <h4>① 识别攻击源</h4>
+  <p>从上面日志确认攻击来自 <code>10.10.10.50</code>（你的 Kali）。</p>
+  <h4>② 封禁（在被攻击的服务器上，如 SVR2/DC1）</h4>
+  <pre>New-NetFirewallRule -DisplayName "Block-Attacker" `
+  -Direction Inbound -RemoteAddress 10.10.10.50 -Action Block
+# 验证：封禁后从 Kali 再扫，应全部超时
+</pre>
+  <h4>③ 恢复被误锁的合法账户（DC1）</h4>
+  <pre>Search-ADAccount -LockedOut | Select Name, LockedOut
+Search-ADAccount -LockedOut | Unlock-ADAccount</pre>
+  <h4>④ 修复被发现的问题</h4>
+  <pre># 关掉 SVR2 上匿名的默认 IIS 站点（80）
+Import-Module WebAdministration
+Stop-Website "Default Web Site"
+Set-ItemProperty "IIS:\Sites\Default Web Site" serverAutoStart $false
+# SMB 签名改为"强制"
+Set-SmbServerConfiguration -RequireSecuritySignature $true -Force</pre>
+  <h4>验证完回滚（课堂演示用）</h4>
+  <pre>Remove-NetFirewallRule -DisplayName "Block-Attacker"</pre>
+</template>
+<template id="pop-l35-ir-why">
+  <h3>💡 每步为什么</h3>
+  <table>
+    <tr><th style="width:28%">步骤</th><th>意义</th></tr>
+    <tr><td>先识别再封禁</td><td>封禁要精准到攻击源 IP；一刀切断全网会误伤正常业务，也掩盖证据。</td></tr>
+    <tr><td>入站 Block 规则</td><td>比关服务更快止血：攻击者的包在网络层就被丢弃，服务照常给合法用户用。</td></tr>
+    <tr><td>解锁合法账户</td><td>密码喷射会把真实用户锁定（账户锁定策略的副作用），恢复业务必须解锁。</td></tr>
+    <tr><td>修复根因</td><td>封 IP 只挡这一个攻击者；真正的加固是关掉匿名站点、强制 SMB 签名等，让换个 IP 来也打不动。</td></tr>
+    <tr><td>检查数据泄露</td><td>响应不止"赶走人"，还要确认有没有文件被读走/改动——看共享访问日志和文件时间戳。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 07 阶段3 复盘 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">阶段 3 · 复盘 <span class="t">· 20′</span></span><h2>对照"我做了什么"和"日志查到了什么"</h2><button class="more" data-pop="pop-l35-rev">💡 检测率怎么算 + 示例</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="card bad"><h3>翻出《渗透测试报告》</h3><ul class="points"><li>我发现了哪些漏洞</li><li>我利用了什么攻击路径</li><li>哪一步最关键</li></ul></div>
+      <div class="card good"><h3>翻出《安全事件分析报告》</h3><ul class="points"><li>日志里检测到了哪些攻击</li><li>遗漏了什么、为什么</li><li>响应是否及时</li></ul></div>
+    </div>
+    <div class="callout"><b>自我检测率：</b>日志里查到的攻击动作数 ÷ 自己实际做过的攻击动作数，算出一个百分比。</div>
+  </div>
+</div>
+<aside class="notes">复盘是学习价值最高的环节：你自己知道究竟发起了多少次攻击、用了哪些手法，这是"自我检测率"能被精确计算出来的前提——这比两人对抗时"猜对方打了几次"更可靠。遗漏往往比抓到更有教学意义——"为什么没发现"直指防御盲区，比如 FTP 日志没开、Sysmon 配置没覆盖某个事件类型。</aside>
+<template id="pop-l35-rev">
+  <h3>💡 自我检测率怎么算（示例）</h3>
+  <p><b>检测率 = 日志里查到的攻击动作数 ÷ 自己实际发起的攻击动作数</b></p>
+  <h4>示例</h4>
+  <table>
+    <tr><th>我做过的攻击动作</th><th>日志里查到了吗</th></tr>
+    <tr><td>nmap 全端口扫描 ×3 台</td><td>✅ pfirewall DROP + IIS 日志</td></tr>
+    <tr><td>curl 探测 80/443</td><td>✅ IIS 日志 10.10.10.50</td></tr>
+    <tr><td>FTP 匿名尝试</td><td>✅ FTP 日志 534</td></tr>
+    <tr><td>mount.cifs 错密码 ×3</td><td>✅ 4625 转发到 DC1</td></tr>
+    <tr><td>SMB 签名探测</td><td>❌ 只读探测，无认证，常无痕</td></tr>
+  </table>
+  <p>上例 4/5 ≈ 80%。<b>查不到的那一项（只读探测）正是防御盲区</b>——要在分析报告里说明"为什么没发现、怎么补"（如加网络层 IDS）。两份报告的攻击次数要如实、对得上，教师会核对时间戳。</p>
+</template>
+</section>
+
+<!-- 08 评分规则 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">评分</span><h2>评分规则（教师评分，不设组间加权）</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>评分项</th><th style="width:14%">分值</th><th>评分方</th></tr>
+      <tr><td>发现漏洞数（每个 5 分，上限 25 分）</td><td>25 分</td><td>教师</td></tr>
+      <tr><td>自我检测率（日志查到的攻击 ÷ 自己实际发起的攻击）</td><td>25 分</td><td>教师核对两份报告</td></tr>
+      <tr><td>应急响应速度和完整性</td><td>25 分</td><td>教师</td></tr>
+      <tr><td>报告质量（两份报告的结构、证据、改进建议）</td><td>25 分</td><td>教师</td></tr>
+    </table>
+    <div class="callout warn">漏洞要有证据才算；检测率看《安全事件分析报告》对照《渗透测试报告》里记录的真实攻击次数。总分 = 四项直接相加，不设小组或角色加权。</div>
+  </div>
+</div>
+<aside class="notes">四项各 25 分，全部由教师评定，不再有"组间互评"。发现漏洞必须有截图/日志证据，口说无凭。自我检测率是检测到的攻击次数除以自己实际发起的攻击次数，所以两份报告都要如实记录——弄虚作假反而会让自己的检测率看起来"异常完美"，教师核对两份报告的时间戳和内容就能发现。应急响应看封禁是否及时准确、合法用户是否恢复。报告质量包含结构、证据、改进建议。把这张表提前公布，学生才知道往哪使劲。</aside>
+</section>
+
+<!-- 09 边界与排障 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">边界 + 排障</span><h2>纪律红线与常见问题</h2></div>
+  <div class="body">
+    <div class="callout warn"><b>🚫 红线：</b>只攻击自己的实验网段 10.10.10.0/24，严禁扫描/攻击实验环境之外的任何系统，违者按违纪处理并可能承担法律责任。</div>
+    <table class="tbl">
+      <tr><th style="width:40%">现象</th><th>处理</th></tr>
+      <tr><td>Kali 连不上目标</td><td>确认目标 VM 已开机，检查网络连通（同一 Host-only 网段）</td></tr>
+      <tr><td>日志里什么都没有</td><td>确认审核策略、Sysmon、pfirewall 日志已开</td></tr>
+      <tr><td>封禁后攻击仍在继续</td><td>核对规则方向 Inbound 与来源 IP（10.10.10.50）是否正确</td></tr>
+      <tr><td>合法用户被锁登不上</td><td><code>Unlock-ADAccount</code> 解锁</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">把红线放在最醒目位置，开课和结束各强调一次。排障方面：日志为空通常是前面某课的审核/日志配置被快照回滚了，要先补上才有东西可看，这也是为什么前面每课都强调开日志、拍快照。封禁无效多半是方向或 IP 写错。</aside>
+</section>
+
+<!-- 10 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>攻</h3><p class="small">侦察→枚举→利用，全程留证据</p></div>
+      <div class="card blue"><h3>守</h3><p class="small">多线监控→识别→封禁→修复</p></div>
+      <div class="card blue"><h3>悟</h3><p class="small">攻防是一体两面，日志是防御的眼睛</p></div>
+    </div>
+    <div class="callout"><b>收尾：</b>提交两份报告，拍下最终快照 <code>Lesson35-Done</code>。下一步进入期末综合考核 阶段考核 6。</div>
+    <div class="callout"><b>📎 作业提交：</b>两份报告（《渗透测试报告》《安全事件分析报告》）+ 在 DC1、SVR2、CLIENT1 上各跑一次 <a href="downloads/check35.ps1" download>check35.ps1</a> 和 <a href="downloads/checklib.ps1" download>checklib.ps1</a> 的报告。check35 会核对日志里是否留有本次攻击的痕迹（IIS/FTP 的 Kali 请求、转发的 4625、封禁规则），帮你算检测率。
+  </div>
+</div>
+<aside class="notes">这节课把整门课的攻防知识打通成一次实战。总结时让学生体会：防御者必须懂攻击，才知道防什么；攻击者的每一步都会在日志里留痕，所以日志就是防御的眼睛。确保两份提交物齐全，拍下 Lesson35-Done 快照。接下来是 阶段考核 6 期末综合考核。</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script src="assets/popup.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+</body>
+</html>
