@@ -1,5 +1,5 @@
 <mxfile host="app.diagrams.net" agent="win-server-course" version="24.0.0">
-  <diagram id="l31-sample-v2" name="企业网络架构图-标准答案">
+  <diagram id="l31-sample-v3" name="企业网络架构图-标准答案">
     <mxGraphModel dx="1600" dy="900" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1300" pageHeight="900" math="0" shadow="0" background="#FAFAFA">
       <root>
         <mxCell id="0" />
@@ -7,126 +7,131 @@
 
         <!-- 标题 -->
         <mxCell id="title" value="企业网络架构图 · lab.local 域" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=22;fontStyle=1;fontColor=#1F3864;" vertex="1" parent="1">
-          <mxGeometry x="400" y="20" width="500" height="40" as="geometry" />
+          <mxGeometry x="400" y="30" width="500" height="36" as="geometry" />
         </mxCell>
         <mxCell id="subtitle" value="第 31 课 · 任务 1 标准答案参考　|　绘图人：___________　日期：___________" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontColor=#595959;" vertex="1" parent="1">
-          <mxGeometry x="340" y="60" width="620" height="24" as="geometry" />
+          <mxGeometry x="340" y="70" width="620" height="24" as="geometry" />
         </mxCell>
 
         <!-- ========== 服务器网段框 ========== -->
-        <mxCell id="server-zone" value="🏢 服务器网段 · 静态 IP · 10.10.10.1–.99" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;verticalAlign=top;fontSize=14;fontStyle=1;fontColor=#1F3864;dashed=1;dashPattern=8 4;spacingTop=8;" vertex="1" parent="1">
-          <mxGeometry x="60" y="110" width="560" height="380" as="geometry" />
+        <mxCell id="server-zone" value="🏢 服务器网段 · 静态 IP · 10.10.10.1–.99" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;verticalAlign=top;fontSize=14;fontStyle=1;fontColor=#1F3864;dashed=1;dashPattern=8 4;spacingTop=10;" vertex="1" parent="1">
+          <mxGeometry x="60" y="120" width="560" height="400" as="geometry" />
         </mxCell>
 
-        <!-- DC-01 (使用 citrix directory_server 图标) -->
-        <mxCell id="dc1-icon" value="" style="sketch=0;html=1;dashed=0;whiteSpace=wrap;shadow=0;strokeColor=none;fillColor=#1F3864;shape=mxgraph.citrix.directory_server;" vertex="1" parent="1">
-          <mxGeometry x="130" y="170" width="80" height="100" as="geometry" />
+        <!-- DC-01 用 active_directory/domain_controller.svg -->
+        <mxCell id="dc1-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=../drawio/img/lib/active_directory/domain_controller.svg;" vertex="1" parent="1">
+          <mxGeometry x="135" y="170" width="90" height="110" as="geometry" />
         </mxCell>
-        <mxCell id="dc1-label" value="&lt;b style=&quot;font-size:14px;color:#1F3864&quot;&gt;DC-01&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#595959&quot;&gt;10.10.10.10&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="110" y="275" width="120" height="40" as="geometry" />
+        <mxCell id="dc1-label" value="&lt;b style=&quot;font-size:15px;color:#1F3864&quot;&gt;DC-01&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#595959&quot;&gt;10.10.10.10&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="110" y="285" width="140" height="40" as="geometry" />
         </mxCell>
-        <mxCell id="dc1-roles" value="&lt;b style=&quot;color:#1F3864&quot;&gt;角色（4 合 1）&lt;/b&gt;&#10;━━━━━━━━━━━&#10;🗂️  AD DS（域控）&#10;🌐  DNS&#10;📡  DHCP · Lab-Scope&#10;🔐  AD CS · Lab-Root-CA&#10;━━━━━━━━━━━&#10;DNS → 127.0.0.1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6C8EBF;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="90" y="325" width="160" height="150" as="geometry" />
+        <mxCell id="dc1-roles" value="&lt;b style=&quot;color:#1F3864;font-size:12px&quot;&gt;角色（4 合 1）&lt;/b&gt;&#10;━━━━━━━━━━━&#10;🗂️  AD DS（域控）&#10;🌐  DNS&#10;📡  DHCP · Lab-Scope&#10;🔐  AD CS · Lab-Root-CA&#10;━━━━━━━━━━━&#10;DNS → 127.0.0.1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6C8EBF;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="90" y="335" width="180" height="160" as="geometry" />
         </mxCell>
 
-        <!-- SVR2 (使用 cisco file_server 图标) -->
-        <mxCell id="svr2-icon" value="" style="sketch=0;html=1;dashed=0;whiteSpace=wrap;shadow=0;strokeColor=none;fillColor=#2E75B6;shape=mxgraph.cisco.servers.file_server;" vertex="1" parent="1">
-          <mxGeometry x="430" y="170" width="80" height="100" as="geometry" />
+        <!-- SVR2 用 active_directory/web_server.svg -->
+        <mxCell id="svr2-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=../drawio/img/lib/active_directory/web_server.svg;" vertex="1" parent="1">
+          <mxGeometry x="420" y="170" width="90" height="110" as="geometry" />
         </mxCell>
-        <mxCell id="svr2-label" value="&lt;b style=&quot;font-size:14px;color:#2E75B6&quot;&gt;SVR2&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#595959&quot;&gt;10.10.10.20&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="410" y="275" width="120" height="40" as="geometry" />
+        <mxCell id="svr2-label" value="&lt;b style=&quot;font-size:15px;color:#2E75B6&quot;&gt;SVR2&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#595959&quot;&gt;10.10.10.20&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="395" y="285" width="140" height="40" as="geometry" />
         </mxCell>
-        <mxCell id="svr2-roles" value="&lt;b style=&quot;color:#2E75B6&quot;&gt;角色：成员服务器&lt;/b&gt;&#10;━━━━━━━━━━━&#10;🌐  IIS（HTTPS）&#10;📁  文件服务器&#10;    · IT-Share&#10;    · Finance-Share&#10;━━━━━━━━━━━&#10;DNS → 10.10.10.10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2E75B6;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="390" y="325" width="160" height="150" as="geometry" />
+        <mxCell id="svr2-roles" value="&lt;b style=&quot;color:#2E75B6;font-size:12px&quot;&gt;角色：成员服务器&lt;/b&gt;&#10;━━━━━━━━━━━&#10;🌐  IIS（HTTPS）&#10;📁  文件服务器&#10;    · IT-Share&#10;    · Finance-Share&#10;━━━━━━━━━━━&#10;DNS → 10.10.10.10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2E75B6;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="375" y="335" width="180" height="160" as="geometry" />
         </mxCell>
 
         <!-- ========== 客户端网段 ========== -->
-        <mxCell id="client-zone" value="💻 客户端网段 · DHCP · 10.10.10.100–.200" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;verticalAlign=top;fontSize=14;fontStyle=1;fontColor=#2F5F2F;dashed=1;dashPattern=8 4;spacingTop=8;" vertex="1" parent="1">
-          <mxGeometry x="660" y="110" width="340" height="380" as="geometry" />
+        <mxCell id="client-zone" value="💻 客户端网段 · DHCP · 10.10.10.100–.200" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D5E8D4;strokeColor=#82B366;verticalAlign=top;fontSize=14;fontStyle=1;fontColor=#2F5F2F;dashed=1;dashPattern=8 4;spacingTop=10;" vertex="1" parent="1">
+          <mxGeometry x="660" y="120" width="340" height="400" as="geometry" />
         </mxCell>
 
-        <!-- CLIENT1 (citrix desktop 图标) -->
-        <mxCell id="client1-icon" value="" style="sketch=0;html=1;dashed=0;whiteSpace=wrap;shadow=0;strokeColor=none;fillColor=#548235;shape=mxgraph.citrix.desktop;" vertex="1" parent="1">
-          <mxGeometry x="770" y="170" width="90" height="100" as="geometry" />
+        <!-- CLIENT1 用 workstation_client.svg -->
+        <mxCell id="client1-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=../drawio/img/lib/active_directory/workstation_client.svg;" vertex="1" parent="1">
+          <mxGeometry x="775" y="170" width="100" height="110" as="geometry" />
         </mxCell>
-        <mxCell id="client1-label" value="&lt;b style=&quot;font-size:14px;color:#548235&quot;&gt;CLIENT1&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#595959&quot;&gt;DHCP 自动获取&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="745" y="275" width="140" height="40" as="geometry" />
+        <mxCell id="client1-label" value="&lt;b style=&quot;font-size:15px;color:#548235&quot;&gt;CLIENT1&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#595959&quot;&gt;DHCP 自动获取&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="745" y="285" width="160" height="40" as="geometry" />
         </mxCell>
-        <mxCell id="client1-roles" value="&lt;b style=&quot;color:#548235&quot;&gt;角色：域成员&lt;/b&gt;&#10;━━━━━━━━━━━&#10;🪟  Windows 10&#10;👤  一个域账号登录&#10;    任何客户端&#10;🔍  用于测试访问&#10;━━━━━━━━━━━&#10;DNS → 10.10.10.10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#82B366;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="730" y="325" width="170" height="150" as="geometry" />
+        <mxCell id="client1-roles" value="&lt;b style=&quot;color:#548235;font-size:12px&quot;&gt;角色：域成员&lt;/b&gt;&#10;━━━━━━━━━━━&#10;🪟  Windows 10&#10;👤  一个域账号&#10;    登录任何客户端&#10;🔍  用于测试访问&#10;━━━━━━━━━━━&#10;DNS → 10.10.10.10" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#82B366;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="730" y="335" width="190" height="160" as="geometry" />
         </mxCell>
 
         <!-- ========== Kali 测试区 ========== -->
-        <mxCell id="kali-zone" value="⚠️ 授权测试机区 · 不加域 · 第 35 课使用" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;verticalAlign=top;fontSize=13;fontStyle=1;fontColor=#8B2A2A;dashed=1;dashPattern=4 4;spacingTop=6;" vertex="1" parent="1">
-          <mxGeometry x="60" y="520" width="560" height="140" as="geometry" />
+        <mxCell id="kali-zone" value="⚠️ 授权测试机区 · 不加域 · 第 35 课使用" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;verticalAlign=top;fontSize=13;fontStyle=1;fontColor=#8B2A2A;dashed=1;dashPattern=4 4;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="60" y="550" width="560" height="140" as="geometry" />
         </mxCell>
 
-        <!-- Kali (laptop 图标) -->
-        <mxCell id="kali-icon" value="" style="sketch=0;html=1;dashed=0;whiteSpace=wrap;shadow=0;strokeColor=none;fillColor=#B85450;shape=mxgraph.citrix.laptop_2;" vertex="1" parent="1">
-          <mxGeometry x="110" y="560" width="90" height="60" as="geometry" />
+        <!-- Kali 用 laptop_client.svg -->
+        <mxCell id="kali-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=../drawio/img/lib/active_directory/laptop_client.svg;" vertex="1" parent="1">
+          <mxGeometry x="110" y="585" width="90" height="80" as="geometry" />
         </mxCell>
         <mxCell id="kali-label" value="&lt;b style=&quot;font-size:14px;color:#B85450&quot;&gt;Kali Linux&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#595959&quot;&gt;10.10.10.50 · 不加域&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="85" y="625" width="140" height="30" as="geometry" />
+          <mxGeometry x="80" y="665" width="150" height="22" as="geometry" />
         </mxCell>
-        <mxCell id="kali-note" value="🚫 &lt;b&gt;授权边界&lt;/b&gt;&#10;　• 仅限 10.10.10.0/24 网段&#10;　• 仅第 35 课使用&#10;　• 本课不扫描、不登录&#10;　• 攻击测试故意保持在域外，被攻陷不威胁域凭据" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B85450;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="250" y="555" width="350" height="90" as="geometry" />
+        <mxCell id="kali-note" value="🚫 &lt;b&gt;授权边界&lt;/b&gt;&#10;　• 仅限 10.10.10.0/24 网段&#10;　• 仅第 35 课使用，本课不扫描&#10;　• 攻击测试故意保持在域外&#10;　  被攻陷不威胁域凭据" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#B85450;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="250" y="580" width="350" height="90" as="geometry" />
         </mxCell>
 
-        <!-- ========== 域横幅 + OU/组 ========== -->
-        <mxCell id="domain-icon" value="" style="sketch=0;html=1;dashed=0;whiteSpace=wrap;shadow=0;strokeColor=none;fillColor=#D6B656;shape=mxgraph.networks.cloud;" vertex="1" parent="1">
-          <mxGeometry x="690" y="520" width="50" height="40" as="geometry" />
+        <!-- ========== 域横幅 (用彩色 mscae Active Directory 图标) ========== -->
+        <mxCell id="domain-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=../drawio/img/lib/mscae/Active_Directory.svg;" vertex="1" parent="1">
+          <mxGeometry x="680" y="548" width="50" height="50" as="geometry" />
         </mxCell>
-        <mxCell id="domain-title" value="&lt;b style=&quot;font-size:14px;color:#7F6000&quot;&gt;Active Directory 域&lt;/b&gt;&lt;br&gt;&lt;b style=&quot;color:#7F6000&quot;&gt;lab.local&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;spacingLeft=8;" vertex="1" parent="1">
-          <mxGeometry x="750" y="520" width="240" height="40" as="geometry" />
+        <mxCell id="domain-title" value="&lt;b style=&quot;font-size:14px;color:#7F6000&quot;&gt;Active Directory 域&lt;/b&gt;&lt;br&gt;&lt;b style=&quot;color:#7F6000;font-size:13px&quot;&gt;lab.local&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;spacingLeft=8;" vertex="1" parent="1">
+          <mxGeometry x="740" y="548" width="260" height="50" as="geometry" />
         </mxCell>
         <mxCell id="ou-box" value="&lt;b style=&quot;color:#7F6000&quot;&gt;OU=Company 下：&lt;/b&gt;&#10;　• IT-Dept　　　　👥 Domain-IT&#10;　• Finance-Dept　　👥 Domain-Finance&#10;　• HR-Dept　　　　👤 HR 员工&#10;　• Sales-Dept　　　👥 Domain-Sales&#10;　• Servers" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;fontSize=11;fontColor=#7F6000;" vertex="1" parent="1">
-          <mxGeometry x="660" y="565" width="340" height="95" as="geometry" />
+          <mxGeometry x="660" y="600" width="340" height="100" as="geometry" />
         </mxCell>
 
-        <!-- ========== 访问箭头 ========== -->
-        <!-- CLIENT1 -> DC1 -->
-        <mxCell id="edge1" style="endArrow=classic;html=1;rounded=0;strokeColor=#1F3864;strokeWidth=2.5;startArrow=none;exitX=0;exitY=0.4;exitDx=0;exitDy=0;entryX=1;entryY=0.4;entryDx=0;entryDy=0;curved=1;" edge="1" parent="1" source="client1-icon" target="dc1-icon">
-          <mxGeometry relative="1" as="geometry" />
+        <!-- ========== 访问箭头 (错开避开图标重叠) ========== -->
+        <!-- CLIENT1 -> DC1 (走上方) -->
+        <mxCell id="edge1" style="endArrow=classic;html=1;rounded=0;strokeColor=#1F3864;strokeWidth=2.5;startArrow=none;exitX=0;exitY=0.3;exitDx=0;exitDy=0;entryX=1;entryY=0.3;entryDx=0;entryDy=0;edgeStyle=orthogonalEdgeStyle;" edge="1" parent="1" source="client1-icon" target="dc1-icon">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="640" y="140" />
+              <mxPoint x="180" y="140" />
+            </Array>
+          </mxGeometry>
         </mxCell>
-        <mxCell id="edge1-label" value="DNS 53 · DHCP 67&#xa;LDAP 389 · Kerberos 88" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=10;fontColor=#1F3864;fontStyle=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
-          <mxGeometry x="330" y="175" width="170" height="30" as="geometry" />
-        </mxCell>
-
-        <!-- CLIENT1 -> SVR2 -->
-        <mxCell id="edge2" style="endArrow=classic;html=1;rounded=0;strokeColor=#2E75B6;strokeWidth=2.5;startArrow=none;exitX=0;exitY=0.75;exitDx=0;exitDy=0;entryX=1;entryY=0.75;entryDx=0;entryDy=0;curved=1;" edge="1" parent="1" source="client1-icon" target="svr2-icon">
-          <mxGeometry relative="1" as="geometry" />
-        </mxCell>
-        <mxCell id="edge2-label" value="HTTPS 443 · SMB 445" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=10;fontColor=#2E75B6;fontStyle=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
-          <mxGeometry x="570" y="230" width="150" height="20" as="geometry" />
+        <mxCell id="edge1-label" value="DNS 53 · DHCP 67 · LDAP 389 · Kerberos 88" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=11;fontColor=#1F3864;fontStyle=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="380" y="128" width="300" height="24" as="geometry" />
         </mxCell>
 
-        <!-- SVR2 -> DC1 (虚线依赖) -->
-        <mxCell id="edge3" style="endArrow=classic;html=1;rounded=0;strokeColor=#548235;strokeWidth=1.5;startArrow=none;exitX=0;exitY=0.2;exitDx=0;exitDy=0;entryX=1;entryY=0.2;entryDx=0;entryDy=0;dashed=1;dashPattern=4 4;" edge="1" parent="1" source="svr2-icon" target="dc1-icon">
+        <!-- CLIENT1 -> SVR2 (直线中间) -->
+        <mxCell id="edge2" style="endArrow=classic;html=1;rounded=0;strokeColor=#2E75B6;strokeWidth=2.5;startArrow=none;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="client1-icon" target="svr2-icon">
           <mxGeometry relative="1" as="geometry" />
         </mxCell>
-        <mxCell id="edge3-label" value="成员机 → 域控&#xa;加域依赖" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=10;fontColor=#548235;fontStyle=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
-          <mxGeometry x="260" y="135" width="110" height="30" as="geometry" />
+        <mxCell id="edge2-label" value="HTTPS 443 · SMB 445" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=11;fontColor=#2E75B6;fontStyle=1;spacingLeft=8;spacingRight=8;" vertex="1" parent="1">
+          <mxGeometry x="580" y="213" width="150" height="24" as="geometry" />
+        </mxCell>
+
+        <!-- SVR2 -> DC1 (虚线依赖, 走下方避开) -->
+        <mxCell id="edge3" style="endArrow=classic;html=1;rounded=0;strokeColor=#548235;strokeWidth=1.5;startArrow=none;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;dashed=1;dashPattern=4 4;" edge="1" parent="1" source="svr2-icon" target="dc1-icon">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edge3-label" value="成员机 ⇄ 域控（Kerberos 认证）" style="text;html=1;strokeColor=none;fillColor=#FFFFFF;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=1;fontSize=10;fontColor=#548235;fontStyle=1;spacingLeft=6;spacingRight=6;" vertex="1" parent="1">
+          <mxGeometry x="268" y="213" width="190" height="22" as="geometry" />
         </mxCell>
 
         <!-- ========== 攻击面 ========== -->
         <mxCell id="attack-title" value="🎯 攻击者视角：最值得攻击的点（第 35 课复用）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F8CECC;strokeColor=#B85450;fontSize=13;fontStyle=1;fontColor=#8B2A2A;" vertex="1" parent="1">
-          <mxGeometry x="60" y="690" width="940" height="36" as="geometry" />
+          <mxGeometry x="60" y="720" width="940" height="36" as="geometry" />
         </mxCell>
         <mxCell id="attack-list" value="&lt;b&gt;①&lt;/b&gt; SVR2 的 IIS 　　（面向客户端的 Web，入口最大）&#10;&lt;b&gt;②&lt;/b&gt; DC1 的 AD CS 　（拿到 CA 私钥 = 全域信任崩塌）&#10;&lt;b&gt;③&lt;/b&gt; CLIENT1 的域账号（作为跳板横向移动，密码喷射 / Kerberoasting）&#10;&lt;b&gt;④&lt;/b&gt; SMB 445 　　　（Finance-Share 存敏感文件，弱 ACL 可直接读取）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2F0;strokeColor=#B85450;align=left;verticalAlign=middle;spacingLeft=20;fontSize=11;fontColor=#8B2A2A;" vertex="1" parent="1">
-          <mxGeometry x="60" y="730" width="940" height="100" as="geometry" />
+          <mxGeometry x="60" y="760" width="940" height="100" as="geometry" />
         </mxCell>
 
-        <!-- ========== 图例 ========== -->
-        <mxCell id="legend-title" value="📋 图例" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;fontStyle=1;" vertex="1" parent="1">
-          <mxGeometry x="1030" y="110" width="80" height="24" as="geometry" />
+        <!-- ========== 图例 (右侧栏) ========== -->
+        <mxCell id="legend-title" value="📋 图例" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="120" width="80" height="24" as="geometry" />
         </mxCell>
-        <mxCell id="legend-box" value="&lt;b style=&quot;color:#1F3864&quot;&gt;━━&lt;/b&gt;　客户端 → 域控&#10;&lt;b style=&quot;color:#2E75B6&quot;&gt;━━&lt;/b&gt;　客户端 → 文件/Web&#10;&lt;b style=&quot;color:#548235&quot;&gt;┅┅&lt;/b&gt;　成员机 → 域控&#10;&#10;&lt;b style=&quot;color:#6C8EBF&quot;&gt;▮&lt;/b&gt;　服务器区（静态 IP）&#10;&lt;b style=&quot;color:#82B366&quot;&gt;▮&lt;/b&gt;　客户端区（DHCP）&#10;&lt;b style=&quot;color:#B85450&quot;&gt;▮&lt;/b&gt;　域外测试区&#10;&lt;b style=&quot;color:#D6B656&quot;&gt;▮&lt;/b&gt;　AD 域对象&#10;&#10;📏 实验限制：&#10;　单一 Host-Only&#10;　10.10.10.0/24&#10;　网段划分仅规划" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#999999;align=left;verticalAlign=top;spacingLeft=12;spacingTop=10;fontSize=10;" vertex="1" parent="1">
-          <mxGeometry x="1030" y="140" width="220" height="260" as="geometry" />
+        <mxCell id="legend-box" value="&lt;b style=&quot;color:#1F3864&quot;&gt;━━&lt;/b&gt;　客户端 → 域控&#10;&lt;b style=&quot;color:#2E75B6&quot;&gt;━━&lt;/b&gt;　客户端 → 文件/Web&#10;&lt;b style=&quot;color:#548235&quot;&gt;┅┅&lt;/b&gt;　成员机 → 域控&#10;&#10;🟦 服务器区（静态 IP）&#10;🟩 客户端区（DHCP）&#10;🟥 域外测试区&#10;🟨 AD 域对象&#10;&#10;📏 &lt;b&gt;实验限制&lt;/b&gt;：&#10;　单一 Host-Only&#10;　10.10.10.0/24 网段&#10;　网段划分仅规划" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F5F5F5;strokeColor=#999999;align=left;verticalAlign=top;spacingLeft=12;spacingTop=10;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="150" width="230" height="280" as="geometry" />
         </mxCell>
 
-        <!-- ========== 规划原则小卡片 ========== -->
-        <mxCell id="principle-card" value="&lt;b style=&quot;color:#1F3864&quot;&gt;📐 规划三原则&lt;/b&gt;&#10;━━━━━━━━━━&#10;&lt;b&gt;①&lt;/b&gt; &lt;b&gt;命名&lt;/b&gt;：名字体现用途&#10;&lt;b&gt;②&lt;/b&gt; &lt;b&gt;IP&lt;/b&gt;：服务器静态 / 客户端 DHCP&#10;&lt;b&gt;③&lt;/b&gt; &lt;b&gt;角色分配&lt;/b&gt;：&#10;　DC 只放身份类服务&#10;　业务服务放成员服务器&#10;　一台挂了不拖垮全部" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
-          <mxGeometry x="1030" y="410" width="220" height="180" as="geometry" />
+        <!-- 规划三原则小卡片 -->
+        <mxCell id="principle-card" value="&lt;b style=&quot;color:#1F3864&quot;&gt;📐 规划三原则&lt;/b&gt;&#10;━━━━━━━━━━&#10;&lt;b&gt;①&lt;/b&gt; &lt;b&gt;命名&lt;/b&gt;：名字体现用途&#10;&lt;b&gt;②&lt;/b&gt; &lt;b&gt;IP&lt;/b&gt;：服务器静态&#10;　　客户端 DHCP&#10;&lt;b&gt;③&lt;/b&gt; &lt;b&gt;角色分配&lt;/b&gt;：&#10;　DC 只放身份类服务&#10;　业务服务放成员机&#10;　一台挂了不拖垮全部" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DAE8FC;strokeColor=#6C8EBF;align=left;verticalAlign=top;spacingLeft=12;spacingTop=8;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="440" width="230" height="190" as="geometry" />
         </mxCell>
 
       </root>
