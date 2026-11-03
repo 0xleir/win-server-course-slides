@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>第31课 · 企业网络规划与部署</title>
+<link rel="stylesheet" href="vendor/reveal.css">
+<link rel="stylesheet" href="vendor/monokai.css">
+<link rel="stylesheet" href="assets/course.css">
+</head>
+<body>
+<div class="reveal"><div class="slides">
+
+<!-- 01 封面 -->
+<section class="cover">
+<div class="frame">
+  <div class="bar"></div>
+  <p class="muted">综合实战 · 企业网络安全加固（第 31–35 课）　|　第 31 次课 · 学时 61–62</p>
+  <h1>企业网络规划与部署</h1>
+  <p class="muted">先画图、先列清单，再动手：把前 30 课的零件拼成一家公司</p>
+  <div class="meta"><span class="chip">⏱ 80 分钟</span><span class="chip concept">🧑 独立操作</span><span class="chip lab">VM1 + VM2 + VM3</span></div>
+</div>
+<aside class="notes">开场提问：如果明天让你给一家 40 人的公司搭服务器，你第一件事是装系统还是画图？今天是综合项目的第一步，以"规划"为主，只做只读验证，不新增配置。你一个人要依次完成：先在DC1、SVR2、CLIENT1上做验证记录，再从攻击者视角审查一遍自己的规划。</aside>
+</section>
+
+<!-- 02 综合项目总览 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>综合项目总览：五步建成一家公司</h2></div>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:1"><span class="t">第 31 课</span><b>规划</b>架构图<br>配置清单</div>
+      <div class="seg" style="flex:1"><span class="t">第 32 课</span><b>搭建</b>SVR2 部署<br>IIS · 文件 · DNS</div>
+      <div class="seg" style="flex:1"><span class="t">第 33 课</span><b>整合</b>驱动器映射<br>Windows 认证 · FTP</div>
+      <div class="seg" style="flex:1"><span class="t">第 34 课</span><b>加固</b>防火墙 · GPO<br>审计 · 基线</div>
+      <div class="seg" style="flex:1"><span class="t">第 35 课</span><b>对抗</b>红蓝对抗<br>应急响应</div>
+    </div>
+    <div class="card blue">
+      <h3>下课时你应该能够</h3>
+      <ul class="points check">
+        <li>画出包含 DC1、SVR2、CLIENT1 和网段划分的企业网络架构图</li>
+        <li>写出一份《服务器配置清单》：IP、角色、OU、GPO、安全基线</li>
+        <li>用只读命令确认三台机器互通、全部在 lab.local 域中</li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">让学生意识到今天的两份文档是后面四节课的"施工图纸"：第 32–34 课按清单施工，第 35 课红队会拿着你的架构图找弱点。清单写得越细，后面越省事。提问：如果规划阶段漏掉了证书，第 32 课配 HTTPS 时会发生什么？</aside>
+</section>
+
+<!-- 03 本课路线 + 环境 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课路线与实验环境</h2></div>
+  <div class="body">
+    <div class="timeline">
+      <div class="seg" style="flex:13"><span class="t">13′</span><b>概念</b>场景 · 回顾<br>规划原则</div>
+      <div class="seg" style="flex:22"><span class="t">22′</span><b>任务 1</b>绘制架构图</div>
+      <div class="seg" style="flex:27"><span class="t">27′</span><b>任务 2</b>编写配置清单</div>
+      <div class="seg" style="flex:13"><span class="t">13′</span><b>任务 3</b>互通与域验证</div>
+      <div class="seg" style="flex:5"><span class="t">5′</span><b>快照</b></div>
+    </div>
+    <div class="topo">
+      <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">VM1<br>AD DS · DNS · DHCP · CA</div></div>
+      <div class="host"><div class="ic">🗄️</div><b>SVR2</b><div class="ip">10.10.10.20</div><div class="role">VM2<br>成员服务器</div></div>
+      <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">VM3<br>域客户端</div></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">时间分配是本稿建议，原文只给出三项任务、未标时长。原文要求启动 VM1+VM2+VM3，Kali 本课不必开机，你用纸笔参与规划审查即可。SVR2 在第 21–29 课可能一直未开机，先开机等它和 DC1 同步，再做任务 3。</aside>
+</section>
+
+<!-- 04 项目场景 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">项目场景</span><h2>客户需求：一家 4 个部门的小公司</h2></div>
+  <div class="body">
+    <div class="split">
+      <div class="nest">
+        <div class="lbl">虚构企业 · 域 lab.local</div>
+        <div class="grid2">
+          <div class="nest"><div class="lbl">IT-Dept</div><span class="obj">👥 Domain-IT</span></div>
+          <div class="nest"><div class="lbl">Finance-Dept</div><span class="obj">👥 Domain-Finance</span></div>
+          <div class="nest"><div class="lbl">HR-Dept</div><span class="obj">👤 HR 员工</span></div>
+          <div class="nest"><div class="lbl">Sales-Dept</div><span class="obj">👥 Domain-Sales</span></div>
+        </div>
+      </div>
+      <ul class="points">
+        <li>员工用<b>一个域账号</b>登录任何电脑</li>
+        <li>各部门有<b>独立共享</b>，互相看不到</li>
+        <li>内部网站走 <b>HTTPS</b>，证书由公司自己签发</li>
+        <li>客户端<b>自动获取 IP</b>，不用手工配置</li>
+        <li>上线前要能扛住一次<b>红队测试</b></li>
+      </ul>
+    </div>
+  </div>
+</div>
+<aside class="notes">企业场景是本稿虚构的，部门和组名都沿用前面课程已建的对象：第 18 课的 IT-Dept、Finance-Dept、HR-Dept 和 Domain-IT、Domain-Finance，第 20 课考核里的 Sales-Dept 和 Domain-Sales。如果你们组第 20 课没做出 Sales-Dept，清单里照样规划，标注"待建"。提问：每条需求分别靠哪个服务实现？下一页揭晓。</aside>
+</section>
+
+<!-- 05 知识回顾地图 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">知识回顾</span><h2>每条需求，前面哪一课学过</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>角色 / 服务</th><th>放在哪台</th><th>对应课次</th></tr>
+      <tr><td>DHCP 作用域 Lab-Scope</td><td>DC1</td><td>第 2 课</td></tr>
+      <tr><td>NTFS 权限 · 共享文件夹</td><td>SVR2</td><td>第 6、7 课</td></tr>
+      <tr><td>IIS 网站 · 安全加固 · FTP</td><td>SVR2</td><td>第 9–12 课</td></tr>
+      <tr><td>AD DS + DNS · OU 与用户 · GPO</td><td>DC1</td><td>第 17–19 课</td></tr>
+      <tr><td>防火墙 · Defender · AD CS · 基线</td><td>全部 · CA 在 DC1</td><td>第 21–24 课</td></tr>
+      <tr><td>抓包 · 扫描 · 密码攻击 · 日志分析</td><td>CLIENT1 / Kali</td><td>第 26–29 课</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">把每一行对应到前面哪一课：DHCP、AD、GPO、CA 对应第 2、17-19 课；共享、IIS、FTP 对应第 6-12 课；第 26-29 课的监控与测试稍后在任务 3 用到。注意：前面课程里 IIS 和共享大多做在 DC1 上，综合项目按原文把它们迁到 SVR2，这正是第 32、33 课的工作。远程管理（第 14–16 课）是你用来管 SVR2 的手段。</aside>
+</section>
+
+<!-- 06 概念：规划原则 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">概念</span><h2>如何做服务器规划</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>① 命名</h3><ul class="points"><li>名字体现用途：DC1、SVR2</li><li>部门 OU 统一后缀 <code>-Dept</code></li><li>组名统一前缀 <code>Domain-</code></li></ul></div>
+      <div class="card blue"><h3>② IP</h3><ul class="points"><li>服务器用<b>静态 IP</b></li><li>客户端走 DHCP .100–.200</li><li>所有机器 DNS → 10.10.10.10</li></ul></div>
+      <div class="card blue"><h3>③ 角色分配</h3><ul class="points"><li>DC 只放身份类服务</li><li>业务服务放成员服务器</li><li>一台挂了不拖垮全部</li></ul></div>
+    </div>
+    <div class="grid2">
+      <div class="card bad"><h3>反例</h3><p class="small">所有服务堆在 DC1：Web 被攻破 = 域被攻破</p></div>
+      <div class="card good"><h3>正例</h3><p class="small">Web、文件在 SVR2：被攻破也还隔着一层</p></div>
+    </div>
+  </div>
+</div>
+<aside class="notes">这三条原则是本稿补充的通用做法。重点讲第三条：IIS 是最常被攻击的服务，和 AD 放在同一台机器上，Web 漏洞就直接威胁域控，这就是原文把 IIS 迁到 SVR2 的原因。DHCP 和 CA 留在 DC1 是本实验为节省 VM 的折中，可以提问学生：生产环境 CA 应该放哪？</aside>
+</section>
+
+<!-- 07 交付物1 架构图 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 1 <span class="t">· 22′ · 纸上 / Draw.io</span></span><h2>交付物 1：企业网络架构图</h2><button class="more" data-pop="pop-l31-t1-steps">📋 详细步骤</button><button class="more" data-pop="pop-l31-t1-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="grid2">
+      <div class="nest">
+        <div class="lbl">服务器网段 · 静态 IP（规划 .1–.99）</div>
+        <div class="topo">
+          <div class="host dc"><div class="ic">🖥️</div><b>DC1</b><div class="ip">10.10.10.10</div><div class="role">AD DS + DNS<br>DHCP + CA</div></div>
+          <div class="host"><div class="ic">🗄️</div><b>SVR2</b><div class="ip">10.10.10.20</div><div class="role">IIS<br>文件服务器</div></div>
+        </div>
+      </div>
+      <div class="nest">
+        <div class="lbl">客户端网段 · DHCP（.100–.200）</div>
+        <div class="topo">
+          <div class="host"><div class="ic">💻</div><b>CLIENT1</b><div class="ip">DHCP</div><div class="role">域成员<br>DNS → .10</div></div>
+        </div>
+      </div>
+    </div>
+    <ul class="points check">
+      <li>图上必须标注：主机名、IP、角色、所在网段、域名 lab.local</li>
+      <li>用箭头标出关键访问：客户端 → DNS/DHCP/AD，客户端 → Web/共享</li>
+    </ul>
+    <div class="callout"><b>🎨 在线画图工具：</b>打开 <a href="drawio/?offline=1&amp;lang=zh" target="_blank"><code>drawio/</code></a>（本仓库自带，无需登录任何账号），拖拽图标画图 → <code>文件 → 另存为</code> 保存 <code>.drawio</code> 文件 → <code>文件 → 导出为 → PDF</code> 导出 PDF。也可以纸笔手绘拍照。</div>
+  </div>
+</div>
+<aside class="notes">四个角色要素来自原文：DC1 为 AD DS+DNS+DHCP+CA，SVR2 为 IIS+文件服务器，CLIENT1 为域成员，并划分服务器网段和客户端网段。实验环境只有一个 Host-Only 网 10.10.10.0/24，没有路由器，真正拆成两个子网会导致 DHCP 和加域失败，所以本课网段划分只做规划不做实施：图上用地址段区分，服务器 .1–.99 静态、客户端用 Lab-Scope 的 .100–.200。画完后自己站到攻击者视角，圈出你认为最值得攻击的点，第 35 课会用到。</aside>
+<template id="pop-l31-t1-steps">
+  <h3>📋 详细步骤：画企业网络架构图</h3>
+  <h4>第一步：选工具</h4>
+  <ol>
+    <li>推荐：浏览器打开 <a href="drawio/?offline=1&amp;lang=zh" target="_blank"><b>本站自带的 drawio</b></a>（左侧有网络/服务器图标，离线可用，画完 <code>文件 → 导出为 → PDF</code> 下载）</li>
+    <li>也可以用纸笔手绘拍照，或装桌面版 draw.io</li>
+  </ol>
+  <h4>第二步：放三个主机图标</h4>
+  <ol>
+    <li>DC1（10.10.10.10）：标注 AD DS、DNS、DHCP、AD CS 四个角色</li>
+    <li>SVR2（10.10.10.20）：标注 IIS、文件服务器（本课只是规划，第 32 课才真装）</li>
+    <li>CLIENT1（DHCP 自动获取）：标注"域成员"</li>
+  </ol>
+  <h4>第三步：画两个网段框</h4>
+  <ol>
+    <li>服务器网段框：框住 DC1、SVR2，写上"静态 IP .1–.99"</li>
+    <li>客户端网段框：框住 CLIENT1，写上"DHCP .100–.200（Lab-Scope）"</li>
+  </ol>
+  <h4>第四步：加访问箭头</h4>
+  <ol>
+    <li>CLIENT1 → DC1：标 DNS、DHCP、AD（LDAP 389、Kerberos 88）</li>
+    <li>CLIENT1 → SVR2：标 Web（HTTPS 443）、共享（SMB 445）</li>
+  </ol>
+  <p>画完后自己站到攻击者视角过一遍，圈出你认为最值得攻击的点，备注写在图边上。</p>
+</template>
+<template id="pop-l31-t1-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:30%">设计点</th><th>意义</th></tr>
+    <tr><td>两个网段分开画（哪怕物理上是同一个 10.10.10.0/24）</td><td>生产环境里服务器和客户端一般不在同一个子网，用地址段/VLAN 隔离；本实验受限于单一 Host-Only 网段，用"规划"的方式先把这个意识建立起来，第 34 课讲防火墙分段时会用到这张图。</td></tr>
+    <tr><td>服务器用静态 IP，客户端用 DHCP</td><td>服务器的 IP 是别人要来连的（DNS 记录、客户端配置都指向它），变来变去会让整条链路全部失效；客户端数量多、谁用哪台不固定，DHCP 自动分配省去逐台配置的麻烦。</td></tr>
+    <tr><td>画出访问箭头而不只是列设备</td><td>架构图的价值在于"谁访问谁"，这是后面做防火墙规则、安全分组的依据——如果看不出访问关系，就没法回答"这条规则该不该放行"。</td></tr>
+    <tr><td>自己站到攻击者视角审查</td><td>真实的安全架构评审通常会请攻击视角的人提前介入（Threat Modeling 的雏形），比上线后再找漏洞成本低得多。你一人分饮两种视角，一样能达到这个效果。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 08 交付物2 清单：服务器 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 27′</span></span><h2>交付物 2：《服务器配置清单》① 服务器</h2><button class="more" data-pop="pop-l31-t2a-steps">📋 详细步骤</button><button class="more" data-pop="pop-l31-t2a-why">💡 每项为什么</button></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>服务器</th><th>IP / DNS</th><th>角色</th><th>服务列表</th></tr>
+      <tr><td><b>DC1</b> · VM1</td><td>10.10.10.10 / 127.0.0.1</td><td>域控制器</td><td>AD DS、DNS、DHCP（Lab-Scope）、AD CS（Lab-Root-CA）</td></tr>
+      <tr><td><b>SVR2</b> · VM2</td><td>10.10.10.20 / 10.10.10.10</td><td>成员服务器</td><td>IIS（HTTPS）、文件服务器（IT-Share、Finance-Share）</td></tr>
+      <tr><td><b>CLIENT1</b> · VM3</td><td>DHCP / 10.10.10.10</td><td>域客户端</td><td>Win10，测试访问</td></tr>
+      <tr><td><b>Kali</b> · VM4</td><td>10.10.10.50</td><td>授权测试机</td><td>不加域，第 35 课使用</td></tr>
+    </table>
+    <div class="callout"><b>写法：</b>表格每一格都要能被第 32–34 课的某个操作"兑现"，写不出来的格子就是规划漏洞。</div>
+  </div>
+</div>
+<aside class="notes">表中填的是参考答案，学生应该自己填，可以先发空白表。Lab-Root-CA 来自第 23 课，Lab-Scope 来自第 2 课，IT-Share、Finance-Share 在第 33 课映射为 S: 和 F: 盘。DC1 的 DNS 指向自身 127.0.0.1 是第 17 课的要求。你自己核对完 DC1、SVR2、CLIENT1 三行即可。</aside>
+<template id="pop-l31-t2a-steps">
+  <h3>📋 详细步骤：填写服务器清单</h3>
+  <h4>第一步：核实 DC1 一行</h4>
+  <ol>
+    <li>登录 DC1，<code>Get-NetIPAddress -AddressFamily IPv4</code> 核对真实 IP</li>
+    <li><code>Get-WindowsFeature | Where-Object Installed</code> 核对已装角色（AD DS、DNS、DHCP、AD CS）</li>
+  </ol>
+  <h4>第二步：核实 SVR2 一行</h4>
+  <ol>
+    <li>登录 SVR2，同样核对 IP 和当前已装角色（本课阶段 IIS、文件服务器大概率还没装，清单先按"计划值"填）</li>
+  </ol>
+  <h4>第三步：核实 CLIENT1 一行</h4>
+  <ol>
+    <li><code>ipconfig /all</code> 查看当前 DHCP 分配到的地址（不固定，每次续租可能变）</li>
+  </ol>
+  <h4>第四步：填 Kali 一行</h4>
+  <ol>
+    <li>如果本课不开机，照抄规划值 10.10.10.50 即可，标注"未验证"</li>
+  </ol>
+</template>
+<template id="pop-l31-t2a-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:28%">设计点</th><th>意义</th></tr>
+    <tr><td>DC1 的 DNS 填 127.0.0.1（指向自己）</td><td>域控自己就是 DNS 服务器，查询自己的区域走本机最快，也避免"DNS 服务器本身依赖外部 DNS 服务器"这种循环依赖。</td></tr>
+    <tr><td>SVR2 的 DNS 指向 10.10.10.10（DC1）</td><td>成员服务器要靠 DNS 才能找到域控、注册 SRV 记录、完成 Kerberos 认证，这是能不能正常加域的前提——第 32 课如果发现"找不到域"，先查这一项。</td></tr>
+    <tr><td>Kali 不加域、单独一行</td><td>攻击测试机故意保持在域外，这样被攻陷也不会直接威胁域凭据；现实中红队/测试环境也通常物理或逻辑隔离于被测目标。</td></tr>
+    <tr><td>每格都要能"兑现"</td><td>规划阶段写得再漂亮，如果第 32–34 课做不出来就是空话。要求"能兑现"逼着大家把清单写得具体、可执行，而不是泛泛而谈。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 09 清单：OU/GPO/基线 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 2 <span class="t">· 27′</span></span><h2>《服务器配置清单》② 账号、策略、基线</h2><button class="more" data-pop="pop-l31-t2b-steps">📋 详细步骤</button><button class="more" data-pop="pop-l31-t2b-why">💡 每项为什么</button></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card">
+        <h3>用户 / 组 / OU</h3>
+        <ul class="points">
+          <li>OU=Company 下：IT-Dept、Finance-Dept、HR-Dept、Sales-Dept、Servers</li>
+          <li>Domain-IT、Domain-Finance、Domain-Sales</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>GPO 规划</h3>
+        <ul class="points">
+          <li>Lab-Security-Policy → Company</li>
+          <li>Standard-Desktop → Finance-Dept</li>
+          <li>Drive-Mappings（第 33 课）</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>安全基线检查表</h3>
+        <ul class="points">
+          <li>SMBv1 已禁用</li>
+          <li>TLS 1.0/1.1 已禁用</li>
+          <li>防火墙仅开必要端口</li>
+          <li>屏幕锁定 10 分钟</li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout warn"><b>只写规划：</b>本课不新建 OU、不改 GPO，清单是第 32–34 课的施工依据。</div>
+  </div>
+</div>
+<aside class="notes">OU 和组名来自第 18 课和第 20 课，GPO 名来自第 19 课；基线检查项取自第 24 课的检查清单和第 34 课的加固目标（防火墙端口、屏幕锁定 10 分钟、USB 禁用、Sysmon）。HR-Dept 原文没有对应的域组，可以让学生在清单中提出"是否需要 Domain-HR"，作为规划讨论题，不要现场创建。自己汇总成一份文档。</aside>
+<template id="pop-l31-t2b-steps">
+  <h3>📋 详细步骤：核对账号 / 策略 / 基线</h3>
+  <h4>第一步：核对已有 OU / 组（DC1 上查，只读）</h4>
+<pre>Get-ADOrganizationalUnit -Filter * | Select-Object Name
+Get-ADGroup -Filter * | Select-Object Name</pre>
+  <p>把真实存在的 OU、组填进表格；查不到的（比如 Sales-Dept 没做出来）标注"待建"，不要现场新建。</p>
+  <h4>第二步：核对已有 GPO</h4>
+<pre>Get-GPO -All | Select-Object DisplayName</pre>
+  <h4>第三步：填安全基线检查表</h4>
+  <ol>
+    <li>对照第 24 课的检查清单，逐项确认当前状态（已做/待做）</li>
+    <li>第 34 课要加固的项目（屏幕锁定、USB 禁用、Sysmon）先在表里列出来，本课不动手</li>
+  </ol>
+</template>
+<template id="pop-l31-t2b-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:28%">设计点</th><th>意义</th></tr>
+    <tr><td>OU 按部门划分（IT-Dept、Finance-Dept…）</td><td>GPO 是按 OU 链接生效的，部门分 OU 之后，不同部门可以应用不同的策略（比如财务部更严格的密码策略），这是"最小权限+差异化管理"的基础结构。</td></tr>
+    <tr><td>组名统一加 <code>Domain-</code> 前缀</td><td>命名规范让管理员一眼就能分辨"这是我们自己创建的业务组"还是系统内置组，避免误删、误改内置的 Domain Admins 之类的组。</td></tr>
+    <tr><td>查不到的对象标注"待建"而不是现场创建</td><td>本课的任务是规划评审，不是施工；现场零散地建对象容易漏掉命名规范、权限设置这些细节，统一在第 32–34 课按清单施工更不容易出错。</td></tr>
+    <tr><td>基线检查表提前列出第 34 课要做的项</td><td>让"加固"不是临时想到什么做什么，而是有据可查的清单驱动的工作，第 34 课直接按这张表逐条打勾。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 10 任务3 互通与域验证 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip lab">任务 3 <span class="t">· 13′ · CLIENT1 / DC1</span></span><h2>互通与域环境验证（只读命令）</h2><button class="more" data-pop="pop-l31-t3-steps">📋 详细步骤</button><button class="more" data-pop="pop-l31-t3-why">💡 每项为什么</button></div>
+  <div class="body">
+<pre><code class="language-powershell" data-trim>
+# 先在 CLIENT1 上：网络互通 + 找得到域
+Test-NetConnection 10.10.10.10 -Port 389
+Test-NetConnection 10.10.10.20 -Port 445
+nltest /dsgetdc:lab.local
+# 再切到 DC1：确认所有机器都在域中
+Get-ADComputer -Filter * | Select-Object Name, Enabled
+</code></pre>
+    <table class="tbl">
+      <tr><th>命令</th><th>预期结果</th></tr>
+      <tr><td><code>Test-NetConnection ...389</code>（DC1）</td><td>TcpTestSucceeded : True</td></tr>
+      <tr><td><code>Test-NetConnection ...445</code>（SVR2）</td><td class="small">False（SVR2 未装文件服务器角色，第32课后变 True）</td></tr>
+      <tr><td><code>nltest</code></td><td>DC: \\DC-<i>学号</i>.lab.local，命令成功完成</td></tr>
+      <tr><td><code>Get-ADComputer</code></td><td>列出 DC1、SVR2、CLIENT1</td></tr>
+    </table>
+  </div>
+</div>
+<aside class="notes">四条命令都是只读的，分别学过：Test-NetConnection 在第 14、16、21 课，nltest 在第 17 课，Get-ADComputer 是 AD 模块的查询命令，与第 18 课 Get-ADOrganizationalUnit 用法一致。389 是 LDAP、445 是 SMB。真机验证过：445 端口在本课阶段必然测不通（SVR2 没有 LanmanServer 入站防火墙规则，要等第 32 课装文件服务器角色才会开），这是正常现象不是故障，别让学生卡在这一条上。你也可以切到 SVR2 上跑一遍 nltest，确认 SVR2 自己能找到域控。排障：端口不通先看 VM 是否开机和第 21 课防火墙规则；nltest 失败先查 DNS 是否指向 10.10.10.10；DHCP 续租超时先查 DC1 的 DHCP 服务器是否已在 AD 中授权（Get-DhcpServerSetting → IsAuthorized，未授权则 Add-DhcpServerInDC）；SVR2 长期关机若报"信任关系失败"，举手找老师，不要自行退域。本课不改配置（DHCP 授权例外，这是基础设施缺陷不是"配置"，必须先修好才能验证任务 3），其余问题记入清单待办，第 32 课处理。</aside>
+<template id="pop-l31-t3-steps">
+  <h3>📋 详细步骤：互通与域验证</h3>
+  <h4>第一步：CLIENT1 上测端口</h4>
+<pre>Test-NetConnection 10.10.10.10 -Port 389
+Test-NetConnection 10.10.10.20 -Port 445</pre>
+  <p>看 <code>TcpTestSucceeded</code>：389 应为 True；445 本课阶段预期 False（SVR2 还没装文件服务器角色），不是故障。</p>
+  <h4>第二步：确认能找到域控</h4>
+<pre>nltest /dsgetdc:lab.local</pre>
+  <p>看到 <code>DC: \\DC-01.lab.local</code> 和"此命令成功完成"就对了。</p>
+  <h4>第三步：切到 DC1 上确认三台机器都在域</h4>
+<pre>Get-ADComputer -Filter * | Select-Object Name, Enabled</pre>
+  <p>应该列出 DC1、SVR2、CLIENT1 三条，Enabled 都是 True。</p>
+  <h4>排障：如果 CLIENT1 一直拿不到 10.10.10.x 地址</h4>
+  <ol>
+    <li><code>ipconfig /all</code> 看 Ethernet1 是不是卡在 169.254.x.x（APIPA，说明 DHCP 没谈成）</li>
+    <li>去 DC1 查：<code>Get-DhcpServerSetting | Select IsAuthorized</code></li>
+    <li>如果是 <code>False</code>，运行一次 <code>Add-DhcpServerInDC -DnsName DC-01.lab.local</code> 授权，再 <code>Restart-Service DHCPServer</code></li>
+    <li>回 CLIENT1 重新 <code>ipconfig /renew</code>，这次应该几秒内就拿到地址</li>
+  </ol>
+</template>
+<template id="pop-l31-t3-why">
+  <h3>💡 每项为什么这么做</h3>
+  <table>
+    <tr><th style="width:28%">设计点</th><th>意义</th></tr>
+    <tr><td>389 测 DC1、445 测 SVR2，而不是反过来</td><td>389 是 LDAP，验证"能不能查到域目录"；445 是 SMB，验证"能不能连文件共享"——两个端口分别对应两台机器各自该提供的服务，端口选对了才能验证到位。</td></tr>
+    <tr><td>nltest 而不是 ping 域名</td><td>ping 只能证明网络通不通，不能证明"域控角色"正常工作；<code>nltest /dsgetdc</code> 走的是真正的域定位协议，能验证 DNS 的 SRV 记录、LDAP、Kerberos 这些域控必须正常才能成立的东西。</td></tr>
+    <tr><td>DHCP 服务器必须在 AD 中"授权"才会真正工作</td><td>这是 Windows 域环境的内置保护机制：防止未经批准的 DHCP 服务器（可能是攻击者架设的，用来发错误网关做流量劫持）在网络里乱发地址。未授权的服务器会悄悄收下客户端的请求但不响应，表现得很像网络故障，实际是权限问题——这个坑在真机环境里很容易踩到，排查时不要只看网络层，还要看 DHCP 服务本身的状态。</td></tr>
+    <tr><td>本课只验证、不新建配置</td><td>任务 3 的目的是确认"域环境完整"这个前提条件成立，为第 32 课打地基；DHCP 授权是修复环境缺陷（本来就该有、漏做了），不算新增配置，所以允许现场修。</td></tr>
+  </table>
+</template>
+</section>
+
+<!-- 11 任务checklist -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip concept">任务清单</span><h2>今天要交的东西（按顺序做完）</h2></div>
+  <div class="body">
+    <table class="tbl">
+      <tr><th>顺序</th><th>机器</th><th>要做的事</th></tr>
+      <tr><td><b>第一步</b></td><td>DC1</td><td>清单 DC1 行、OU/GPO 规划；运行 Get-ADComputer</td></tr>
+      <tr><td><b>第二步</b></td><td>SVR2</td><td>清单 SVR2 行、共享与 IIS 规划；SVR2 上 nltest</td></tr>
+      <tr><td><b>第三步</b></td><td>CLIENT1</td><td>绘制架构图、汇总清单；CLIENT1 互通测试</td></tr>
+      <tr><td><b>第四步</b></td><td>自己（纸面）</td><td>站到攻击者视角审查架构图，列出"攻击面清单"，写进基线检查表</td></tr>
+    </table>
+    <div class="callout warn"><b>授权边界：</b>本课只做纸面审查，不扫描、不登录；第 35 课的测试也只限 10.10.10.0/24。</div>
+  </div>
+</div>
+<aside class="notes">原文未规定本课分工，表中为本稿建议，按这个顺序一步步做完即可。攻击者视角很重要：先想"我会从哪里打进来"，再把对应防御写进第 34 课的加固清单。再次强调《网络安全法》：未经授权对任何系统扫描、入侵都是违法行为，实验只针对自己的实验网。</aside>
+</section>
+
+<!-- 12 验证与提交 -->
+<section>
+<div class="frame">
+  <div class="head"><span class="chip check">验证与提交</span><h2>提交交付物并拍快照</h2></div>
+  <div class="body">
+    <div class="grid2">
+      <ul class="points check">
+        <li>架构图：标出 DC1、SVR2、CLIENT1 与两个网段</li>
+        <li>《服务器配置清单》：服务器、OU、GPO、基线</li>
+        <li>三台机器互通：Test-NetConnection 均为 True</li>
+        <li>全部在域中：nltest、Get-ADComputer 截图</li>
+      </ul>
+      <div class="card">
+        <h3>📸 创建快照</h3>
+        <p>VM1、VM2、VM3 都拍快照<br><code>Lesson31-Done</code></p>
+        <p class="small muted" style="margin-top:8px">第 32 课从这个快照开始</p>
+      </div>
+    </div>
+    <div class="callout">文档保存为一份，文件名写上组号，课后提交给老师。</div>
+  </div>
+</div>
+<aside class="notes">原文本课没有 Check 脚本，验证以任务 3 的四条命令截图为准。文档提交方式（文件名、上传位置）是本稿建议，按本校平台调整。三台 VM 都要拍快照，Kali 本课没开机可以不拍。</aside>
+</section>
+
+<!-- 14 小结 -->
+<section>
+<div class="frame">
+  <div class="head"><h2>本课小结</h2></div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card blue"><h3>为什么</h3><p class="small">先规划后施工：清单是后面四节课的施工图</p></div>
+      <div class="card blue"><h3>怎么做</h3><p class="small">画架构图 → 写配置清单 → 只读命令验证</p></div>
+      <div class="card blue"><h3>关键点</h3><p class="small">DC 只放身份服务，Web 与文件放 SVR2</p></div>
+    </div>
+    <div class="callout"><b>下节课 · 第 32 课：</b>企业域环境全流程搭建。按清单在 SVR2 上部署 IIS、HTTPS 网站、部门共享，并添加 DNS 记录。</div>
+    <div class="callout"><b>📎 作业提交：</b>把<b>架构图</b>（纸质拍照或 Draw.io 导出 PDF）和<b>《服务器配置清单》</b>（Word / PDF 都可以，含服务器表 + OU/GPO/基线表）<b>合并成一份 PDF</b> 提交。本课不需要跑检查脚本。</div>
+  </div>
+</div>
+<aside class="notes">出口小测（口头）：1. 为什么 IIS 不放在 DC1？2. 客户端的 DNS 应该指向哪里？3. 怎么确认一台机器在域中？提醒带好今天的清单，第 32 课继续在 SVR2 上搭建。</aside>
+</section>
+
+</div></div>
+<div class="foot"><span>Windows 服务器配置与安全管理</span><span></span></div>
+<script src="vendor/reveal.js"></script>
+<script src="vendor/plugin-highlight.js"></script>
+<script src="vendor/plugin-notes.js"></script>
+<script src="assets/popup.js"></script>
+<script>
+Reveal.initialize({hash:true,slideNumber:'c/t',transition:'fade',transitionSpeed:'fast',center:false,width:1280,height:720,margin:0.04,plugins:[RevealHighlight,RevealNotes]});
+</script>
+</body>
+</html>
