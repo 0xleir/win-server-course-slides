@@ -19,7 +19,7 @@
         </mxCell>
 
         <!-- DC-01 用 active_directory/domain_controller.svg -->
-        <mxCell id="dc1-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=../drawio/img/lib/active_directory/domain_controller.svg;" vertex="1" parent="1">
+        <mxCell id="dc1-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=https://0xleir.github.io/win-server-course-slides/drawio/img/lib/active_directory/domain_controller.svg;" vertex="1" parent="1">
           <mxGeometry x="135" y="170" width="90" height="110" as="geometry" />
         </mxCell>
         <mxCell id="dc1-label" value="&lt;b style=&quot;font-size:15px;color:#1F3864&quot;&gt;DC-01&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#595959&quot;&gt;10.10.10.10&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
@@ -30,7 +30,7 @@
         </mxCell>
 
         <!-- SVR2 用 active_directory/web_server.svg -->
-        <mxCell id="svr2-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=../drawio/img/lib/active_directory/web_server.svg;" vertex="1" parent="1">
+        <mxCell id="svr2-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=https://0xleir.github.io/win-server-course-slides/drawio/img/lib/active_directory/web_server.svg;" vertex="1" parent="1">
           <mxGeometry x="420" y="170" width="90" height="110" as="geometry" />
         </mxCell>
         <mxCell id="svr2-label" value="&lt;b style=&quot;font-size:15px;color:#2E75B6&quot;&gt;SVR2&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#595959&quot;&gt;10.10.10.20&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
@@ -46,7 +46,7 @@
         </mxCell>
 
         <!-- CLIENT1 用 workstation_client.svg -->
-        <mxCell id="client1-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=../drawio/img/lib/active_directory/workstation_client.svg;" vertex="1" parent="1">
+        <mxCell id="client1-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=https://0xleir.github.io/win-server-course-slides/drawio/img/lib/active_directory/workstation_client.svg;" vertex="1" parent="1">
           <mxGeometry x="775" y="170" width="100" height="110" as="geometry" />
         </mxCell>
         <mxCell id="client1-label" value="&lt;b style=&quot;font-size:15px;color:#548235&quot;&gt;CLIENT1&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#595959&quot;&gt;DHCP 自动获取&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
@@ -62,7 +62,7 @@
         </mxCell>
 
         <!-- Kali 用 laptop_client.svg -->
-        <mxCell id="kali-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=../drawio/img/lib/active_directory/laptop_client.svg;" vertex="1" parent="1">
+        <mxCell id="kali-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=https://0xleir.github.io/win-server-course-slides/drawio/img/lib/active_directory/laptop_client.svg;" vertex="1" parent="1">
           <mxGeometry x="110" y="585" width="90" height="80" as="geometry" />
         </mxCell>
         <mxCell id="kali-label" value="&lt;b style=&quot;font-size:14px;color:#B85450&quot;&gt;Kali Linux&lt;/b&gt;&lt;br&gt;&lt;span style=&quot;color:#595959&quot;&gt;10.10.10.50 · 不加域&lt;/span&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=11;" vertex="1" parent="1">
@@ -73,7 +73,7 @@
         </mxCell>
 
         <!-- ========== 域横幅 (用彩色 mscae Active Directory 图标) ========== -->
-        <mxCell id="domain-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=../drawio/img/lib/mscae/Active_Directory.svg;" vertex="1" parent="1">
+        <mxCell id="domain-icon" value="" style="shape=image;html=1;verticalLabelPosition=bottom;labelBackgroundColor=none;verticalAlign=top;aspect=fixed;imageAspect=0;image=https://0xleir.github.io/win-server-course-slides/drawio/img/lib/mscae/Active_Directory.svg;" vertex="1" parent="1">
           <mxGeometry x="680" y="548" width="50" height="50" as="geometry" />
         </mxCell>
         <mxCell id="domain-title" value="&lt;b style=&quot;font-size:14px;color:#7F6000&quot;&gt;Active Directory 域&lt;/b&gt;&lt;br&gt;&lt;b style=&quot;color:#7F6000;font-size:13px&quot;&gt;lab.local&lt;/b&gt;" style="text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=12;spacingLeft=8;" vertex="1" parent="1">
